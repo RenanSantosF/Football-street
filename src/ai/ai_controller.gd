@@ -86,6 +86,17 @@ func _think() -> void:
 
 
 func _think_with_ball() -> void:
+	if player.is_restart_locked():
+		# Reinício: obrigado a tocar. Espera um instante e passa.
+		_move_target = player.global_position
+		if _hold_time > 0.6:
+			var mate := _best_pass_option()
+			if mate == null:
+				mate = _nearest_teammate()
+			if mate != null:
+				var d := mate.global_position.distance_to(player.global_position)
+				_set_action(PlayerIntent.Action.PASS, 0.3 if d < 11.0 else 0.7, Vector3.ZERO, mate)
+		return
 	if _go_to_loose_ball():
 		return
 	var opp_goal := Field.goal_center(Team.other(player.team))
@@ -329,6 +340,17 @@ func _best_pass_option() -> Player:
 		var score := advance * 0.4 + openness - d * 0.08
 		if score > best_score:
 			best_score = score
+			best = mate
+	return best
+
+
+func _nearest_teammate() -> Player:
+	var best: Player = null
+	var best_d := INF
+	for mate in player.get_teammates():
+		var d := mate.global_position.distance_to(player.global_position)
+		if d < best_d:
+			best_d = d
 			best = mate
 	return best
 

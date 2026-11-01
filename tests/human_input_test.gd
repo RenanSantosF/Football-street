@@ -40,6 +40,8 @@ func _physics_process(_delta: float) -> void:
 			_touches += 1
 			if me.ball_control.last_touch_forced: _timeout_touches += 1)
 	# 0-1,2s: saída (congelado). Depois: ir até a bola e conduzir para +X.
+	if _frame == 79:
+		me.set_restart_lock(false) # o teste mede a condução; a regra da saída tem teste próprio
 	if _frame == 80:
 		Input.action_press("move_right", 1.0)
 	if _frame > 80 and _frame < 140:

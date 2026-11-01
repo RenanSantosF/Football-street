@@ -37,14 +37,14 @@ const DOWN_TIME := 0.7
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 4.6
-@export var sprint_speed := 6.6
+@export var jog_speed := 3.9
+@export var sprint_speed := 5.6
 @export var ball_speed_factor := 0.92
-@export var acceleration := 11.0
-@export var deceleration := 15.0
+@export var acceleration := 7.5
+@export var deceleration := 10.0
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 11.0
-@export var turn_speed_with_ball := 7.5
+@export var turn_speed := 7.5
+@export var turn_speed_with_ball := 6.0
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -64,6 +64,7 @@ var _action_contact_done := false
 var _action_power := 0.0
 var _action_aim := Vector3.ZERO
 var _action_target: Node3D = null
+var _action_precise := false
 var _action_move_factor := 0.4
 var _action_face := Vector3.ZERO
 var _stun_timer := 0.0
@@ -73,6 +74,7 @@ var _buffer_power := 0.0
 var _buffer_aim := Vector3.ZERO
 var _buffer_target: Node3D = null
 var _buffer_timer := 0.0
+var _buffer_precise := false
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
 var _marking := false
 var _action_logical: StringName = &""
@@ -80,6 +82,9 @@ var _action_seek := 0.0
 var _jump_timer := 0.0
 var _reaction: StringName = &""
 var _rng := RandomNumberGenerator.new()
+## Reinício (saída, lateral, escanteio, tiro de meta): parado com a bola,
+## só pode tocar para um companheiro.
+var _restart_lock := false
 ## Testes/laboratórios: força a chance de pular carrinhos (-1 = normal).
 var debug_dodge_chance := -1.0
 
@@ -102,7 +107,28 @@ func setup(mm: MatchManager, b: Ball) -> void:
 	# Todos os jogadores com a mesma skin e o mesmo tamanho.
 	visual.scale = Vector3.ONE
 	anim_controller.setup(self)
+	_add_team_disc()
 	set_human(false, null)
+
+
+## Disco discreto na cor do time sob os pés (todos usam a mesma skin).
+func _add_team_disc() -> void:
+	var disc := MeshInstance3D.new()
+	var m := CylinderMesh.new()
+	m.top_radius = 0.34
+	m.bottom_radius = 0.34
+	m.height = 0.004
+	m.radial_segments = 24
+	disc.mesh = m
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	var c := Team.COLORS[team]
+	mat.albedo_color = Color(c.r, c.g, c.b, 0.3)
+	disc.material_override = mat
+	disc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	disc.position.y = 0.012
+	add_child(disc)
 
 
 ## Liga/desliga o controle humano. Sem humano, a própria IA assume.
@@ -148,6 +174,10 @@ func _physics_process(delta: float) -> void:
 
 func _update_move(delta: float) -> void:
 	var input := Vector3(intent.move.x, 0.0, intent.move.z)
+	if _restart_lock:
+		_check_restart_unlock()
+	if _restart_lock:
+		input = Vector3.ZERO # parado: o analógico só gira o corpo (mira do passe)
 	if input.length() > 1.0:
 		input = input.normalized()
 	var has_ball := ball_control.has_ball()
@@ -164,7 +194,15 @@ func _update_move(delta: float) -> void:
 		var to_ball := ball_control.ball_offset()
 		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
 	elif has_ball and input.length() > 0.1:
-		desired += ball_control.catch_up_velocity(input.normalized())
+		var turn_target := ball_control.turn_approach_point(input.normalized())
+		if turn_target != Vector3.ZERO:
+			# Virou para o lado oposto da bola: vai até ela contornando, para
+			# puxá-la para a nova direção (não abandona a bola).
+			# Corre mais que a bola para alcançá-la (se ela estiver fugindo).
+			var chase := clampf(ball.flat_velocity().length() + 1.5, jog_speed * 0.85, sprint_speed)
+			desired = turn_target.normalized() * chase if turn_target.length() > 0.12 else input * jog_speed * 0.4
+		else:
+			desired += ball_control.catch_up_velocity(input.normalized())
 	var hv := get_flat_velocity()
 	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
@@ -185,6 +223,8 @@ func _update_facing(delta: float) -> void:
 	var target_dir := facing
 	if state == State.ACTION and _action_face != Vector3.ZERO:
 		target_dir = _action_face
+	elif _restart_lock and intent.move.length() > 0.2:
+		target_dir = Vector3(intent.move.x, 0.0, intent.move.z).normalized()
 	elif _marking and state == State.MOVE:
 		target_dir = _flat_dir_to(_mark_focus())
 	elif hv.length() > 0.4:
@@ -228,16 +268,21 @@ func _update_actions(delta: float) -> void:
 		_buffer_power = intent.power
 		_buffer_aim = intent.aim
 		_buffer_target = intent.target
+		_buffer_precise = intent.precise
 		_buffer_timer = BUFFER_TIME_WITH_BALL if ball_control.has_ball() else BUFFER_TIME
 	if _buffer_timer <= 0.0:
 		return
 	_buffer_timer -= delta
+	if _restart_lock and _buffer_action != PlayerIntent.Action.PASS:
+		_buffer_timer = 0.0 # no reinício só vale o passe
+		return
 
 	var done := false
 	match _buffer_action:
 		PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT:
 			if ball_control.can_kick() or ball_control.can_start_kick_on_run():
 				_start_kick(_buffer_action, _buffer_power, _buffer_aim, _buffer_target)
+				_action_precise = _buffer_precise
 				done = true
 			elif _buffer_action == PlayerIntent.Action.SHOOT:
 				var t := ball_control.find_tackle_target(SLIDE_RANGE)
@@ -280,8 +325,7 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		var kind: StringName = &"shoot_power" if power > 0.7 else &"shoot"
 		var contact := 0.16 + 0.12 * power
 		_begin_action(kind, contact, contact + 0.3, power, aim, null, 0.35)
-		var goal := Field.goal_center(Team.other(team))
-		_action_face = _flat_dir_to(goal) if aim.length() < 0.2 else Vector3(aim.x, 0.0, aim.z).normalized()
+		_action_face = facing if aim.length() < 0.2 else Vector3(aim.x, 0.0, aim.z).normalized()
 	else:
 		var long := power >= LONG_PASS_POWER
 		var contact := 0.2 if long else 0.13
@@ -308,6 +352,7 @@ func _begin_action(kind: StringName, contact: float, length: float, power: float
 	_action_move_factor = move_factor
 	_action_face = Vector3.ZERO
 	_action_logical = &""
+	_action_precise = false
 	action_started.emit(kind)
 
 
@@ -367,9 +412,10 @@ func _do_contact() -> void:
 	_action_contact_done = true
 	match _action_kind:
 		&"pass", &"long_pass":
-			ball_control.execute_pass(_action_power, _action_aim, _action_target)
+			if ball_control.execute_pass(_action_power, _action_aim, _action_target):
+				_restart_lock = false
 		&"shoot", &"shoot_power":
-			ball_control.execute_shot(_action_power, _action_aim)
+			ball_control.execute_shot(_action_power, _action_aim, _action_precise)
 		&"dribble":
 			if ball_control.execute_dribble(_action_aim):
 				_burst_timer = 0.5
@@ -399,6 +445,22 @@ func get_foot_positions() -> Array[Vector3]:
 		return visual.call("get_foot_positions")
 	var none: Array[Vector3] = []
 	return none
+
+
+func set_restart_lock(value: bool) -> void:
+	_restart_lock = value
+
+
+func is_restart_locked() -> bool:
+	return _restart_lock
+
+
+## A trava some quando o passe sai ou quando outro jogador fica com a bola.
+func _check_restart_unlock() -> void:
+	if ball == null:
+		return
+	if ball.possessor != null and ball.possessor != self:
+		_restart_lock = false
 
 
 func is_marking() -> bool:
@@ -517,6 +579,7 @@ func teleport(pos: Vector3, face_dir: Vector3) -> void:
 		rotation.y = atan2(-facing.x, -facing.z)
 	_buffer_timer = 0.0
 	_reaction = &""
+	_restart_lock = false
 	if state != State.FROZEN:
 		state = State.MOVE
 

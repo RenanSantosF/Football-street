@@ -9,6 +9,7 @@ roupas sujas e dribles naturais.
 - 🧍 Etapa 2 (personagens e animação): [`docs/ETAPA_02.md`](docs/ETAPA_02.md)
 - ⚽ Etapa 3 (animações de futebol com Mixamo): [`docs/ETAPA_03.md`](docs/ETAPA_03.md)
 - 🧍‍♂️ Etapa 4 (animações e skins do pack do autor): [`docs/ETAPA_04.md`](docs/ETAPA_04.md)
+- 🌇 Etapa 5 (jogo mais lento, rua nova, regras de pelada, câmera e placar): [`docs/ETAPA_05.md`](docs/ETAPA_05.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado

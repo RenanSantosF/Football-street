@@ -112,6 +112,20 @@ func find_tackle_target(max_range := TACKLE_RANGE) -> Player:
 	return carrier
 
 
+## Condução com virada: se a bola NÃO está à frente na direção desejada,
+## devolve o deslocamento (plano) até o ponto atrás dela nessa direção, de
+## onde o jogador puxa a bola para o novo lado. ZERO = bola já está à frente.
+func turn_approach_point(dir: Vector3) -> Vector3:
+	if not has_ball():
+		return Vector3.ZERO
+	var off := ball_offset()
+	if off.length() < 0.25 or off.length() > LOSE_RADIUS:
+		return Vector3.ZERO
+	if off.normalized().dot(dir) > 0.35:
+		return Vector3.ZERO
+	return off - dir * 0.35
+
+
 ## Velocidade extra para o jogador alcançar a bola que rolou à frente.
 func catch_up_velocity(dir: Vector3) -> Vector3:
 	if not has_ball():
@@ -197,6 +211,17 @@ func _conduct(delta: float) -> void:
 	if d > LOSE_RADIUS or ball.global_position.y > 1.3:
 		ball.release()
 		return
+	var reach := TOUCH_REACH + 0.2
+	var want := _flat(player.intent.move)
+	if d <= reach and want.length() > 0.3 and _since_touch > 0.2:
+		var wdir := want.normalized()
+		if off.normalized().dot(wdir) < 0.5:
+			# Virada com a bola: puxa com a sola para a nova direção.
+			var pv0 := _flat(player.velocity)
+			ball.touch(wdir * (maxf(pv0.dot(wdir), 0.0) + 1.3), player)
+			_since_touch = 0.0
+			player.notify_touch(&"turn")
+			return
 	if d > TOUCH_REACH:
 		return # correndo atrás da bola: catch_up_velocity() cuida disso
 
@@ -296,7 +321,7 @@ func execute_pass(power: float, aim: Vector3, target: Node3D) -> bool:
 		if long or dist > 15.0:
 			vel = lofted_velocity(from, from + _flat(dest - from) * 0.9, lerpf(22.0, 35.0, power))
 		else:
-			vel = ground_pass_velocity(from, dest, lerpf(2.5, 5.5, power))
+			vel = ground_pass_velocity(from, dest, lerpf(2.0, 4.5, power))
 	else:
 		var dest := from + dir * lerpf(7.0, 18.0, power)
 		vel = lofted_velocity(from, dest, 30.0) if long else ground_pass_velocity(from, dest, 1.0)
@@ -308,14 +333,16 @@ func execute_pass(power: float, aim: Vector3, target: Node3D) -> bool:
 	return true
 
 
-func execute_shot(power: float, aim: Vector3) -> bool:
+func execute_shot(power: float, aim: Vector3, precise := false) -> bool:
 	if not can_kick():
 		return false
+	if precise and _flat(aim).length() > 0.2:
+		return _execute_aimed_shot(power, _flat(aim).normalized())
 	var goal_x := Field.goal_line_x(Team.other(player.team))
 	var from := ball.global_position
-	var ty := _rng.randf_range(0.2, 0.85)
+	var ty := _rng.randf_range(0.2, 0.75)
 	var target := Vector3(goal_x, ty, _choose_shot_z(from, goal_x, aim))
-	var speed := lerpf(11.0, 24.0, power)
+	var speed := lerpf(8.0, 17.0, power)
 	var flat_to := _flat(target - from)
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
@@ -331,6 +358,31 @@ func execute_shot(power: float, aim: Vector3) -> bool:
 	var vy := (ty - from.y) / t + 0.5 * g * t
 	vy += _rng.randf_range(-0.4, 1.2) * power
 	var spin := Vector3.UP * _rng.randf_range(-8.0, 8.0) * power
+	ball.kick(dir * speed + Vector3.UP * vy, spin, player)
+	player.notify_touch(&"shoot")
+	GameEvents.ball_kicked.emit(player, &"shoot", power)
+	return true
+
+
+## Chute mirado pelo humano: a bola segue a direção escolhida (com uma
+## pequena imprecisão natural), em velocidade de pelada.
+func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
+	var from := ball.global_position
+	var speed := lerpf(8.0, 17.0, power)
+	var spread := deg_to_rad(lerpf(0.8, 3.0, power))
+	if player.facing.dot(dir) < 0.3:
+		spread *= 1.8 # chutar de lado para onde o corpo não está virado
+	dir = dir.rotated(Vector3.UP, _rng.randf_range(-spread, spread))
+	# Altura: até o gol (se estiver mirando para ele) ou ~10 m.
+	var goal_x := Field.goal_line_x(Team.other(player.team))
+	var d := 10.0
+	if absf(dir.x) > 0.1 and signf(dir.x) == signf(goal_x - from.x):
+		d = clampf((goal_x - from.x) / dir.x, 2.0, 25.0)
+	var ty := lerpf(0.15, 0.7, power) + _rng.randf_range(-0.1, 0.15)
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	var t := d / speed
+	var vy := clampf((ty - from.y) / t + 0.5 * g * t, 0.0, 6.0)
+	var spin := Vector3.UP * _rng.randf_range(-4.0, 4.0) * power
 	ball.kick(dir * speed + Vector3.UP * vy, spin, player)
 	player.notify_touch(&"shoot")
 	GameEvents.ball_kicked.emit(player, &"shoot", power)
@@ -453,8 +505,8 @@ static func ground_pass_velocity(from: Vector3, to: Vector3, end_speed: float) -
 	var d := flat.length()
 	if d < 0.01:
 		return Vector3.ZERO
-	var a := 1.6 # desaceleração média: rolamento (1,1) + arrasto do ar aproximado
-	var v0 := clampf(sqrt(end_speed * end_speed + 2.0 * a * d), 3.0, 22.0)
+	var a := 1.9 # desaceleração média: rolamento nos bloquinhos (1,45) + arrasto do ar
+	var v0 := clampf(sqrt(end_speed * end_speed + 2.0 * a * d), 3.0, 16.0)
 	return flat / d * v0
 
 

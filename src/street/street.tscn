@@ -3,11 +3,12 @@
 [ext_resource type="Script" path="res://src/street/street_builder.gd" id="1_street"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
-sky_top_color = Color(0.32, 0.5, 0.78, 1)
-sky_horizon_color = Color(0.8, 0.79, 0.76, 1)
+sky_top_color = Color(0.28, 0.52, 0.86, 1)
+sky_horizon_color = Color(0.78, 0.84, 0.9, 1)
 ground_bottom_color = Color(0.22, 0.2, 0.18, 1)
 ground_horizon_color = Color(0.68, 0.66, 0.62, 1)
 sun_angle_max = 25.0
+sun_curve = 0.1
 
 [sub_resource type="Sky" id="Sky_street"]
 sky_material = SubResource("ProceduralSkyMaterial_sky")
@@ -18,10 +19,16 @@ sky = SubResource("Sky_street")
 ambient_light_source = 3
 ambient_light_color = Color(0.85, 0.82, 0.76, 1)
 ambient_light_sky_contribution = 0.35
-ambient_light_energy = 0.7
+ambient_light_energy = 0.85
 reflected_light_source = 2
-tonemap_mode = 2
+tonemap_mode = 3
+tonemap_exposure = 1.05
 tonemap_white = 6.0
+glow_enabled = true
+glow_intensity = 0.25
+glow_bloom = 0.04
+adjustment_enabled = true
+adjustment_saturation = 1.08
 
 [node name="Street" type="Node3D"]
 script = ExtResource("1_street")
@@ -30,9 +37,16 @@ script = ExtResource("1_street")
 environment = SubResource("Environment_street")
 
 [node name="Sun" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.81915, 0, -0.57358, -0.3838, 0.74314, -0.54812, 0.42625, 0.66913, 0.60875, 0, 12, 0)
-light_color = Color(1, 0.94, 0.84, 1)
+transform = Transform3D(-0.62470, 0.00000, 0.78087, 0.63888, 0.57499, 0.51110, -0.44899, 0.81816, -0.35919, 0, 14, 0)
+light_color = Color(1, 0.96, 0.9, 1)
 light_energy = 1.5
 shadow_enabled = true
 directional_shadow_mode = 1
-directional_shadow_max_distance = 45.0
+directional_shadow_max_distance = 30.0
+shadow_blur = 1.2
+
+[node name="ReflectionProbe" type="ReflectionProbe" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.5, 0)
+size = Vector3(64, 8, 18)
+intensity = 0.6
+box_projection = true

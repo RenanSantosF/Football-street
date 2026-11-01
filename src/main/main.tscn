@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="PackedScene" path="res://src/street/street.tscn" id="1_street"]
 [ext_resource type="PackedScene" path="res://src/goal/goal.tscn" id="2_goal"]
@@ -9,6 +9,8 @@
 [ext_resource type="Script" path="res://src/match/ball_out_system.gd" id="7_out"]
 [ext_resource type="PackedScene" path="res://src/player/player.tscn" id="8_player"]
 [ext_resource type="PackedScene" path="res://src/ui/mobile_ui.tscn" id="9_ui"]
+[ext_resource type="Script" path="res://src/ui/aim_indicator.gd" id="10_aim"]
+[ext_resource type="Script" path="res://src/street/pedestrians.gd" id="11_ped"]
 
 [node name="Main" type="Node3D"]
 
@@ -50,5 +52,15 @@ ball_out_system = NodePath("BallOutSystem")
 [node name="BallOutSystem" type="Node" parent="MatchManager"]
 script = ExtResource("7_out")
 
-[node name="MobileUI" parent="." node_paths=PackedStringArray("human_input") instance=ExtResource("9_ui")]
+[node name="MobileUI" parent="." node_paths=PackedStringArray("human_input", "match_manager") instance=ExtResource("9_ui")]
 human_input = NodePath("../HumanInput")
+match_manager = NodePath("../MatchManager")
+
+[node name="AimIndicator" type="Node3D" parent="." node_paths=PackedStringArray("human_input", "ball")]
+script = ExtResource("10_aim")
+human_input = NodePath("../HumanInput")
+ball = NodePath("../Ball")
+
+[node name="Pedestrians" type="Node3D" parent="."]
+script = ExtResource("11_ped")
+ball_path = NodePath("../Ball")

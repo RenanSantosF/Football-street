@@ -5,14 +5,18 @@ extends RefCounted
 ## a largura no eixo Z. A câmera fica do lado +Z olhando para -Z.
 
 const HALF_LENGTH := 14.0          ## Linha de fundo em x = ±14 (campo de 28 m).
-const HALF_WIDTH := 3.6            ## Linha lateral pintada em z = ±3.6.
-const ASPHALT_HALF_WIDTH := 4.2    ## Meio-fio em z = ±4.2 (rua de 8,4 m).
-const SIDEWALK_WIDTH := 1.8
-const CURB_HEIGHT := 0.15
-const STREET_HALF_LENGTH := 30.0   ## Fim da rua (casas da esquina) em x = ±30.
+## Não há linha lateral pintada: o limite é o MEIO-FIO (z = ±5, rua de 10 m).
+## Bola rasteira bate no meio-fio e volta; só é lateral se passar por cima
+## e cair na calçada (|z| > HALF_WIDTH + SIDELINE_OUT_MARGIN).
+const HALF_WIDTH := 5.0
+const ASPHALT_HALF_WIDTH := 5.0
+const SIDELINE_OUT_MARGIN := 0.35
+const SIDEWALK_WIDTH := 2.2
+const CURB_HEIGHT := 0.2
+const STREET_HALF_LENGTH := 30.0   ## Fim da rua em x = ±30.
 
-const GOAL_HALF_WIDTH := 1.0       ## Trave de 2 m de largura...
-const GOAL_HEIGHT := 1.2           ## ...por 1,2 m de altura.
+const GOAL_HALF_WIDTH := 0.8       ## Trave pequena de 1,6 m (sem goleiro)...
+const GOAL_HEIGHT := 0.95          ## ...por 0,95 m de altura.
 const GOAL_DEPTH := 0.7
 const POST_RADIUS := 0.035
 

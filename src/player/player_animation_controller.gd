@@ -64,6 +64,8 @@ var _action_kind: StringName = &""
 var _time_since_contact := INF
 var _prev_speed := 0.0
 var _getting_up := false
+var _prev_facing := Vector3.FORWARD
+var _turn_rate := 0.0
 
 
 func setup(p: Player) -> void:
@@ -106,7 +108,12 @@ func physics_update(delta: float) -> void:
 		k = player.visual.call("get_locomotion_scale")
 	k = maxf(k, 0.01)
 	var v := player.get_flat_velocity()
-	var stride_speed := v.length() / k
+	# Girando parado: dá passinhos (a velocidade de giro alimenta a passada),
+	# em vez de rodar com os pés deslizando.
+	var ang := absf(_prev_facing.signed_angle_to(player.facing, Vector3.UP)) / maxf(delta, 0.001)
+	_prev_facing = player.facing
+	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
+	var stride_speed := maxf(v.length(), minf(_turn_rate * 0.35, 1.2)) / k
 	var time_scale := stride_speed / AnimationCatalog.TOP_SPEED if stride_speed > AnimationCatalog.TOP_SPEED else 1.0
 	for base in [&"Locomotion", &"LocomotionBall"]:
 		anim_tree.set("parameters/%s/Speed/blend_position" % base, stride_speed)
@@ -204,8 +211,8 @@ func _on_ball_touched(kind: StringName) -> void:
 		_play_action(&"GKCatch", 0.3)
 		_time_since_contact = 0.0
 		return
-	# Domínio: o pé pisa na bola logo em seguida ao contato.
-	if kind != &"receive" or not _has_state(&"Receive"):
+	# Domínio (ou virada puxando a bola): o pé pisa na bola.
+	if (kind != &"receive" and kind != &"turn") or not _has_state(&"Receive"):
 		return
 	if playback.get_current_node() in BASE_STATES and player.get_horizontal_speed() < 3.5:
 		_action_kind = kind

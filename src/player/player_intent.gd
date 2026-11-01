@@ -18,6 +18,9 @@ var power := 0.0
 var aim := Vector3.ZERO
 ## Alvo opcional (ex.: companheiro escolhido pela IA para o passe).
 var target: Node3D = null
+## Chute mirado pelo jogador humano: a bola vai EXATAMENTE para [member aim]
+## (sem mira automática no gol).
+var precise := false
 
 
 func set_action(a: Action, p := 0.0, aim_dir := Vector3.ZERO, tgt: Node3D = null) -> void:
@@ -25,6 +28,7 @@ func set_action(a: Action, p := 0.0, aim_dir := Vector3.ZERO, tgt: Node3D = null
 	power = clampf(p, 0.0, 1.0)
 	aim = aim_dir
 	target = tgt
+	precise = false
 
 
 func clear_action() -> void:
@@ -32,3 +36,4 @@ func clear_action() -> void:
 	power = 0.0
 	aim = Vector3.ZERO
 	target = null
+	precise = false

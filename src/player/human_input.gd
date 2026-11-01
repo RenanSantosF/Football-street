@@ -9,6 +9,8 @@ extends Node
 signal switch_requested
 ## Carga atual do botão (0..1) para a barra de força. kind = &"" quando solto.
 signal charge_changed(value: float, kind: StringName)
+## Mira do chute: ativa enquanto o botão de chute está segurado.
+signal aim_changed(active: bool, direction: Vector3, power: float)
 
 const MAX_CHARGE_TIME := 0.9
 
@@ -23,6 +25,8 @@ var _shoot_hold := -1.0
 var _queued: PlayerIntent.Action = PlayerIntent.Action.NONE
 var _queued_power := 0.0
 var _last_charge := -1.0
+var _aim := Vector3.ZERO
+var _aiming := false
 
 
 func _ready() -> void:
@@ -33,6 +37,19 @@ func _physics_process(delta: float) -> void:
 	var v := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	_move = _to_world(v)
 	_sprint = Input.is_action_pressed("sprint")
+	# Segurando CHUTE com a bola (ou perto dela): o analógico vira a MIRA e o
+	# jogador para; a direção escolhida é exatamente para onde a bola vai.
+	var was_aiming := _aiming
+	_aiming = _shoot_hold >= 0.0 and current_player != null and _near_ball()
+	if _aiming:
+		if not was_aiming:
+			_aim = current_player.facing
+		if _move.length() > 0.25:
+			_aim = _move.normalized()
+		_move = Vector3.ZERO
+		aim_changed.emit(true, _aim, clampf(_shoot_hold / MAX_CHARGE_TIME, 0.0, 1.0))
+	elif was_aiming:
+		aim_changed.emit(false, _aim, 0.0)
 
 	if Input.is_action_just_pressed("switch_player"):
 		switch_requested.emit()
@@ -63,8 +80,13 @@ func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 	intent.move = _move
 	intent.sprint = _sprint
 	if _queued != PlayerIntent.Action.NONE:
-		intent.set_action(_queued, _queued_power, _move if _move.length() > 0.2 else Vector3.ZERO)
+		if _queued == PlayerIntent.Action.SHOOT and _aim != Vector3.ZERO and _queued_power > 0.0:
+			intent.set_action(_queued, _queued_power, _aim)
+			intent.precise = true
+		else:
+			intent.set_action(_queued, _queued_power, _move if _move.length() > 0.2 else Vector3.ZERO)
 		_queued = PlayerIntent.Action.NONE
+		_aim = Vector3.ZERO
 
 
 func _update_charge(action: StringName, hold: float, delta: float, kind: PlayerIntent.Action) -> float:
@@ -84,6 +106,10 @@ func _update_charge(action: StringName, hold: float, delta: float, kind: PlayerI
 func _queue(a: PlayerIntent.Action, power: float) -> void:
 	_queued = a
 	_queued_power = power
+
+
+func _near_ball() -> bool:
+	return current_player.ball != null and current_player.ball_control.ball_distance() < 2.0
 
 
 func _wants_tackle() -> bool:

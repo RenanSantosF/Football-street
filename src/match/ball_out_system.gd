@@ -35,20 +35,31 @@ func cancel() -> void:
 
 func handle_out(kind: Kind, exit_pos: Vector3, last_touch_team: int) -> void:
 	_restart_kind = kind
+	var inset := 0.45
 	if kind == Kind.SIDELINE:
 		_restart_team = Team.other(last_touch_team) if last_touch_team >= 0 else Team.SHIRTS
 		_restart_pos = Vector3(
 			clampf(exit_pos.x, -Field.HALF_LENGTH + 1.0, Field.HALF_LENGTH - 1.0),
 			Ball.RADIUS,
-			signf(exit_pos.z) * (Field.HALF_WIDTH - 0.25))
+			signf(exit_pos.z) * (Field.HALF_WIDTH - inset))
 		GameEvents.match_message.emit("LATERAL", 1.2)
 	else:
-		# Na rua não tem escanteio: quem defende aquela trave repõe.
-		_restart_team = Team.SHIRTS if exit_pos.x < 0.0 else Team.SKINS
-		_restart_pos = Vector3(
-			Field.goal_line_x(_restart_team) + Field.attack_sign(_restart_team) * 1.6,
-			Ball.RADIUS, 0.0)
-		GameEvents.match_message.emit("TIRO DE META", 1.2)
+		# Linha de fundo: quem defende aquela trave repõe (tiro de meta) se o
+		# último toque foi do ataque; se foi da defesa, é ESCANTEIO.
+		var defending := Team.SHIRTS if exit_pos.x < 0.0 else Team.SKINS
+		if last_touch_team == defending:
+			_restart_team = Team.other(defending)
+			_restart_pos = Vector3(
+				signf(exit_pos.x) * (Field.HALF_LENGTH - inset),
+				Ball.RADIUS,
+				(1.0 if exit_pos.z >= 0.0 else -1.0) * (Field.HALF_WIDTH - inset))
+			GameEvents.match_message.emit("ESCANTEIO", 1.2)
+		else:
+			_restart_team = defending
+			_restart_pos = Vector3(
+				Field.goal_line_x(defending) + Field.attack_sign(defending) * 1.6,
+				Ball.RADIUS, 0.0)
+			GameEvents.match_message.emit("TIRO DE META", 1.2)
 	_timer = restart_delay
 	_waiting = true
 

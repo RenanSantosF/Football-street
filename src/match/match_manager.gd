@@ -6,12 +6,14 @@ extends Node
 enum MatchState { KICKOFF, PLAYING, GOAL, BALL_OUT, RESTART }
 
 const PLAYERS_PER_TEAM := 3
+const GOAL_CELEBRATION_TIME := 5.0
 ## Posições base do time que ataca para +X (o outro time é espelhado).
 ## Índice 0 = goleiro.
+## Sem goleiro: três jogadores de linha (fixo, ala, ala).
 const FORMATION: Array[Vector3] = [
-	Vector3(-13.2, 0.0, 0.0),
-	Vector3(-6.0, 0.0, -1.7),
-	Vector3(-3.5, 0.0, 1.7),
+	Vector3(-9.0, 0.0, 0.0),
+	Vector3(-5.0, 0.0, -2.4),
+	Vector3(-3.0, 0.0, 2.4),
 ]
 
 @export var player_scene: PackedScene
@@ -59,9 +61,9 @@ func _spawn_players() -> void:
 		for i in PLAYERS_PER_TEAM:
 			var p := player_scene.instantiate() as Player
 			p.team = team
-			p.role = Player.Role.GOALKEEPER if i == 0 else Player.Role.FIELD
+			p.role = Player.Role.FIELD # pelada sem goleiro
 			p.formation_index = i
-			p.shirt_number = 1 if i == 0 else 7 + i
+			p.shirt_number = 7 + i
 			p.appearance = CharacterAppearance.random_for_team(team, _rng)
 			p.name = "%s_%d" % ["Camisa" if team == Team.SHIRTS else "SemCamisa", i]
 			players_root.add_child(p)
@@ -134,7 +136,8 @@ func _check_ball() -> void:
 			return
 	if absf(cur.x) > Field.HALF_LENGTH + Ball.RADIUS:
 		_on_ball_out(BallOutSystem.Kind.END_LINE, cur)
-	elif absf(cur.z) > Field.HALF_WIDTH + Ball.RADIUS:
+	elif absf(cur.z) > Field.HALF_WIDTH + Field.SIDELINE_OUT_MARGIN:
+		# Passou por cima do meio-fio e caiu na calçada.
 		_on_ball_out(BallOutSystem.Kind.SIDELINE, cur)
 	elif cur.y < -2.0:
 		_start_kickoff(Team.SHIRTS) # segurança: nunca deveria acontecer
@@ -155,8 +158,9 @@ func _on_goal(team: int) -> void:
 			p.play_reaction(&"samba" if p == scorer and _rng.randf() < 0.5 else &"celebrate")
 		else:
 			p.play_reaction(&"defeated")
-	GameEvents.match_message.emit("GOOOL!", 2.5)
-	_state_timer = 3.0
+	if camera != null and scorer != null:
+		camera.start_celebration(scorer, GOAL_CELEBRATION_TIME)
+	_state_timer = GOAL_CELEBRATION_TIME
 	_set_state(MatchState.GOAL)
 
 
@@ -170,28 +174,28 @@ func _on_ball_out(kind: BallOutSystem.Kind, pos: Vector3) -> void:
 
 
 ## Chamado pelo BallOutSystem quando a bola está pronta para voltar ao jogo.
+## Na lateral, no escanteio e no tiro de meta quem bate fica PARADO com a bola
+## e é obrigado a tocar para um companheiro (não pode sair conduzindo).
 func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 	ball.place_at(pos)
 	_prev_ball_pos = ball.global_position
-	var into_field: Vector3
-	var taker: Player
-	if kind == BallOutSystem.Kind.END_LINE:
-		into_field = Vector3(Field.attack_sign(team), 0.0, 0.0)
-		taker = get_goalkeeper(team)
-	else:
+	var into_field := (Vector3(0.0, 0.0, 0.0) - Vector3(pos.x * 0.4, 0.0, pos.z)).normalized()
+	if kind == BallOutSystem.Kind.SIDELINE:
 		into_field = Vector3(0.0, 0.0, -signf(pos.z))
-		taker = _closest_field_player(team, pos)
+	var taker := _closest_field_player(team, pos)
 	taker.teleport(pos - into_field * 0.45, into_field)
 	# Adversários afastados da bola.
 	for p in get_team(Team.other(team)):
 		var off := p.global_position - pos
 		off.y = 0.0
-		if off.length() < 2.5:
+		if off.length() < 3.0:
 			var dir := off.normalized() if off.length() > 0.1 else into_field
-			p.teleport(Field.clamp_inside(pos + dir * 2.6, 0.3), -dir)
-	ball.restrict_to(team, 3.0)
+			p.teleport(Field.clamp_inside(pos + dir * 3.1, 0.4), -dir)
+	ball.restrict_to(team, 6.0)
 	ball.in_play = true
-	if team == human_team and not autoplay and not taker.is_goalkeeper():
+	ball.claim(taker)
+	taker.set_restart_lock(true)
+	if team == human_team and not autoplay:
 		set_controlled(taker)
 	GameEvents.restart_started.emit(team, kind, pos)
 	_state_timer = 0.5
@@ -210,7 +214,11 @@ func _start_kickoff(team: int) -> void:
 			pos = Vector3(-0.45 * s, 0.0, 0.0) # quem dá a saída
 		p.teleport(pos, Vector3(Field.attack_sign(p.team), 0.0, 0.0))
 		p.set_frozen(true)
-	ball.restrict_to(team, 3.0)
+	ball.restrict_to(team, 6.0)
+	# Saída de bola: quem dá a saída tem que tocar (não sai conduzindo).
+	for p in get_team(team):
+		if p.formation_index == 2:
+			p.set_restart_lock(true)
 	if not autoplay:
 		var start := _closest_field_player(human_team, ball.global_position)
 		set_controlled(start)

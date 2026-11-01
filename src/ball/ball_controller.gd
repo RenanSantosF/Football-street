@@ -12,8 +12,8 @@ extends RigidBody3D
 const RADIUS := 0.11
 
 @export_group("Física")
-## Desaceleração ao rolar no asfalto (m/s²). Asfalto é mais rápido que grama.
-@export var rolling_resistance := 1.1
+## Desaceleração ao rolar nos bloquinhos (m/s²): piso irregular segura a bola.
+@export var rolling_resistance := 1.45
 ## Arrasto do ar (quadrático): a = k * v².
 @export var air_drag := 0.012
 ## Efeito Magnus (curva por rotação).

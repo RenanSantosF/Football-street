@@ -1,17 +1,17 @@
 @tool
 class_name StreetBuilder
 extends Node3D
-## Gera a rua de bairro (versão "graybox" da Etapa 1) a partir das medidas de
-## Field: asfalto com imperfeições, calçadas com meio-fio, casas e muros
-## coloridos e gastos, linhas riscadas e alguns objetos de bairro.
+## Rua de periferia calçada com bloquete, sem casas "bonitas": quintais dos
+## dois lados separados por cerca de tábua velha e de arame, um portão de ferro
+## enferrujado, um pedaço de muro de bloco sem reboco, postes de madeira com
+## fios, mangueiras e uma bananeira aparecendo por cima das cercas, cadeira de
+## plástico na calçada, pneu velho, bicicleta encostada...
 ##
-## Todos os materiais são procedurais (shader com ruído), sem texturas: leve
-## para Android. Na Etapa 7 as caixas das casas são trocadas por modelos
-## modulares (.glb) reaproveitando os mesmos materiais.
-##
+## Tudo gerado por código a partir das medidas de Field, com materiais
+## procedurais (sem texturas grandes) e as tábuas em MultiMesh (leve no celular).
 ## É @tool para aparecer no editor; os nós gerados não são salvos na cena.
 
-@export var seed_value := 7:
+@export var seed_value := 11:
 	set(v):
 		seed_value = v
 		if is_inside_tree():
@@ -19,23 +19,21 @@ extends Node3D
 
 const SURFACE_SHADER := preload("res://src/shaders/street_surface.gdshader")
 const PAINT_SHADER := preload("res://src/shaders/paint_line.gdshader")
+const PAVER_SHADER := preload("res://src/shaders/paver_blocks.gdshader")
+const WOOD_SHADER := preload("res://src/shaders/weathered_wood.gdshader")
+const BARK_SHADER := preload("res://src/shaders/tree_bark.gdshader")
+const FOLIAGE_SHADER := preload("res://src/shaders/foliage.gdshader")
+const IRON_SHADER := preload("res://src/shaders/old_iron.gdshader")
 
-## Cores de fachada típicas (desbotadas): creme, verde-água, salmão, azul,
-## amarelo queimado, chapisco cinza, branco encardido.
-const WALL_COLORS: Array[Color] = [
-	Color(0.86, 0.80, 0.66), Color(0.60, 0.76, 0.70), Color(0.85, 0.62, 0.52),
-	Color(0.58, 0.68, 0.80), Color(0.85, 0.70, 0.40), Color(0.55, 0.55, 0.53),
-	Color(0.84, 0.83, 0.79), Color(0.75, 0.55, 0.60),
-]
-const GATE_COLORS: Array[Color] = [
-	Color(0.22, 0.24, 0.26), Color(0.15, 0.32, 0.22), Color(0.45, 0.12, 0.10),
-	Color(0.62, 0.62, 0.60),
-]
+## Onde começa a cerca (fim da calçada).
+var FENCE_Z: float = Field.ASPHALT_HALF_WIDTH + Field.SIDEWALK_WIDTH
 
 var _rng := RandomNumberGenerator.new()
 var _materials := {}
-var _ground_physics: PhysicsMaterial
-var _wall_physics: PhysicsMaterial
+var _curb_physics: PhysicsMaterial
+var _soft_physics: PhysicsMaterial
+var _planks: Array[Transform3D] = []
+var _posts: Array[Transform3D] = []
 
 
 func _ready() -> void:
@@ -50,164 +48,417 @@ func rebuild() -> void:
 	root.name = "Generated"
 	add_child(root)
 	_rng.seed = seed_value
-	_ground_physics = PhysicsMaterial.new()
-	_ground_physics.friction = 0.8
-	_wall_physics = PhysicsMaterial.new()
-	_wall_physics.friction = 0.5
-	_wall_physics.bounce = 0.1
+	_planks.clear()
+	_posts.clear()
+	_curb_physics = PhysicsMaterial.new()
+	_curb_physics.friction = 0.5
+	_curb_physics.bounce = 0.35 # meio-fio devolve a bola rasteira para a rua
+	_soft_physics = PhysicsMaterial.new()
+	_soft_physics.friction = 0.7
+	_soft_physics.bounce = 0.1
 
 	_build_ground(root)
 	_build_sidewalks(root)
 	_build_lines(root)
-	_build_houses(root, -1.0, true)
-	_build_houses(root, 1.0, false)
+	for side in [-1.0, 1.0]:
+		_build_fence_line(root, side)
+		_build_yard(root, side)
 	_build_street_ends(root)
+	_build_poles(root)
 	_build_props(root)
+	_flush_multimeshes(root)
 	_build_boundary(root)
 
 
-# --- Chão ---------------------------------------------------------------------
+# --- Chão --------------------------------------------------------------------------
 
 func _build_ground(root: Node3D) -> void:
-	var length := Field.STREET_HALF_LENGTH * 2.0 + 4.0
-	var asphalt := _surface("asphalt", Color(0.27, 0.265, 0.26), 0.14, 0.45, 0.8)
-	_mesh_box(root, Vector3(0, -0.05, 0), Vector3(length, 0.1, Field.ASPHALT_HALF_WIDTH * 2.0 + 0.2), asphalt)
-	# Remendos de asfalto mais novo (mais escuros) espalhados.
-	var patch := _surface("patch", Color(0.23, 0.23, 0.235), 0.08, 0.2, 0.0)
-	for i in 5:
-		var px := _rng.randf_range(-Field.STREET_HALF_LENGTH + 3.0, Field.STREET_HALF_LENGTH - 3.0)
-		var pz := _rng.randf_range(-Field.ASPHALT_HALF_WIDTH + 1.0, Field.ASPHALT_HALF_WIDTH - 1.0)
-		_mesh_box(root, Vector3(px, 0.003, pz), Vector3(_rng.randf_range(0.5, 1.3), 0.006, _rng.randf_range(0.4, 1.0)), patch)
-	# Colisão única do chão (bola e jogadores).
-	var body := _static_body(root, _ground_physics)
+	var length := Field.STREET_HALF_LENGTH * 2.0 + 8.0
+	var paver := ShaderMaterial.new()
+	paver.shader = PAVER_SHADER
+	_mesh_box(root, Vector3(0, -0.05, 0), Vector3(length, 0.1, Field.ASPHALT_HALF_WIDTH * 2.0), paver)
+	var body := _static_body(root, _soft_physics)
 	_box_shape(body, Vector3(0, -0.5, 0), Vector3(length + 20.0, 1.0, 60.0))
 
 
 func _build_sidewalks(root: Node3D) -> void:
-	var length := Field.STREET_HALF_LENGTH * 2.0
-	var concrete := _surface("sidewalk", Color(0.62, 0.60, 0.56), 0.15, 0.45, 0.5)
-	var curb := _surface("curb", Color(0.70, 0.69, 0.66), 0.1, 0.5, 0.2)
-	var body := _static_body(root, _wall_physics)
+	var length := Field.STREET_HALF_LENGTH * 2.0 + 8.0
+	var walk := _surface("sidewalk", Color(0.52, 0.48, 0.42), 0.22, 0.6, 0.9, 0.0)
+	var curb := _surface("curb", Color(0.62, 0.60, 0.56), 0.18, 0.6, 0.6, 0.0)
+	var dirt := _surface("dirt_strip", Color(0.36, 0.29, 0.21), 0.25, 0.4, 0.0, 0.0)
+	var grass := _surface("grass_strip", Color(0.27, 0.32, 0.14), 0.3, 0.3, 0.0, 0.0)
+	var h := Field.CURB_HEIGHT
 	for side in [-1.0, 1.0]:
 		var zc: float = side * (Field.ASPHALT_HALF_WIDTH + Field.SIDEWALK_WIDTH * 0.5)
-		var size := Vector3(length, Field.CURB_HEIGHT, Field.SIDEWALK_WIDTH)
-		_mesh_box(root, Vector3(0, Field.CURB_HEIGHT * 0.5, zc), size, concrete)
-		_mesh_box(root, Vector3(0, Field.CURB_HEIGHT * 0.5 + 0.002, side * (Field.ASPHALT_HALF_WIDTH + 0.06)),
-			Vector3(length, Field.CURB_HEIGHT + 0.004, 0.12), curb)
-		_box_shape(body, Vector3(0, Field.CURB_HEIGHT * 0.5, zc), size)
+		_mesh_box(root, Vector3(0, h * 0.5, zc), Vector3(length, h, Field.SIDEWALK_WIDTH), walk)
+		_mesh_box(root, Vector3(0, h * 0.5 + 0.003, side * (Field.ASPHALT_HALF_WIDTH + 0.07)),
+			Vector3(length, h + 0.006, 0.14), curb)
+		# Faixa de terra/mato junto da cerca (ninguém varre ali).
+		var x := -length * 0.5
+		while x < length * 0.5:
+			var w := _rng.randf_range(1.5, 5.0)
+			var mat := grass if _rng.randf() < 0.55 else dirt
+			_mesh_box(root, Vector3(x + w * 0.5, h + 0.004, side * (FENCE_Z - 0.35)),
+				Vector3(w, 0.008, _rng.randf_range(0.4, 0.8)), mat)
+			x += w + _rng.randf_range(0.0, 2.0)
+		var body := _static_body(root, _curb_physics)
+		_box_shape(body, Vector3(0, h * 0.5, zc), Vector3(length, h, Field.SIDEWALK_WIDTH))
 
 
 func _build_lines(root: Node3D) -> void:
+	# Só as linhas de fundo e o meio, riscadas a giz (laterais = meio-fio).
 	var paint := ShaderMaterial.new()
 	paint.shader = PAINT_SHADER
-	var y := 0.004
-	var t := 0.08
-	var L := Field.HALF_LENGTH
+	paint.set_shader_parameter("wear", 0.42)
 	var W := Field.HALF_WIDTH
-	for side in [-1.0, 1.0]:
-		_mesh_box(root, Vector3(0, y, side * W), Vector3(L * 2.0 + t, 0.004, t), paint)   # laterais
-		_mesh_box(root, Vector3(side * L, y, 0), Vector3(t, 0.004, W * 2.0 + t), paint)   # fundos
-	_mesh_box(root, Vector3(0, y, 0), Vector3(t, 0.004, W * 2.0), paint)                   # meio
-	_mesh_box(root, Vector3(0, y, 0), Vector3(0.3, 0.004, 0.3), paint)                     # marca central
+	for sx in [-1.0, 1.0]:
+		_mesh_box(root, Vector3(sx * Field.HALF_LENGTH, 0.004, 0), Vector3(0.07, 0.004, W * 2.0), paint)
+	_mesh_box(root, Vector3(0, 0.004, 0), Vector3(0.06, 0.004, W * 2.0), paint)
 
 
-# --- Casas e muros ------------------------------------------------------------
+# --- Cercas -----------------------------------------------------------------------
 
-## side = -1 (fundo da tela, casas altas) ou +1 (lado da câmera, muros baixos).
-func _build_houses(root: Node3D, side: float, tall: bool) -> void:
-	var front_z := side * (Field.ASPHALT_HALF_WIDTH + Field.SIDEWALK_WIDTH)
+func _build_fence_line(root: Node3D, side: float) -> void:
 	var x := -Field.STREET_HALF_LENGTH
-	var body := _static_body(root, _wall_physics)
-	var low_wall := _surface("block_wall", Color(0.58, 0.57, 0.55), 0.18, 0.5, 0.15, 0.6)
-	var roof := _surface("roof", Color(0.55, 0.27, 0.18), 0.15, 0.3, 0.0)
-	var dark := _flat_mat(Color(0.08, 0.08, 0.09), 0.4)
+	var gate_done := false
+	var wall_done := false
+	var body := _static_body(root, _soft_physics)
 	while x < Field.STREET_HALF_LENGTH:
-		var w := _rng.randf_range(6.0, 9.5)
-		w = minf(w, Field.STREET_HALF_LENGTH - x)
-		if w < 2.0:
-			break
-		var cx := x + w * 0.5
-		var color := WALL_COLORS[_rng.randi_range(0, WALL_COLORS.size() - 1)]
-		var wall_mat := _surface("wall_%d" % color.to_rgba32(), color, 0.12, 0.4, 0.08, 0.5)
-		if tall:
-			var h := _rng.randf_range(2.9, 3.4) * (2.0 if _rng.randf() < 0.35 else 1.0)
-			var depth := 6.0
-			var zc := front_z + side * depth * 0.5
-			_mesh_box(root, Vector3(cx, h * 0.5, zc), Vector3(w - 0.1, h, depth), wall_mat)
-			_box_shape(body, Vector3(cx, h * 0.5, zc), Vector3(w - 0.1, h, depth))
-			_mesh_box(root, Vector3(cx, h + 0.08, zc - side * 0.3), Vector3(w + 0.2, 0.16, depth + 0.8), roof)
-			# Portão de garagem e janela.
-			var gx := cx + _rng.randf_range(-w * 0.25, w * 0.25)
-			var gate := _flat_mat(GATE_COLORS[_rng.randi_range(0, GATE_COLORS.size() - 1)], 0.6, 0.4)
-			_mesh_box(root, Vector3(gx, 1.1, front_z + side * -0.03), Vector3(2.6, 2.2, 0.08), gate)
-			var wx := cx + (w * 0.3 if gx < cx else -w * 0.3)
-			_mesh_box(root, Vector3(wx, 1.6, front_z + side * -0.02), Vector3(1.2, 1.0, 0.05), dark)
-			if h > 4.0:
-				_mesh_box(root, Vector3(cx, 4.6, front_z + side * -0.02), Vector3(1.4, 1.0, 0.05), dark)
+		var r := _rng.randf()
+		var w: float
+		if not gate_done and r < 0.12 and absf(x) < 18.0:
+			w = 3.0
+			_iron_gate(root, x, side, w)
+			gate_done = true
+		elif not wall_done and r < 0.22 and side < 0.0:
+			w = _rng.randf_range(3.0, 4.5)
+			_block_wall(root, x, side, w)
+			wall_done = true
+		elif r < 0.5:
+			w = _rng.randf_range(4.0, 7.0)
+			_wire_fence(root, x, side, w)
 		else:
-			# Lado da câmera: muro baixo na calçada + casa recuada e baixa.
-			var mh := _rng.randf_range(1.5, 2.0)
-			_mesh_box(root, Vector3(cx, mh * 0.5, front_z + side * 0.1), Vector3(w - 0.05, mh, 0.2), low_wall)
-			_box_shape(body, Vector3(cx, mh * 0.5, front_z + side * 0.1), Vector3(w - 0.05, mh, 0.2))
-			var hz := front_z + side * 5.0
-			_mesh_box(root, Vector3(cx, 1.4, hz), Vector3(w - 1.0, 2.8, 5.0), wall_mat)
-			_mesh_box(root, Vector3(cx, 2.88, hz), Vector3(w - 0.6, 0.16, 5.6), roof)
-			var gate2 := _flat_mat(GATE_COLORS[_rng.randi_range(0, GATE_COLORS.size() - 1)], 0.6, 0.4)
-			_mesh_box(root, Vector3(cx + _rng.randf_range(-1.5, 1.5), 0.85, front_z + side * 0.1),
-				Vector3(1.4, 1.7, 0.24), gate2)
+			w = _rng.randf_range(4.0, 8.0)
+			_wood_fence(root, x, side, w, side > 0.0)
+		w = minf(w, Field.STREET_HALF_LENGTH - x)
+		_box_shape(body, Vector3(x + w * 0.5, 0.9, side * (FENCE_Z + 0.05)), Vector3(w, 1.8, 0.12))
 		x += w
 
 
+func _wood_fence(root: Node3D, x0: float, side: float, w: float, low: bool) -> void:
+	var z := side * (FENCE_Z + 0.06)
+	var base_h := _rng.randf_range(1.0, 1.25) if low else _rng.randf_range(1.5, 1.9)
+	var x := x0
+	while x < x0 + w:
+		var pw := _rng.randf_range(0.11, 0.19)
+		if _rng.randf() > 0.06: # algumas tábuas faltando
+			var ph := base_h + _rng.randf_range(-0.18, 0.12)
+			var t := Transform3D(Basis.from_euler(Vector3(_rng.randf_range(-0.03, 0.03), 0, _rng.randf_range(-0.05, 0.05))),
+				Vector3(x + pw * 0.5, ph * 0.5 + Field.CURB_HEIGHT * 0.5, z))
+			t = t.scaled_local(Vector3(pw - 0.01, ph, 0.022))
+			_planks.append(t)
+		x += pw + _rng.randf_range(0.0, 0.035)
+	# Travessas e mourões.
+	var wood := _wood_mat()
+	for y in [0.35, base_h - 0.25]:
+		_mesh_box(root, Vector3(x0 + w * 0.5, y, z + side * 0.03), Vector3(w, 0.07, 0.035), wood)
+	var px := x0
+	while px <= x0 + w:
+		_posts.append(Transform3D(Basis(), Vector3(px, base_h * 0.5, z + side * 0.06)).scaled_local(Vector3(0.09, base_h + 0.1, 0.09)))
+		px += 2.4
+
+
+func _wire_fence(root: Node3D, x0: float, side: float, w: float) -> void:
+	var z := side * (FENCE_Z + 0.05)
+	var wire := _flat_mat("wire", Color(0.32, 0.30, 0.28), 0.45, 0.6)
+	var px := x0
+	var tops: Array[Vector3] = []
+	while px <= x0 + w + 0.01:
+		var lean := _rng.randf_range(-0.06, 0.06)
+		var ph := _rng.randf_range(1.35, 1.55)
+		var t := Transform3D(Basis.from_euler(Vector3(lean, 0, _rng.randf_range(-0.05, 0.05))), Vector3(px, ph * 0.5, z))
+		_posts.append(t.scaled_local(Vector3(0.08, ph, 0.08)))
+		tops.append(Vector3(px, ph, z))
+		px += _rng.randf_range(2.0, 2.6)
+	for i in tops.size() - 1:
+		var a := tops[i]
+		var b := tops[i + 1]
+		for k in 4:
+			var y := 0.3 + k * 0.32
+			_sag_wire(root, Vector3(a.x, y, z), Vector3(b.x, y, z), 0.04 + 0.02 * k, wire, 0.004)
+
+
+func _iron_gate(root: Node3D, x0: float, side: float, w: float) -> void:
+	var z := side * (FENCE_Z + 0.05)
+	var iron := ShaderMaterial.new()
+	iron.shader = IRON_SHADER
+	iron.set_shader_parameter("rust_amount", 0.85)
+	iron.set_shader_parameter("paint_color", Color(0.18, 0.30, 0.22))
+	var h := 1.8
+	for y in [0.15, h * 0.5, h - 0.05]:
+		_mesh_box(root, Vector3(x0 + w * 0.5, y, z), Vector3(w, 0.05, 0.04), iron)
+	var bx := x0 + 0.05
+	while bx < x0 + w:
+		_mesh_box(root, Vector3(bx, h * 0.5, z), Vector3(0.022, h, 0.022), iron)
+		bx += 0.12
+	var concrete := _surface("gate_pillar", Color(0.55, 0.53, 0.5), 0.2, 0.6, 0.5, 0.6)
+	for px in [x0, x0 + w]:
+		_mesh_box(root, Vector3(px, 1.05, z), Vector3(0.3, 2.1, 0.3), concrete)
+
+
+func _block_wall(root: Node3D, x0: float, side: float, w: float) -> void:
+	var z := side * (FENCE_Z + 0.1)
+	var block := _surface("raw_block", Color(0.56, 0.55, 0.52), 0.25, 0.7, 0.4, 0.8)
+	var h := _rng.randf_range(1.6, 2.0)
+	_mesh_box(root, Vector3(x0 + w * 0.5, h * 0.5, z), Vector3(w, h, 0.15), block)
+	# Fileira de cima incompleta (obra parada).
+	var bx := x0
+	while bx < x0 + w * 0.6:
+		_mesh_box(root, Vector3(bx + 0.2, h + 0.1, z), Vector3(0.38, 0.19, 0.15), block)
+		bx += 0.4
+
+
+# --- Quintais e árvores -----------------------------------------------------------
+
+func _build_yard(root: Node3D, side: float) -> void:
+	var yard := _surface("yard_%d" % int(side), Color(0.25, 0.23, 0.15), 0.5, 0.7, 0.0, 0.0)
+	var depth := 12.0
+	_mesh_box(root, Vector3(0, 0.0, side * (FENCE_Z + depth * 0.5)), Vector3(Field.STREET_HALF_LENGTH * 2.0 + 8.0, 0.02, depth), yard)
+	var bark := ShaderMaterial.new()
+	bark.shader = BARK_SHADER
+	var leaves := ShaderMaterial.new()
+	leaves.shader = FOLIAGE_SHADER
+	var count := 7 if side < 0.0 else 4
+	for i in count:
+		var tx := _rng.randf_range(-Field.STREET_HALF_LENGTH + 2.0, Field.STREET_HALF_LENGTH - 2.0)
+		var tz := side * (FENCE_Z + _rng.randf_range(1.2, 4.5))
+		if side > 0.0 and absf(tx) < 8.0:
+			continue # do lado da câmera, só nas pontas (não tapa o jogo)
+		if i == 2 and side < 0.0:
+			_banana_tree(root, Vector3(tx, 0.0, tz))
+		else:
+			_tree(root, Vector3(tx, 0.0, tz), bark, leaves)
+
+
+func _tree(root: Node3D, base: Vector3, bark: Material, leaves: Material) -> void:
+	var trunk_h := _rng.randf_range(2.6, 3.8)
+	var r := _rng.randf_range(0.16, 0.28)
+	var lean := Vector3(_rng.randf_range(-0.12, 0.12), 0, _rng.randf_range(-0.08, 0.08))
+	_cylinder_between(root, base, base + Vector3(lean.x, trunk_h, lean.z), r, r * 0.75, bark)
+	var top := base + Vector3(lean.x, trunk_h, lean.z)
+	var n := _rng.randi_range(3, 5)
+	for i in n:
+		var ang := _rng.randf() * TAU
+		var start := base + Vector3(lean.x, trunk_h * _rng.randf_range(0.55, 0.95), lean.z)
+		var length := _rng.randf_range(1.3, 2.4)
+		var end := start + Vector3(cos(ang) * length, _rng.randf_range(0.6, 1.4), sin(ang) * length * 0.7)
+		_cylinder_between(root, start, end, r * 0.45, r * 0.18, bark)
+		_foliage(root, end + Vector3(0, 0.4, 0), _rng.randf_range(1.0, 1.6), leaves)
+	_foliage(root, top + Vector3(0, 0.9, 0), _rng.randf_range(1.8, 2.4), leaves)
+
+
+func _banana_tree(root: Node3D, base: Vector3) -> void:
+	var stem := _flat_mat("banana_stem", Color(0.36, 0.38, 0.20), 0.85)
+	var leaf := _flat_mat("banana_leaf", Color(0.24, 0.40, 0.13), 0.75)
+	for k in 3:
+		var p := base + Vector3(_rng.randf_range(-0.5, 0.5), 0, _rng.randf_range(-0.4, 0.4))
+		var h := _rng.randf_range(1.8, 2.6)
+		_cylinder_between(root, p, p + Vector3(0, h, 0), 0.13, 0.09, stem)
+		for i in 6:
+			var ang := i * TAU / 6.0 + _rng.randf()
+			var mi := _mesh_box(root, p + Vector3(cos(ang) * 0.6, h + 0.15, sin(ang) * 0.6), Vector3(1.4, 0.02, 0.38), leaf)
+			mi.rotation = Vector3(0, -ang, _rng.randf_range(-0.6, -0.2))
+
+
+func _foliage(root: Node3D, center: Vector3, radius: float, leaves: Material) -> void:
+	var mesh := SphereMesh.new()
+	mesh.radius = radius
+	mesh.height = radius * 1.6
+	mesh.radial_segments = 14
+	mesh.rings = 7
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = leaves
+	mi.position = center
+	root.add_child(mi)
+
+
+# --- Postes, fios, pontas da rua e objetos ------------------------------------------
+
+func _build_poles(root: Node3D) -> void:
+	var wood := _wood_mat()
+	var wire := _flat_mat("power_wire", Color(0.08, 0.08, 0.08), 0.5)
+	var body := _static_body(root, _soft_physics)
+	var tops: Array[Vector3] = []
+	var px := -Field.STREET_HALF_LENGTH + 4.0
+	while px < Field.STREET_HALF_LENGTH:
+		var z := -(FENCE_Z - 0.25)
+		var h := 7.0
+		var base := Vector3(px + _rng.randf_range(-1.0, 1.0), 0.0, z)
+		var tilt := Vector3(_rng.randf_range(-0.05, 0.05), 0, _rng.randf_range(-0.03, 0.03))
+		_cylinder_between(root, base, base + Vector3(tilt.x * h, h, tilt.z * h), 0.13, 0.1, wood)
+		var top := base + Vector3(tilt.x * h, h - 0.4, tilt.z * h)
+		_mesh_box(root, top, Vector3(0.1, 0.1, 1.4), wood)
+		tops.append(top)
+		var cs := CollisionShape3D.new()
+		var shape := CylinderShape3D.new()
+		shape.radius = 0.13
+		shape.height = h
+		cs.shape = shape
+		cs.position = base + Vector3(0, h * 0.5, 0)
+		body.add_child(cs)
+		px += _rng.randf_range(15.0, 20.0)
+	for i in tops.size() - 1:
+		for dz in [-0.6, 0.0, 0.6]:
+			_sag_wire(root, tops[i] + Vector3(0, 0, dz), tops[i + 1] + Vector3(0, 0, dz), 0.45, wire, 0.012)
+
+
 func _build_street_ends(root: Node3D) -> void:
-	# Casas atravessadas no fim da rua (esquina em T) seguram a bola.
-	var body := _static_body(root, _wall_physics)
-	for side in [-1.0, 1.0]:
-		var x: float = side * (Field.STREET_HALF_LENGTH + 0.6)
-		var width := (Field.ASPHALT_HALF_WIDTH + Field.SIDEWALK_WIDTH) * 2.0 + 0.4
-		var color := WALL_COLORS[_rng.randi_range(0, WALL_COLORS.size() - 1)]
-		var mat := _surface("end_%d" % color.to_rgba32(), color, 0.12, 0.4, 0.1, 0.5)
-		_mesh_box(root, Vector3(x, 1.6, 0), Vector3(1.2, 3.2, width), mat)
-		_box_shape(body, Vector3(x, 1.6, 0), Vector3(1.2, 3.2, width))
+	var body := _static_body(root, _soft_physics)
+	for sx in [-1.0, 1.0]:
+		var x: float = sx * (Field.STREET_HALF_LENGTH + 0.3)
+		var width := FENCE_Z * 2.0
+		var z := -FENCE_Z
+		while z < FENCE_Z:
+			var pw := _rng.randf_range(0.12, 0.18)
+			var ph := _rng.randf_range(1.5, 1.9)
+			var t := Transform3D(Basis.from_euler(Vector3(0, PI * 0.5, _rng.randf_range(-0.04, 0.04))), Vector3(x, ph * 0.5, z + pw * 0.5))
+			_planks.append(t.scaled_local(Vector3(pw - 0.01, ph, 0.022)))
+			z += pw + _rng.randf_range(0.0, 0.04)
+		_box_shape(body, Vector3(x, 0.9, 0), Vector3(0.15, 1.8, width))
 
 
 func _build_props(root: Node3D) -> void:
-	var concrete := _surface("pole", Color(0.6, 0.6, 0.58), 0.1, 0.3, 0.1)
-	var body := _static_body(root, _wall_physics)
-	# Postes de luz de concreto nas calçadas.
-	for p in [Vector2(-9.0, -1.0), Vector2(12.0, -1.0), Vector2(-24.0, 1.0), Vector2(24.0, 1.0)]:
-		var z: float = p.y * (Field.ASPHALT_HALF_WIDTH + 0.35)
-		var pos := Vector3(p.x, 3.5, z)
-		_mesh_cylinder(root, pos, 0.11, 7.0, concrete)
-		var shape := CylinderShape3D.new()
-		shape.radius = 0.11
-		shape.height = 7.0
-		var cs := CollisionShape3D.new()
-		cs.shape = shape
-		cs.position = pos
-		body.add_child(cs)
-		_mesh_box(root, Vector3(p.x, 6.8, z - p.y * 0.7), Vector3(0.08, 0.08, 1.4), concrete)
-	# Lixeira e tijolos soltos (poucos objetos, sem poluir).
-	var bin := _flat_mat(Color(0.2, 0.35, 0.25), 0.7)
-	var bin_pos := Vector3(7.5, Field.CURB_HEIGHT + 0.45, -(Field.ASPHALT_HALF_WIDTH + 1.2))
-	_mesh_cylinder(root, bin_pos, 0.28, 0.9, bin)
-	var brick := _flat_mat(Color(0.6, 0.3, 0.2), 0.9)
-	for b in [Vector3(-16.5, 0.05, 3.0), Vector3(-16.2, 0.05, 3.2), Vector3(17.0, 0.05, -3.1)]:
-		_mesh_box(root, b, Vector3(0.19, 0.09, 0.09), brick)
+	var h := Field.CURB_HEIGHT
+	var sz := -(Field.ASPHALT_HALF_WIDTH + 1.4)
+	# Cadeira de plástico branca na calçada.
+	var plastic := _flat_mat("plastic", Color(0.86, 0.86, 0.82), 0.45)
+	var cx := 6.5
+	_mesh_box(root, Vector3(cx, h + 0.42, sz), Vector3(0.42, 0.04, 0.42), plastic)
+	var back := _mesh_box(root, Vector3(cx, h + 0.68, sz - 0.2), Vector3(0.42, 0.5, 0.04), plastic)
+	back.rotation.x = -0.15
+	for lx in [-0.18, 0.18]:
+		for lz in [-0.18, 0.18]:
+			_cylinder_between(root, Vector3(cx + lx, h, sz + lz), Vector3(cx + lx * 0.8, h + 0.42, sz + lz * 0.8), 0.018, 0.018, plastic)
+	# Pneu velho deitado e tijolos soltos.
+	var rubber := _flat_mat("rubber", Color(0.06, 0.06, 0.06), 0.9)
+	var tire := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 0.18
+	tm.outer_radius = 0.32
+	tire.mesh = tm
+	tire.material_override = rubber
+	tire.position = Vector3(-11.0, h + 0.07, -(FENCE_Z - 0.5))
+	tire.scale = Vector3(1, 0.7, 1)
+	root.add_child(tire)
+	var brick := _flat_mat("brick", Color(0.6, 0.3, 0.2), 0.9)
+	for b in [Vector3(-17.0, h + 0.05, sz + 0.4), Vector3(-16.7, h + 0.05, sz + 0.55), Vector3(17.5, 0.05, Field.HALF_WIDTH + 0.6)]:
+		var bm := _mesh_box(root, b, Vector3(0.19, 0.09, 0.09), brick)
+		bm.rotation.y = _rng.randf() * PI
+	# Bicicleta encostada na cerca.
+	var bike_x := -4.0
+	var bz := -(FENCE_Z - 0.18)
+	var frame := _flat_mat("bike", Color(0.55, 0.1, 0.08), 0.5, 0.4)
+	for wx in [-0.5, 0.5]:
+		var wheel := MeshInstance3D.new()
+		var wm := TorusMesh.new()
+		wm.inner_radius = 0.3
+		wm.outer_radius = 0.33
+		wheel.mesh = wm
+		wheel.material_override = rubber
+		wheel.position = Vector3(bike_x + wx, h + 0.33, bz)
+		wheel.rotation = Vector3(PI * 0.5, 0, 0.12)
+		root.add_child(wheel)
+	_cylinder_between(root, Vector3(bike_x - 0.5, h + 0.33, bz), Vector3(bike_x, h + 0.75, bz - 0.03), 0.02, 0.02, frame)
+	_cylinder_between(root, Vector3(bike_x + 0.5, h + 0.33, bz), Vector3(bike_x, h + 0.75, bz - 0.03), 0.02, 0.02, frame)
+	_cylinder_between(root, Vector3(bike_x - 0.5, h + 0.33, bz), Vector3(bike_x + 0.5, h + 0.33, bz), 0.02, 0.02, frame)
+	# Saco de lixo.
+	var bag := MeshInstance3D.new()
+	var bagm := SphereMesh.new()
+	bagm.radius = 0.28
+	bagm.height = 0.45
+	bag.mesh = bagm
+	bag.material_override = _flat_mat("bag", Color(0.05, 0.05, 0.06), 0.35)
+	bag.position = Vector3(12.5, h + 0.2, -(FENCE_Z - 0.35))
+	root.add_child(bag)
 
 
-## Paredes invisíveis altas nas fachadas: a bola não voa para fora do mundo
+## Paredes invisíveis altas: a bola não sai do mundo por cima das cercas
 ## (bola no quintal do vizinho vira evento na Etapa 6).
 func _build_boundary(root: Node3D) -> void:
-	var body := _static_body(root, _wall_physics)
+	var body := _static_body(root, _soft_physics)
 	body.name = "InvisibleBoundary"
-	var face := Field.ASPHALT_HALF_WIDTH + Field.SIDEWALK_WIDTH
-	var h := 16.0
+	var hgt := 16.0
 	for side in [-1.0, 1.0]:
-		_box_shape(body, Vector3(0, h * 0.5, side * (face + 0.25)), Vector3(Field.STREET_HALF_LENGTH * 2.0 + 2.0, h, 0.5))
-		_box_shape(body, Vector3(side * (Field.STREET_HALF_LENGTH + 0.25), h * 0.5, 0), Vector3(0.5, h, face * 2.0 + 1.0))
+		_box_shape(body, Vector3(0, hgt * 0.5, side * (FENCE_Z + 0.25)), Vector3(Field.STREET_HALF_LENGTH * 2.0 + 2.0, hgt, 0.5))
+		_box_shape(body, Vector3(side * (Field.STREET_HALF_LENGTH + 0.55), hgt * 0.5, 0), Vector3(0.5, hgt, FENCE_Z * 2.0 + 1.0))
 
 
-# --- Utilitários --------------------------------------------------------------
+func _flush_multimeshes(root: Node3D) -> void:
+	_multimesh(root, _planks, _wood_mat())
+	var post_mat := _wood_mat()
+	_multimesh(root, _posts, post_mat)
+
+
+func _multimesh(root: Node3D, transforms: Array[Transform3D], mat: Material) -> void:
+	if transforms.is_empty():
+		return
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	var box := BoxMesh.new()
+	box.size = Vector3.ONE
+	mm.mesh = box
+	mm.instance_count = transforms.size()
+	for i in transforms.size():
+		mm.set_instance_transform(i, transforms[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.material_override = mat
+	root.add_child(mmi)
+
+
+# --- Utilitários ------------------------------------------------------------------
+
+func _sag_wire(root: Node3D, a: Vector3, b: Vector3, sag: float, mat: Material, radius: float) -> void:
+	var segs := 6
+	var prev := a
+	for i in range(1, segs + 1):
+		var t := float(i) / segs
+		var p := a.lerp(b, t) - Vector3(0, sag * 4.0 * t * (1.0 - t), 0)
+		_cylinder_between(root, prev, p, radius, radius, mat)
+		prev = p
+
+
+func _cylinder_between(root: Node3D, a: Vector3, b: Vector3, r0: float, r1: float, mat: Material) -> MeshInstance3D:
+	var d := b - a
+	var length := d.length()
+	var mesh := CylinderMesh.new()
+	mesh.bottom_radius = r0
+	mesh.top_radius = r1
+	mesh.height = length
+	mesh.radial_segments = 8 if r0 > 0.05 else 4
+	mesh.rings = 1
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = mat
+	root.add_child(mi)
+	var y := d / maxf(length, 0.0001)
+	var x := y.cross(Vector3.FORWARD if absf(y.dot(Vector3.FORWARD)) < 0.9 else Vector3.RIGHT).normalized()
+	var z := x.cross(y).normalized()
+	mi.transform = Transform3D(Basis(x, y, z), (a + b) * 0.5)
+	if r0 < 0.03:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+func _wood_mat() -> ShaderMaterial:
+	if _materials.has("wood"):
+		return _materials["wood"]
+	var m := ShaderMaterial.new()
+	m.shader = WOOD_SHADER
+	_materials["wood"] = m
+	return m
+
 
 func _surface(key: String, color: Color, variation: float, stains: float, cracks: float, dirt_bottom := 0.0) -> ShaderMaterial:
 	if _materials.has(key):
@@ -224,8 +475,7 @@ func _surface(key: String, color: Color, variation: float, stains: float, cracks
 	return m
 
 
-func _flat_mat(color: Color, roughness: float, metallic := 0.0) -> StandardMaterial3D:
-	var key := "flat_%s_%f" % [color.to_html(), roughness]
+func _flat_mat(key: String, color: Color, roughness: float, metallic := 0.0) -> StandardMaterial3D:
 	if _materials.has(key):
 		return _materials[key]
 	var m := StandardMaterial3D.new()
@@ -239,20 +489,6 @@ func _flat_mat(color: Color, roughness: float, metallic := 0.0) -> StandardMater
 func _mesh_box(root: Node3D, pos: Vector3, size: Vector3, mat: Material) -> MeshInstance3D:
 	var mesh := BoxMesh.new()
 	mesh.size = size
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = mat
-	mi.position = pos
-	root.add_child(mi)
-	return mi
-
-
-func _mesh_cylinder(root: Node3D, pos: Vector3, radius: float, height: float, mat: Material) -> MeshInstance3D:
-	var mesh := CylinderMesh.new()
-	mesh.top_radius = radius
-	mesh.bottom_radius = radius
-	mesh.height = height
-	mesh.radial_segments = 10
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = mat
