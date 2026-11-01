@@ -42,14 +42,14 @@ const TURN_SPEED_UP := 1.35
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 3.5
-@export var sprint_speed := 5.2
+@export var jog_speed := 3.2
+@export var sprint_speed := 4.8
 @export var ball_speed_factor := 0.92
-@export var acceleration := 6.5
-@export var deceleration := 9.0
+@export var acceleration := 5.5
+@export var deceleration := 8.0
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 6.5
-@export var turn_speed_with_ball := 5.5
+@export var turn_speed := 5.5
+@export var turn_speed_with_ball := 4.8
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -507,7 +507,7 @@ func _choose_kick_foot(dir: Vector3) -> bool:
 
 
 func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Node3D, lofted := false) -> void:
-	if a == PlayerIntent.Action.PASS and lofted:
+	if a == PlayerIntent.Action.PASS and lofted and not is_human:
 		power = maxf(power, LONG_PASS_POWER) # passe por cima
 	var kdir := _kick_direction(a, aim, target)
 	_kick_mirror = _choose_kick_foot(kdir)
@@ -517,7 +517,8 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		_begin_action(kind, contact, contact + 0.3, power, aim, null, 0.35)
 		_action_face = facing if aim.length() < 0.2 else Vector3(aim.x, 0.0, aim.z).normalized()
 	else:
-		var long := power >= LONG_PASS_POWER
+		# Humano: segurar = passe RASTEIRO mais forte; só sobe arrastando o dedo.
+		var long := lofted or (not is_human and power >= LONG_PASS_POWER)
 		# Pequena preparação antes do toque, como no futebol de verdade.
 		var contact := 0.28 if long else 0.2
 		_begin_action(&"long_pass" if long else &"pass", contact, contact + 0.22, power, aim, target, 0.5)
@@ -594,6 +595,16 @@ func _update_action(delta: float) -> void:
 		var left := Vector3.UP.cross(facing)
 		hv = hv.move_toward((facing * rv.z + left * rv.x) * hips_h * sp, acceleration * 2.0 * delta)
 	elif not _action_contact_done and _action_kind in AERIAL_KINDS:
+		# Apertou PASSE/CHUTE com a bola ainda vindo: vira cabeceio de primeira.
+		if _action_kind == &"head_control" and _buffer_timer > 0.0 \
+				and _buffer_action in [PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT] \
+				and _action_contact - _action_time > 0.15 and AnimationCatalog.has_clip(&"header"):
+			_action_kind = &"header"
+			_action_aim = _buffer_aim
+			_action_power = _buffer_power
+			_action_precise = _buffer_action == PlayerIntent.Action.SHOOT
+			_buffer_timer = 0.0
+			action_started.emit(&"header")
 		var remaining := maxf(_action_contact - _action_time, 0.05)
 		var to := _aerial_point - global_position
 		to.y = 0.0
@@ -703,7 +714,10 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 		return false
 	# IA: viradas animadas com moderação (senão fica lenta e repetitiva).
 	var ai_turn_ok := is_human or _rng.randf() < 0.04
-	if in_len > 0.6 and speed > (2.6 if is_human else 3.6) and ai_turn_ok and AnimationCatalog.has_clip(&"turn180"):
+	var fetching := ball_control.has_ball() and in_len > 0.1 \
+		and ball_control.approach_point(input.normalized()) != Vector3.INF
+	if in_len > 0.6 and speed > (2.6 if is_human else 3.6) and ai_turn_ok and not fetching \
+			and AnimationCatalog.has_clip(&"turn180"):
 		if hv.normalized().dot(input.normalized()) < -0.55:
 			_start_turn(&"turn180", &"turn180", input.normalized())
 			return true

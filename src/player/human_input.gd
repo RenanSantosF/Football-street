@@ -11,6 +11,8 @@ signal switch_requested
 signal charge_changed(value: float, kind: StringName)
 ## Mira do chute: ativa enquanto o botão de chute está segurado.
 signal aim_changed(active: bool, direction: Vector3, power: float)
+## Seta do PASSE: para quem (ou para onde) a bola vai, enquanto segura PASSE.
+signal pass_aim_changed(active: bool, direction: Vector3, power: float, assisted: bool)
 
 const MAX_CHARGE_TIME := 0.6
 
@@ -19,6 +21,10 @@ const MAX_CHARGE_TIME := 0.6
 var current_player: Player = null
 
 var _move := Vector3.ZERO
+var _raw := Vector3.ZERO
+var _pass_target: Player = null
+var _pass_dir := Vector3.ZERO
+var _pass_aiming := false
 var _sprint := false
 var _pass_hold := -1.0
 var _shoot_hold := -1.0
@@ -48,7 +54,8 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	var v := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	_move = _smooth_input(_to_world(v), delta)
+	_raw = _to_world(v)
+	_move = _smooth_input(_raw, delta)
 	_sprint = Input.is_action_pressed("sprint")
 	# Segurando CHUTE com a bola (ou perto dela): o analógico vira a MIRA e o
 	# jogador para; a direção escolhida é exatamente para onde a bola vai.
@@ -57,8 +64,8 @@ func _physics_process(delta: float) -> void:
 	if _aiming:
 		if not was_aiming:
 			_aim = current_player.facing
-		if _move.length() > 0.25:
-			_aim = _move.normalized()
+		if _raw.length() > 0.25:
+			_aim = _raw.normalized() # mira pelo analógico cru (sem atraso)
 		_move = Vector3.ZERO
 		aim_changed.emit(true, _aim, clampf(_shoot_hold / MAX_CHARGE_TIME, 0.0, 1.0))
 	elif was_aiming:
@@ -112,6 +119,7 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_just_pressed("pass"):
 			switch_requested.emit()
 
+	_update_pass_aim()
 	var charge := -1.0
 	var kind: StringName = &""
 	if _shoot_hold >= 0.0:
@@ -127,6 +135,30 @@ func _physics_process(delta: float) -> void:
 			current_player.set_charge(charge, kind)
 
 
+## Seta do passe com ASSISTÊNCIA: o analógico aponta e o passe vai no
+## companheiro mais próximo dessa direção (cone de 45°). Ninguém no cone →
+## passe em profundidade, para o espaço apontado.
+func _update_pass_aim() -> void:
+	var active := _pass_hold >= 0.0 and current_player != null and current_player.ball != null
+	if active:
+		var dir := _raw.normalized() if _raw.length() > 0.25 else current_player.facing
+		var mate := current_player.ball_control.pick_pass_target(dir, 45.0)
+		if mate == null and _raw.length() <= 0.25:
+			mate = current_player.ball_control.pick_pass_target(dir, 180.0)
+		_pass_target = mate
+		if mate != null:
+			var to := mate.global_position - current_player.ball.global_position
+			to.y = 0.0
+			_pass_dir = to.normalized()
+		else:
+			_pass_dir = dir
+		_pass_aiming = true
+		pass_aim_changed.emit(true, _pass_dir, clampf(_pass_hold / MAX_CHARGE_TIME, 0.0, 1.0), mate != null)
+	elif _pass_aiming:
+		_pass_aiming = false
+		pass_aim_changed.emit(false, _pass_dir, 0.0, false)
+
+
 func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 	intent.move = _move
 	intent.sprint = _sprint
@@ -134,8 +166,14 @@ func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 		if _queued == PlayerIntent.Action.SHOOT and _aim != Vector3.ZERO and _queued_power > 0.0:
 			intent.set_action(_queued, _queued_power, _aim)
 			intent.precise = true
+		elif _queued == PlayerIntent.Action.PASS:
+			# Passe: exatamente o que a seta mostrou.
+			var aim := _pass_dir if _pass_dir != Vector3.ZERO else (_raw if _raw.length() > 0.2 else Vector3.ZERO)
+			intent.set_action(_queued, _queued_power, aim, _pass_target)
+			_pass_target = null
+			_pass_dir = Vector3.ZERO
 		else:
-			intent.set_action(_queued, _queued_power, _move if _move.length() > 0.2 else Vector3.ZERO)
+			intent.set_action(_queued, _queued_power, _raw if _raw.length() > 0.2 else Vector3.ZERO)
 		intent.lofted = _queued_lofted
 		_queued = PlayerIntent.Action.NONE
 		_queued_lofted = false

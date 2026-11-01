@@ -28,13 +28,26 @@ func _ready() -> void:
 	visible = false
 	if human_input != null:
 		human_input.aim_changed.connect(_on_aim_changed)
+		human_input.pass_aim_changed.connect(_on_pass_aim_changed)
 
 
 func _on_aim_changed(active: bool, direction: Vector3, power: float) -> void:
+	if not active:
+		_pass_mode = false
 	_active = active
 	_dir = Vector3(direction.x, 0.0, direction.z).normalized() if direction.length() > 0.01 else _dir
 	_power = power
 	visible = active
+
+
+var _pass_mode := false
+var _assisted := false
+
+
+func _on_pass_aim_changed(active: bool, direction: Vector3, power: float, assisted: bool) -> void:
+	_on_aim_changed(active, direction, power)
+	_pass_mode = active
+	_assisted = assisted
 
 
 func _process(_delta: float) -> void:
@@ -44,7 +57,11 @@ func _process(_delta: float) -> void:
 	rotation.y = atan2(-_dir.x, -_dir.z)
 	var length := 1.2 + _power * 2.8
 	_mesh.scale = Vector3(1.0, 1.0, length)
-	_mat.albedo_color = Color(1.0, lerpf(0.85, 0.35, _power), 0.2, 0.75)
+	if _pass_mode:
+		# Passe: azul-claro = assistido (vai no companheiro); branco = em profundidade.
+		_mat.albedo_color = Color(0.35, 0.85, 1.0, 0.8) if _assisted else Color(1, 1, 1, 0.75)
+	else:
+		_mat.albedo_color = Color(1.0, lerpf(0.85, 0.35, _power), 0.2, 0.75)
 
 
 ## Seta apontando para -Z, com 1 m de comprimento (escalada em Z).

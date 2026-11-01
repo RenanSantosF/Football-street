@@ -92,7 +92,7 @@ const GESTURE_CLIPS := {
 ## Ações que ficam no chão no fim (carrinho, tropeço): levantam depois.
 const DOWN_ACTIONS: Array[StringName] = [&"slide", &"trip"]
 ## Velocidade de reprodução das ações (um pouco mais rápido = mais responsivo).
-const ACTION_SPEED := 1.1
+const ACTION_SPEED := 1.0
 const RELEASE_AFTER_CONTACT := 0.18
 const RELEASE_SPEED := 1.8
 
@@ -180,6 +180,17 @@ func physics_update(delta: float) -> void:
 		return # comemoração/lamento: fica até a próxima saída de bola
 
 	var wanted := _wanted_base()
+	# Ação já terminou na lógica e o jogador está correndo: volta para a
+	# corrida na hora (nada de deslizar com o pé esticado de um clipe parado).
+	if not (current in BASE_STATES) and current != &"Burst" and current != _gesture_state \
+			and not (_action_kind in DOWN_ACTIONS) and not (current in [&"Fallen", &"GetUpFront", &"GetUpBack", &"Trip", &"Tackle"]) \
+			and player.state == Player.State.MOVE and v.length() > 1.2 \
+			and not (current in [&"Celebrate", &"CelebrateIdle", &"Samba", &"Defeated"]):
+		playback.travel(wanted)
+		_action_state = &""
+		_action_kind = &""
+		_prev_speed = v.length()
+		return
 	# Gestos de espera (parado): reclamar, aquecer, conversar, embaixadinha.
 	if player.gesture != &"" and current in BASE_STATES and v.length() < 0.3 \
 			and GESTURE_STATES.has(player.gesture) and _has_state(GESTURE_STATES[player.gesture]):

@@ -195,13 +195,37 @@ func _support_or_mark(carrier: Player) -> void:
 	var s := Field.attack_sign(player.team)
 	var ball_pos := player.ball.global_position
 	if carrier != null:
-		# Apoio: abrir no corredor oposto ao de quem conduz, à frente da bola.
-		var lane := -signf(carrier.global_position.z)
-		if lane == 0.0:
-			lane = 1.0 if player.formation_index == 1 else -1.0
-		var ahead := 3.5 + 1.5 * float(player.formation_index)
-		_move_target = Vector3(carrier.global_position.x + s * ahead, 0.0, lane * 2.2)
-		_sprint = absf(_move_target.x - player.global_position.x) > 4.0
+		# Apoio inteligente: um companheiro abre À FRENTE no corredor oposto ao
+		# de quem conduz; o outro dá opção na DIAGONAL de trás, do mesmo lado.
+		# Nunca os dois juntos do mesmo lado. Os pontos "respiram" um pouco
+		# (desmarque), para não ficarem parados.
+		var c := carrier.global_position
+		var side := signf(c.z)
+		if absf(c.z) < 0.6:
+			side = 1.0 if player.formation_index == 1 else -1.0
+		var spot_a := Vector3(c.x + s * 4.2, 0.0, -side * 2.9)
+		var spot_b := Vector3(c.x - s * 3.0, 0.0, side * clampf(absf(c.z) - 1.8, -1.5, 2.5))
+		if absf(c.z) < 0.6:
+			spot_b = Vector3(c.x + s * 1.5, 0.0, side * 3.2)
+		var mates: Array[Player] = []
+		for m in player.get_teammates():
+			if m != carrier and not m.is_goalkeeper():
+				mates.append(m)
+		var target := spot_a
+		if mates.size() >= 1:
+			var other: Player = mates[0] # get_teammates() já exclui o próprio jogador
+			var mine_a := player.global_position.distance_to(spot_a) + other.global_position.distance_to(spot_b)
+			var mine_b := player.global_position.distance_to(spot_b) + other.global_position.distance_to(spot_a)
+			# desempate estável pelo número da formação
+			if absf(mine_a - mine_b) < 1.0:
+				target = spot_a if player.formation_index < other.formation_index else spot_b
+			else:
+				target = spot_a if mine_a < mine_b else spot_b
+		var t := Time.get_ticks_msec() / 1000.0 + float(player.formation_index) * 1.7
+		target += Vector3(sin(t * 0.7) * 0.9, 0.0, cos(t * 0.5) * 0.6)
+		_move_target = Field.clamp_inside(target, 0.7)
+		_sprint = player.global_position.distance_to(_move_target) > 4.0
+		return
 	else:
 		# Bola livre e não sou o perseguidor: zona do meu lado.
 		var base := player.match_manager.formation_position(player.team, player.formation_index, ball_pos.x)

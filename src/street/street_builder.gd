@@ -246,8 +246,8 @@ func _build_yard(root: Node3D, side: float) -> void:
 	for i in count:
 		var tx := _rng.randf_range(-Field.STREET_HALF_LENGTH + 2.0, Field.STREET_HALF_LENGTH - 2.0)
 		var tz := side * (FENCE_Z + _rng.randf_range(1.2, 4.5))
-		if side > 0.0 and absf(tx) < 8.0:
-			continue # do lado da câmera, só nas pontas (não tapa o jogo)
+		if side > 0.0:
+			continue # do lado da câmera não tem árvore (a câmera entrava na copa)
 		if i == 2 and side < 0.0:
 			_banana_tree(root, Vector3(tx, 0.0, tz))
 		else:

@@ -46,7 +46,10 @@ func _physics_process(_d: float) -> void:
 		2: _turn_far_test()
 		3: _shake_test()
 		4: _back_pass_test()
-		5:
+		5: _ball_behind_test(Vector3(-0.55, 0, 0), "atras")
+		6: _ball_behind_test(Vector3(-0.6, 0, -0.55), "atras_lado")
+		7: _ball_behind_test(Vector3(-1.1, 0, 0.3), "atras_longe")
+		8:
 			print("RESULTADOS: ", results)
 			get_tree().quit()
 
@@ -119,6 +122,8 @@ func _turn_far_test() -> void:
 		Input.action_press("move_right", 1.0)
 		Input.action_press("sprint")
 	var t := f - t0
+	if OS.get_environment("DBG") != "" and t > 55 and t % 5 == 0 and t < 160:
+		print("VL t=", t, " me=", me.global_position, " v=", me.get_flat_velocity(), " ball=", ball.global_position, " bv=", ball.flat_velocity(), " has=", me.ball_control.has_ball(), " in=", me.intent.move, " st=", me.state, " ", me._action_kind)
 	if t == 70:
 		# vira 90° (para cima na tela) sem soltar o sprint
 		Input.action_release("move_right")
@@ -164,6 +169,25 @@ func _back_pass_test() -> void:
 		var to_mate := (_mate.global_position - Vector3(0, 0, 0)).normalized()
 		results["tras_passe_desvio_graus"] = snappedf(rad_to_deg(Vector3(_kick_v.x, 0, _kick_v.z).normalized().angle_to(Vector3(to_mate.x, 0, to_mate.z))), 0.1) if _kick_v != Vector3.ZERO else -1.0
 		results["tras_sem_cair"] = me.state != Player.State.STUNNED
+		_next()
+
+
+func _ball_behind_test(off: Vector3, key: String) -> void:
+	if t0 == 0:
+		_setup(Vector3(-6, 0, 0), Vector3(1, 0, 0))
+		ball.place_at(Vector3(-6, Ball.RADIUS, 0) + off)
+		ball.claim(me)
+		me.velocity = Vector3(3.0, 0, 0)
+		t0 = f
+		Input.action_press("move_right", 1.0)
+	var t := f - t0
+	if t % 15 == 0 and OS.get_environment("DBG") != "":
+		print(key, " t=", t, " me=", me.global_position, " v=", me.get_flat_velocity(), " ball=", ball.global_position, " st=", me.state, " act=", me._action_kind)
+	if t == 110:
+		var o := ball.global_position - me.global_position
+		results[key + "_tem_bola"] = me.ball_control.has_ball()
+		results[key + "_bola_frente"] = o.x > 0.1
+		results[key + "_correndo"] = me.get_flat_velocity().x > 1.5
 		_next()
 
 
