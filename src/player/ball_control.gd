@@ -24,6 +24,11 @@ const BODY_RADIUS := 0.3
 const GK_BODY_RADIUS := 0.55
 const TACKLE_RANGE := 1.5
 const LONG_PASS_POWER := 0.55
+## Distância lateral entre o centro do corpo e a bola no chute (pé de chute).
+const KICK_FOOT_OFFSET := 0.13
+## Condução: espera até um pé da animação chegar perto da bola para tocar.
+const FOOT_TOUCH_RADIUS := 0.32
+const MAX_TOUCH_WAIT := 0.3
 
 var player: Player
 var ball: Ball
@@ -32,6 +37,9 @@ var _since_touch := 10.0
 var _since_contact := 10.0
 var _foot_side := 1.0
 var _save_rolled := false
+var _touch_wait := 0.0
+## O último toque saiu por tempo esgotado (nenhum pé chegou perto)?
+var last_touch_forced := false
 var _rng := RandomNumberGenerator.new()
 
 
@@ -55,7 +63,7 @@ func physics_update(delta: float) -> void:
 	if has_ball():
 		# Durante uma ação (chute, passe, drible) ou com chute pendente, sem toques de condução.
 		if player.state == Player.State.MOVE and not player._has_pending_kick():
-			_conduct()
+			_conduct(delta)
 		elif ball_distance() > LOSE_RADIUS:
 			ball.release()
 	else:
@@ -110,8 +118,8 @@ func catch_up_velocity(dir: Vector3) -> Vector3:
 	var along := off.dot(dir)
 	var right := dir.cross(Vector3.UP)
 	var v := Vector3.ZERO
-	if along > FOOT_DISTANCE + 0.2:
-		v += dir * clampf((along - FOOT_DISTANCE - 0.2) * 1.8, 0.0, 2.0)
+	if along > FOOT_DISTANCE + 0.45:
+		v += dir * clampf((along - FOOT_DISTANCE - 0.45) * 1.6, 0.0, 2.0)
 	if along > 0.0:
 		v += right * clampf(off.dot(right) * 1.2, -0.8, 0.8)
 	return v
@@ -181,7 +189,7 @@ func _body_contact() -> void:
 	player.notify_touch(&"body")
 
 
-func _conduct() -> void:
+func _conduct(delta: float) -> void:
 	var off := ball_offset()
 	var d := off.length()
 	if d > LOSE_RADIUS or ball.global_position.y > 1.3:
@@ -210,21 +218,57 @@ func _conduct() -> void:
 	var along := off.dot(dir)
 	var lateral := off.dot(right)
 	var rel_along := (bv - pv).dot(dir)
-	var behind := along < FOOT_DISTANCE + 0.1 and rel_along < 0.4
+	var behind := along < FOOT_DISTANCE + 0.45 and rel_along < 0.4
 	var drifting := absf(lateral) > 0.35
 	var mismatch := bv.length() > 0.5 and bv.normalized().dot(dir) < 0.75
-	if behind or drifting or mismatch:
-		_do_touch(dir, speed, lateral)
+	if not (behind or drifting or mismatch):
+		_touch_wait = 0.0
+		return
+	# Sincronia com a animação: o toque sai quando um pé passa perto da bola
+	# (com limite de espera, para nunca perder o controle por causa disso).
+	if along > FOOT_DISTANCE - 0.1 and _touch_wait < MAX_TOUCH_WAIT and not _foot_near_ball():
+		_touch_wait += delta
+		return
+	last_touch_forced = _touch_wait >= MAX_TOUCH_WAIT
+	_touch_wait = 0.0
+	_do_touch(dir, speed, lateral)
+
+
+func _foot_near_ball() -> bool:
+	var feet := player.get_foot_positions()
+	if feet.is_empty():
+		return true # sem modelo animado: toca imediatamente
+	var b := ball.global_position
+	var fwd := player.facing
+	var p := player.global_position
+	for f in feet:
+		# Pé baixo, perto da bola e à frente do corpo (não toca com o calcanhar).
+		var foot_along := (f - p).dot(fwd)
+		if f.y < 0.35 and Vector2(f.x - b.x, f.z - b.z).length() < FOOT_TOUCH_RADIUS \
+				and foot_along > 0.05 and foot_along <= (b - p).dot(fwd) + 0.02:
+			return true
+	return false
 
 
 func _do_touch(dir: Vector3, speed: float, lateral: float) -> void:
 	# "lead" = quanto a bola se afasta à frente do ponto do toque.
-	var lead := lerpf(0.45, 0.85, clampf(speed / player.jog_speed, 0.0, 1.0))
+	var lead := lerpf(0.6, 1.1, clampf(speed / player.jog_speed, 0.0, 1.0))
 	if player.intent.sprint and speed > player.jog_speed * 0.8:
-		lead = lerpf(0.85, 1.3, clampf((speed - player.jog_speed) / (player.sprint_speed - player.jog_speed), 0.0, 1.0))
+		lead = lerpf(1.1, 1.6, clampf((speed - player.jog_speed) / (player.sprint_speed - player.jog_speed), 0.0, 1.0))
 	lead *= _rng.randf_range(0.85, 1.15)
+	# Perto da lateral ou do fundo: toque curto e sem empurrar a bola para fora.
+	var bp := ball.global_position
+	var line_gap := minf(Field.HALF_WIDTH - absf(bp.z), Field.HALF_LENGTH - absf(bp.x))
+	if line_gap < 1.2:
+		lead *= lerpf(0.5, 1.0, clampf(line_gap / 1.2, 0.0, 1.0))
+		if Field.HALF_WIDTH - absf(bp.z) < 1.2 and signf(dir.z) == signf(bp.z):
+			dir = Vector3(dir.x, 0.0, dir.z * 0.3)
+			dir = dir.normalized() if dir.length() > 0.1 else player.facing
 	var push := sqrt(2.0 * ball.rolling_resistance * lead)
-	var base := maxf(_flat(player.velocity).dot(dir), 0.0)
+	# Usa a velocidade que o jogador está BUSCANDO (ele pode estar acelerando).
+	var target_speed := player.intent.move.length() * player.ball_speed_factor \
+		* (player.sprint_speed if player.intent.sprint else player.jog_speed)
+	var base := maxf(_flat(player.velocity).dot(dir), minf(target_speed, speed + 0.8))
 	_foot_side = -_foot_side
 	var side := clampf(-lateral * 2.0, -1.5, 1.5) + _foot_side * 0.12
 	ball.touch(dir * (base + push) + dir.cross(Vector3.UP) * side, player)

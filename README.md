@@ -7,6 +7,7 @@ roupas sujas e dribles naturais.
 - 📐 Planejamento técnico completo: [`docs/PLANEJAMENTO.md`](docs/PLANEJAMENTO.md)
 - ▶️ Etapa 1 (fundação) e como rodar no celular: [`docs/ETAPA_01.md`](docs/ETAPA_01.md)
 - 🧍 Etapa 2 (personagens e animação): [`docs/ETAPA_02.md`](docs/ETAPA_02.md)
+- ⚽ Etapa 3 (animações de futebol com Mixamo): [`docs/ETAPA_03.md`](docs/ETAPA_03.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado
@@ -14,9 +15,9 @@ roupas sujas e dribles naturais.
 | Etapa | Situação |
 |---|---|
 | 1. Fundação jogável (rua, bola, condução, controles, regras, IA simples) | ✅ testada no celular |
-| 2. Personagem humanoide + pipeline de animação | ✅ entregue, aguardando teste |
-| 3. Animações de futebol sincronizadas com a bola | próxima |
-| 4. Dribles e defesa | — |
+| 2. Personagem humanoide + pipeline de animação | ✅ testada no celular |
+| 3. Animações de futebol sincronizadas com a bola | ✅ entregue (APK), aguardando teste |
+| 4. Dribles e defesa | próxima |
 | 5. IA completa e goleiro | — |
 | 6. Torcida e sistema de busca da bola | — |
 | 7. Arte final e desempenho | — |

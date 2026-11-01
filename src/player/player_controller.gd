@@ -16,7 +16,7 @@ signal ball_touched(kind: StringName)
 
 const BUFFER_TIME := 0.3
 ## Com a posse, espera mais: o jogador ainda está alcançando a bola que rolou à frente.
-const BUFFER_TIME_WITH_BALL := 0.9
+const BUFFER_TIME_WITH_BALL := 1.1
 const LONG_PASS_POWER := 0.55
 ## Quanto a preparação do chute pode esperar a bola chegar ao pé.
 const MAX_CONTACT_WAIT := 0.3
@@ -138,7 +138,7 @@ func _update_move(delta: float) -> void:
 	if has_ball and _has_pending_kick() and not ball_control.can_kick():
 		# Chute/passe pedido com a bola um pouco à frente: ir até ela para finalizar.
 		var to_ball := ball_control.ball_offset()
-		desired = to_ball.normalized() * sprint_speed if to_ball.length() > 0.05 else desired
+		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
 	elif has_ball and input.length() > 0.1:
 		desired += ball_control.catch_up_velocity(input.normalized())
 	var hv := get_flat_velocity()
@@ -284,7 +284,11 @@ func _update_action(delta: float) -> void:
 		# para que no contato ela esteja ao alcance (sem "furar").
 		var remaining := maxf(_action_contact - _action_time, 0.05)
 		var plant := ball_control.ball_offset() + ball.flat_velocity() * remaining
-		plant -= plant.normalized() * BallControl.FOOT_DISTANCE if plant.length() > BallControl.FOOT_DISTANCE else plant
+		var to_ball_dir := plant.normalized() if plant.length() > 0.01 else facing
+		# Pé de apoio ao lado da bola: quem chuta de direita deixa a bola à direita.
+		var side := anim_controller.kick_foot(_action_kind)
+		plant -= to_ball_dir * minf(BallControl.FOOT_DISTANCE, plant.length())
+		plant -= to_ball_dir.cross(Vector3.UP) * side * BallControl.KICK_FOOT_OFFSET
 		hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.15), acceleration * 2.0 * delta)
 	else:
 		var cap := jog_speed * _action_move_factor
@@ -319,6 +323,21 @@ func _do_contact() -> void:
 		&"tackle":
 			if not ball_control.execute_tackle():
 				stumble(0.6)
+
+
+## Tempo até o pé encostar na bola na ação atual (0 se não houver).
+func time_to_contact() -> float:
+	if state != State.ACTION or _action_contact_done:
+		return 0.0
+	return maxf(_action_contact - _action_time, 0.0)
+
+
+## Posições (mundo) das pontas dos pés do modelo animado, se houver.
+func get_foot_positions() -> Array[Vector3]:
+	if visual != null and visual.has_method("get_foot_positions"):
+		return visual.call("get_foot_positions")
+	var none: Array[Vector3] = []
+	return none
 
 
 func on_animation_contact() -> void:

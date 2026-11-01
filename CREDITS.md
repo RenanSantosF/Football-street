@@ -10,3 +10,9 @@ uso livre, inclusive comercial, sem obrigação de atribuição (creditamos mesm
 | Universal Base Characters — cabelos (Rigged) | Quaternius | CC0 1.0 | `assets/characters/hair/` |
 
 Apoie o autor: https://www.patreon.com/quaternius
+
+## Mixamo (não incluído no repositório)
+
+As animações de futebol vêm do **Soccer Game Pack** do Mixamo (Adobe), gratuitas
+para uso em projetos por quem tem conta Adobe. Os arquivos brutos não são
+redistribuídos aqui; ver `docs/ETAPA_03.md` para baixá-los.

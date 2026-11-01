@@ -1,7 +1,12 @@
 # Cache gerado pelo Godot (recriado automaticamente ao abrir o projeto)
 .godot/
 *.tmp
-export_presets.cfg
 *.apk
 *.aab
 *.keystore
+build/
+
+# Arquivos brutos do Mixamo NÃO vão para repositório público (termos da Adobe).
+# Os .import (configuração de retarget) ficam versionados. Se o repositório for
+# privado e você quiser versionar o pack, apague a linha abaixo.
+assets/animations/mixamo/**/*.fbx

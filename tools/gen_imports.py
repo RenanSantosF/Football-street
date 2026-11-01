@@ -47,6 +47,38 @@ def rigify_names():
         m[f"{side}Foot"]=f"DEF-foot.{s}"; m[f"{side}Toes"]=f"DEF-toe.{s}"
     return m
 
+def mixamo_names(prefix="mixamorig_"):
+    m = {"Hips":"Hips","Spine":"Spine","Chest":"Spine1","UpperChest":"Spine2","Neck":"Neck","Head":"Head"}
+    fn = {"Thumb":"Thumb","Index":"Index","Middle":"Middle","Ring":"Ring","Little":"Pinky"}
+    for side in ("Left","Right"):
+        m[f"{side}Shoulder"]=f"{side}Shoulder"; m[f"{side}UpperArm"]=f"{side}Arm"
+        m[f"{side}LowerArm"]=f"{side}ForeArm"; m[f"{side}Hand"]=f"{side}Hand"
+        for f in FINGERS:
+            for i, seg in enumerate(SEGS.get(f, SEGS["_"])):
+                m[f"{side}{f}{seg}"]=f"{side}Hand{fn[f]}{i+1}"
+        m[f"{side}UpperLeg"]=f"{side}UpLeg"; m[f"{side}LowerLeg"]=f"{side}Leg"
+        m[f"{side}Foot"]=f"{side}Foot"; m[f"{side}Toes"]=f"{side}ToeBase"
+    return {k: prefix + v for k, v in m.items()}
+
+## Arquivos do "Soccer Game Pack" do Mixamo (nomes exatos do download).
+SOCCER_PACK = [
+    "fallen idle", "goalkeeper body block (2)", "goalkeeper body block (3)", "goalkeeper body block",
+    "goalkeeper catch (2)", "goalkeeper catch (3)", "goalkeeper catch (4)", "goalkeeper catch",
+    "goalkeeper directing (2)", "goalkeeper directing", "goalkeeper diving save (2)",
+    "goalkeeper diving save", "goalkeeper drop kick", "goalkeeper idle (2)", "goalkeeper idle",
+    "goalkeeper miss", "goalkeeper overhand throw", "goalkeeper pass", "goalkeeper placing ball (2)",
+    "goalkeeper placing ball", "goalkeeper scoop", "goalkeeper sidestep (2)", "goalkeeper sidestep",
+    "header soccerball (2)", "header soccerball", "jog backward diagonal (2)", "jog backward diagonal",
+    "jog backward", "jog forward diagonal (2)", "jog forward diagonal", "jog forward",
+    "jog strafe left", "jog strafe right", "kick soccerball (2)", "kick soccerball",
+    "kick up soccerball", "kneeing soccerball (2)", "kneeing soccerball", "offensive idle",
+    "receive soccerball", "scissor kick", "soccer penalty kick", "soccer tackle (2)",
+    "soccer tackle (3)", "soccer tackle", "soccer trip", "stall soccerball (2)",
+    "stall soccerball (3)", "stall soccerball (4)", "stall soccerball", "standing up",
+    "strike foward jog", "throw in", "transition",
+]
+
+
 def bone_map(names):
     parts = ['"retarget/bone_map": Object(BoneMap,"resource_local_to_scene":false,"resource_name":"",'
              '"profile":Object(SkeletonProfileHumanoid,"resource_local_to_scene":false,"resource_name":"",'
@@ -94,8 +126,7 @@ _subresources={{
 }}
 }}
 }}
-gltf/naming_version=1
-gltf/embedded_image_handling=1
+{"gltf/naming_version=1" + chr(10) + "gltf/embedded_image_handling=1" if path.endswith(".gltf") else "fbx/importer=0" + chr(10) + "fbx/allow_geometry_helper_nodes=false" + chr(10) + "fbx/embedded_image_handling=1"}
 '''
     with open(path + ".import", "w") as f:
         f.write(txt)
@@ -108,3 +139,6 @@ if __name__ == "__main__":
     for h in ("Hair_SimpleParted", "Hair_Buzzed", "Hair_Long"):
         write(f"assets/characters/hair/{h}.gltf", "Armature/Skeleton3D", ue, False)
     write("assets/animations/ual/AnimationLibrary_Godot_Standard.gltf", "Rig/Skeleton3D", rigify_names(), True)
+    os.makedirs("assets/animations/mixamo/soccer_pack", exist_ok=True)
+    for clip in SOCCER_PACK:
+        write(f"assets/animations/mixamo/soccer_pack/{clip}.fbx", "Skeleton3D", mixamo_names(), True)

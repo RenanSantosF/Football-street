@@ -12,6 +12,8 @@ var _time := 0.0
 var _stats := {"goals": 0, "outs_side": 0, "outs_end": 0, "possessions": 0,
 	"passes": 0, "shots": 0, "tackles": 0, "restarts": 0}
 var _max_ball_speed := 0.0
+var _last_touch := ""
+var _out_causes := {}
 var _ball_escaped := false
 var _stuck_time := 0.0
 var _max_stuck := 0.0
@@ -32,10 +34,15 @@ func _ready() -> void:
 	add_child(main)
 	_ball = main.get_node("Ball")
 	GameEvents.goal_scored.connect(func(_t, _s): _stats.goals += 1)
-	GameEvents.ball_out.connect(func(k, _p, _l): _stats["outs_side" if k == 0 else "outs_end"] += 1)
+	GameEvents.ball_out.connect(func(k, _p, _l):
+		_stats["outs_side" if k == 0 else "outs_end"] += 1
+		if k == 0: _out_causes[_last_touch] = _out_causes.get(_last_touch, 0) + 1)
 	GameEvents.possession_changed.connect(func(n, _o): if n != null: _stats.possessions += 1)
 	GameEvents.restart_started.connect(func(_t, _k, _p): _stats.restarts += 1)
 	GameEvents.ball_kicked.connect(_on_kick)
+	await get_tree().physics_frame
+	for p in _mm.players:
+		p.ball_touched.connect(func(kind): _last_touch = String(kind))
 
 
 func _on_kick(_k: Node, kind: StringName, _p: float) -> void:
@@ -76,6 +83,7 @@ func _physics_process(delta: float) -> void:
 			_ball.possessor.name if _ball.possessor else "-"])
 	if _time >= SECONDS:
 		print("RESULTADO: ", _stats)
+		print("último toque antes das laterais: ", _out_causes)
 		print("vel. máx bola: %.1f m/s | bola escapou do mundo: %s | maior tempo bola parada sem dono: %.1fs" % [
 			_max_ball_speed, _ball_escaped, _max_stuck])
 		print("maior posse contínua: %.1fs (%s)" % [_max_hold, _max_hold_name])

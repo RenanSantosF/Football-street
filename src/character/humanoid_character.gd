@@ -43,6 +43,7 @@ var placeholder: PlaceholderBody
 
 var _material: ShaderMaterial
 var _hair: MeshInstance3D
+var _toe_bones: Array[int] = []
 
 
 func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
@@ -58,6 +59,16 @@ func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
 ## Fator de tamanho para casar a passada da animação com a velocidade real.
 func get_locomotion_scale() -> float:
 	return TEEN_SCALE * scale.x
+
+
+## Pontas dos pés (mundo), usadas para sincronizar os toques na bola.
+func get_foot_positions() -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	if skeleton == null:
+		return out
+	for idx in _toe_bones:
+		out.append(skeleton.global_transform * skeleton.get_bone_global_pose(idx).origin)
+	return out
 
 
 func _build() -> void:
@@ -83,6 +94,10 @@ func _build() -> void:
 			_material.set_shader_parameter("detail_tex", original.albedo_texture)
 			_material.set_shader_parameter("normal_tex", original.normal_texture)
 		body_mesh.material_override = _material
+	for toe in [&"LeftToes", &"RightToes"]:
+		var t := skeleton.find_bone(toe)
+		if t >= 0:
+			_toe_bones.append(t)
 	for bone: StringName in TEEN_BONE_SCALES:
 		var idx := skeleton.find_bone(bone)
 		if idx >= 0:
