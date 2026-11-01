@@ -66,6 +66,7 @@ USER_PACK = [
     'Standing Up', 'Stand Up', 'Stand Up (1)', 'Goalkeeper Diving Save',
     'Standing Arguing', 'Breathing Idle', 'Walking', 'Start Walking', 'Right Turn',
     'Left Turn', 'Run To Stop', 'Running Turn 180',
+    'Jog Forward Diagonal (2)', 'Jog Forward Diagonal (3)',
     'Change Direction',
     'Defeated',
     'Dribble',

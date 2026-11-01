@@ -21,6 +21,9 @@ var _fps_label: Label
 @onready var pass_button: TouchButton = $PassButton
 @onready var dribble_button: TouchButton = $DribbleButton
 var _charge_kind: StringName = &""
+var _power_panel: Control
+var _power_fill: ColorRect
+var _power_label: Label
 
 
 func _ready() -> void:
@@ -31,6 +34,8 @@ func _ready() -> void:
 	_build_banner()
 	_build_minimap()
 	_build_fps()
+	_build_power_bar()
+	_build_mode_button()
 	_show_hints()
 	GameEvents.score_changed.connect(_on_score_changed)
 	GameEvents.goal_scored.connect(_on_goal)
@@ -50,6 +55,8 @@ func _process(delta: float) -> void:
 		_minimap.match_manager = match_manager
 		_minimap.ball = match_manager.ball
 	_fps_label.text = "%d FPS" % Engine.get_frames_per_second()
+	if match_manager != null:
+		_mode_button.text = "MODO: TREINO ⇄" if match_manager.training_mode else "MODO: PARTIDA ⇄"
 	_update_button_labels()
 
 
@@ -257,8 +264,71 @@ func _on_message(text: String, duration: float) -> void:
 	_message_timer = duration
 
 
-## Força do passe/chute: anel em volta do próprio botão.
+## Botão de modo: PARTIDA (com adversários) ⇄ TREINO (só o meu time).
+var _mode_button: Button
+
+
+func _build_mode_button() -> void:
+	_mode_button = Button.new()
+	_mode_button.add_theme_font_size_override("font_size", 18)
+	_mode_button.offset_left = 14
+	_mode_button.offset_top = 12
+	_mode_button.offset_right = 214
+	_mode_button.offset_bottom = 56
+	_mode_button.focus_mode = Control.FOCUS_NONE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.06, 0.07, 0.09, 0.8)
+	sb.set_corner_radius_all(10)
+	sb.border_color = Color(1, 1, 1, 0.3)
+	sb.set_border_width_all(2)
+	_mode_button.add_theme_stylebox_override("normal", sb)
+	_mode_button.add_theme_stylebox_override("hover", sb)
+	_mode_button.add_theme_stylebox_override("pressed", sb)
+	_mode_button.pressed.connect(func():
+		if match_manager != null:
+			match_manager.set_training_mode(not match_manager.training_mode))
+	add_child(_mode_button)
+
+
+## Barra de FORÇA grande acima dos botões (enche rápido enquanto segura).
+func _build_power_bar() -> void:
+	_power_panel = Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0.6)
+	sb.set_corner_radius_all(8)
+	sb.border_color = Color(1, 1, 1, 0.5)
+	sb.set_border_width_all(2)
+	_power_panel.add_theme_stylebox_override("panel", sb)
+	_power_panel.anchor_left = 1.0
+	_power_panel.anchor_right = 1.0
+	_power_panel.anchor_top = 1.0
+	_power_panel.anchor_bottom = 1.0
+	_power_panel.offset_left = -380
+	_power_panel.offset_right = -40
+	_power_panel.offset_top = -420
+	_power_panel.offset_bottom = -390
+	_power_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_power_panel)
+	_power_fill = ColorRect.new()
+	_power_fill.position = Vector2(4, 4)
+	_power_fill.size = Vector2(0, 22)
+	_power_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_power_panel.add_child(_power_fill)
+	_power_label = _label("FORÇA", 16, Color.WHITE)
+	_power_label.position = Vector2(0, -24)
+	_power_label.size = Vector2(340, 22)
+	_power_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_power_panel.add_child(_power_label)
+	_power_panel.visible = false
+
+
+## Força do passe/chute: barra grande + anel em volta do próprio botão.
 func _on_charge_changed(value: float, kind: StringName) -> void:
 	charge_bar.visible = false
 	shoot_button.charge = value if kind == &"shoot" else 0.0
 	pass_button.charge = value if kind == &"pass" else 0.0
+	_power_panel.visible = kind != &""
+	if kind != &"":
+		_power_label.text = "FORÇA DO CHUTE" if kind == &"shoot" else "FORÇA DO PASSE"
+		_power_fill.size = Vector2(332.0 * clampf(value, 0.0, 1.0), 22)
+		_power_fill.color = Color(lerpf(0.3, 1.0, value), lerpf(0.9, 0.25, value), 0.2)

@@ -224,6 +224,7 @@ func _conduct(delta: float) -> void:
 			_since_touch = 0.0
 			player.notify_touch(&"turn")
 			return
+	_micro_steer(delta, off, d)
 	if d > TOUCH_REACH:
 		return # correndo atrás da bola: catch_up_velocity() cuida disso
 
@@ -270,6 +271,23 @@ func _conduct(delta: float) -> void:
 	last_touch_forced = _touch_wait >= MAX_TOUCH_WAIT
 	_touch_wait = 0.0
 	_do_touch(dir, speed, lateral)
+
+
+## Micro-correção entre os toques: em curva a bola tende a seguir reta e
+## escapar para o lado. Corrige só a deriva lateral, de leve (o jogador faria
+## isso com toques mínimos), sem mudar a velocidade à frente nem prender a bola.
+func _micro_steer(delta: float, off: Vector3, d: float) -> void:
+	var pv := _flat(player.velocity)
+	if pv.length() < 1.0 or d > 1.4:
+		return
+	var fwd := pv.normalized()
+	var bv := _flat(ball.velocity_now())
+	var lateral_v := bv - fwd * bv.dot(fwd)
+	var lateral_off := (off - fwd * off.dot(fwd)).length()
+	var k := clampf(3.0 * delta, 0.0, 0.25) * clampf(lateral_off / 0.4 + 0.5, 0.5, 1.5)
+	var new_v := bv - lateral_v * k
+	if (new_v - bv).length() > 0.02:
+		ball.touch(Vector3(new_v.x, ball.velocity_now().y, new_v.z), player)
 
 
 func _foot_near_ball() -> bool:
@@ -331,25 +349,51 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 	var mate := target as Player
 	if mate == null:
 		mate = pick_pass_target(dir)
+		if mate == null and _flat(aim).length() < 0.2:
+			# Sem direção no analógico: toca no companheiro mais fácil,
+			# nunca no vazio (evita entregar a bola na saída).
+			mate = pick_pass_target(dir, 180.0)
 	var long := power >= LONG_PASS_POWER or lofted
 	var vel: Vector3
+	var receiver: Player = mate
 	if mate != null:
 		var dest := _lead_target(mate, from)
 		var dist := _flat(dest - from).length()
-		if long or dist > 15.0:
-			vel = lofted_velocity(from, from + _flat(dest - from) * 0.9, lerpf(22.0, 35.0, power))
+		if long:
+			vel = lofted_velocity(from, from + _flat(dest - from) * 0.92, lerpf(24.0, 34.0, power))
 		else:
-			vel = ground_pass_velocity(from, dest, lerpf(2.0, 4.5, power))
+			# Passe firme: chega com velocidade (o recebedor domina), nunca "mascando".
+			vel = ground_pass_velocity(from, dest, lerpf(4.5, 7.0, power))
+			vel = vel.normalized() * clampf(vel.length(), lerpf(8.5, 11.0, power), 19.0)
 	else:
+		# Passe em profundidade (para o espaço): vai quem estiver melhor para chegar.
 		var dest := from + dir * lerpf(7.0, 18.0, power)
-		vel = lofted_velocity(from, dest, 30.0) if long else ground_pass_velocity(from, dest, 1.0)
-	var err := deg_to_rad(2.0 + 3.0 * power)
+		dest = Field.clamp_inside(dest, 0.5)
+		receiver = _best_runner_to(dest)
+		if long:
+			vel = lofted_velocity(from, dest, 30.0)
+		else:
+			vel = ground_pass_velocity(from, dest, 2.5)
+			vel = vel.normalized() * clampf(vel.length(), lerpf(8.0, 10.5, power), 19.0)
+	var err := deg_to_rad(0.6 + 1.2 * power)
 	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err))
 	ball.kick(vel, Vector3.ZERO, player)
-	ball.pass_target = mate
+	ball.pass_target = receiver
 	player.notify_touch(&"pass")
 	GameEvents.ball_kicked.emit(player, &"long_pass" if long else &"pass", power)
 	return true
+
+
+## Companheiro que chega primeiro num ponto (para o passe em profundidade).
+func _best_runner_to(dest: Vector3) -> Player:
+	var best: Player = null
+	var best_t := INF
+	for mate in player.get_teammates():
+		var t := mate.global_position.distance_to(dest) / maxf(mate.sprint_speed, 0.1)
+		if t < best_t:
+			best_t = t
+			best = mate
+	return best
 
 
 func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -> bool:
@@ -530,7 +574,7 @@ func push_ahead(mult: float) -> void:
 		_since_touch = 0.0
 
 
-func pick_pass_target(dir: Vector3) -> Player:
+func pick_pass_target(dir: Vector3, max_angle_deg := 70.0) -> Player:
 	var best: Player = null
 	var best_score := -INF
 	for mate in player.get_teammates():
@@ -539,7 +583,7 @@ func pick_pass_target(dir: Vector3) -> Player:
 		if d < 1.5:
 			continue
 		var ang := dir.angle_to(to / d)
-		if ang > deg_to_rad(70.0):
+		if ang > deg_to_rad(max_angle_deg):
 			continue
 		var score := -ang * 2.0 - d * 0.04
 		if mate.is_goalkeeper():

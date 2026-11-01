@@ -11,9 +11,9 @@ const GOAL_CELEBRATION_TIME := 5.0
 ## Índice 0 = goleiro.
 ## Sem goleiro: três jogadores de linha (fixo, ala, ala).
 const FORMATION: Array[Vector3] = [
-	Vector3(-9.0, 0.0, 0.0),
-	Vector3(-5.0, 0.0, -2.4),
-	Vector3(-3.0, 0.0, 2.4),
+	Vector3(-8.5, 0.0, 0.0),   # fixo (atrás, no meio)
+	Vector3(-4.0, 0.0, -2.8),  # ala esquerda
+	Vector3(-4.0, 0.0, 2.8),   # ala direita
 ]
 
 @export var player_scene: PackedScene
@@ -35,6 +35,12 @@ var state: MatchState = MatchState.KICKOFF
 var controlled: Player = null
 
 var _state_timer := 0.0
+## Saída de bola esperando o primeiro toque (cada time no seu campo).
+var waiting_kickoff := false
+## Modo TREINO: só o time do jogador (sem adversários) para treinar toque,
+## condução e chute. Modo PARTIDA: com adversários.
+var training_mode := false
+const SETTINGS_PATH := "user://settings.cfg"
 var _prev_ball_pos := Vector3.ZERO
 var _last_goal_team := Team.SHIRTS
 var _rng := RandomNumberGenerator.new()
@@ -56,6 +62,9 @@ func _ready() -> void:
 	GameEvents.ball_kicked.connect(_on_ball_kicked)
 	camera.ball = ball
 	_spawn_players()
+	var cfg := ConfigFile.new()
+	if not autoplay and cfg.load(SETTINGS_PATH) == OK and cfg.get_value("game", "training", false):
+		_apply_training(true)
 	_start_kickoff(Team.SHIRTS)
 	camera.snap()
 
@@ -80,9 +89,28 @@ func _spawn_players() -> void:
 func get_team(team: int) -> Array[Player]:
 	var result: Array[Player] = []
 	for p in players:
-		if p.team == team:
+		if p.team == team and p.active:
 			result.append(p)
 	return result
+
+
+## Liga/desliga o modo TREINO (salvo para a próxima vez) e recomeça.
+func set_training_mode(on: bool) -> void:
+	_apply_training(on)
+	var cfg := ConfigFile.new()
+	cfg.load(SETTINGS_PATH)
+	cfg.set_value("game", "training", on)
+	cfg.save(SETTINGS_PATH)
+	score = [0, 0]
+	GameEvents.score_changed.emit(0, 0)
+	_start_kickoff(human_team)
+
+
+func _apply_training(on: bool) -> void:
+	training_mode = on
+	for p in players:
+		if p.team != human_team:
+			p.set_active(not on)
 
 
 func get_goalkeeper(team: int) -> Player:
@@ -181,6 +209,8 @@ func _on_ball_out(kind: BallOutSystem.Kind, pos: Vector3) -> void:
 ## Na lateral, no escanteio e no tiro de meta quem bate fica PARADO com a bola
 ## e é obrigado a tocar para um companheiro (não pode sair conduzindo).
 func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
+	if get_team(team).is_empty():
+		team = human_team # modo treino: todo reinício é do meu time
 	ball.place_at(pos)
 	_prev_ball_pos = ball.global_position
 	var into_field := (Vector3(0.0, 0.0, 0.0) - Vector3(pos.x * 0.4, 0.0, pos.z)).normalized()
@@ -223,12 +253,16 @@ func award_free_kick(team: int, pos: Vector3) -> void:
 
 
 func _start_kickoff(team: int) -> void:
+	if get_team(team).is_empty():
+		team = human_team # modo treino: a saída é sempre do meu time
 	ball_out_system.cancel()
 	ball.place_at(Vector3(0.0, Ball.RADIUS, 0.0))
 	ball.in_play = false
 	_prev_ball_pos = ball.global_position
 	var s := Field.attack_sign(team)
 	for p in players:
+		if not p.active:
+			continue
 		var pos := formation_position(p.team, p.formation_index)
 		if p.team == team and p.formation_index == 2:
 			pos = Vector3(-0.45 * s, 0.0, 0.0) # quem dá a saída
@@ -244,6 +278,7 @@ func _start_kickoff(team: int) -> void:
 	if not autoplay:
 		var start := _closest_field_player(human_team, ball.global_position)
 		set_controlled(start)
+	waiting_kickoff = true
 	GameEvents.restart_started.emit(team, -1, ball.global_position)
 	GameEvents.match_message.emit("SAÍDA DE BOLA", 1.0)
 	_state_timer = 1.2
@@ -311,6 +346,7 @@ func _on_possession_changed(new_owner: Node, _old_owner: Node) -> void:
 ## Passe do time humano: o controle vai para quem vai receber já no toque,
 ## para você poder se mexer ao encontro da bola.
 func _on_ball_kicked(kicker: Node, kind: StringName, _power: float) -> void:
+	waiting_kickoff = false
 	if autoplay or not (kind == &"pass" or kind == &"long_pass"):
 		return
 	var k := kicker as Player

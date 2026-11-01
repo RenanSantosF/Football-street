@@ -38,6 +38,8 @@ func _draw() -> void:
 		draw_line(a, b, Color(1, 1, 1, 0.95), 3.0)
 	if match_manager != null:
 		for p in match_manager.players:
+			if not p.active:
+				continue
 			var c := Team.COLORS[p.team]
 			var mp := _to_map(p.global_position)
 			if p == match_manager.controlled:

@@ -100,7 +100,7 @@ func _draw() -> void:
 	# Anel de força.
 	if charge > 0.0:
 		var col := Color(1.0, lerpf(0.9, 0.25, charge), 0.15, 0.95)
-		draw_arc(c, r + 7.0, -PI * 0.5, -PI * 0.5 + TAU * charge, 48, col, 6.0, true)
+		draw_arc(c, r + 9.0, -PI * 0.5, -PI * 0.5 + TAU * charge, 48, col, 10.0, true)
 	var font := get_theme_default_font()
 	var ts := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, font_size)
 	draw_string_outline(font, Vector2(0.0, c.y + ts.y * 0.28), label, HORIZONTAL_ALIGNMENT_CENTER, size.x, font_size, 4, Color(0, 0, 0, 0.55))

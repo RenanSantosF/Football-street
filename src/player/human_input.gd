@@ -12,7 +12,7 @@ signal charge_changed(value: float, kind: StringName)
 ## Mira do chute: ativa enquanto o botão de chute está segurado.
 signal aim_changed(active: bool, direction: Vector3, power: float)
 
-const MAX_CHARGE_TIME := 0.9
+const MAX_CHARGE_TIME := 0.6
 
 @export var camera: Camera3D
 
@@ -33,6 +33,7 @@ var _queued_lofted := false
 var _last_dribble_tap := -10.0
 ## Segurando BUSCAR (sem a bola): o jogador corre sozinho atrás da bola.
 var chasing := false
+var _chase_sprint := false
 
 
 func _ready() -> void:
@@ -71,6 +72,7 @@ func _physics_process(delta: float) -> void:
 	chasing = not has_ball_context() and Input.is_action_pressed("dribble")
 	if chasing and current_player != null and current_player.ball != null:
 		_move = _chase_direction()
+		_sprint = _sprint or _chase_sprint
 
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
@@ -153,18 +155,29 @@ func has_ball_context() -> bool:
 	return bc.has_ball() or (bc.can_kick() and current_player.ball.possessor == null)
 
 
-## Para onde correr para chegar na bola (ponto onde ela vai estar).
+## BUSCAR: para onde correr. Bola livre → ponto onde ela vai estar (corre
+## forte longe, desacelera perto para dominar). Adversário com a bola → fica na
+## frente dele, entre a bola e o meu gol.
 func _chase_direction() -> Vector3:
 	var p := current_player
 	var b := p.ball
-	var t := 0.0
-	var target := b.predict_ground_position(0.0)
-	for i in 3:
-		t = p.global_position.distance_to(target) / maxf(p.jog_speed, 0.1)
-		target = b.predict_ground_position(t)
+	var target: Vector3
+	if b.possessor != null and b.possessor.team != p.team:
+		var c := b.possessor.global_position
+		var own_goal := Field.goal_center(p.team)
+		target = c + (own_goal - c).normalized() * 0.9
+	else:
+		target = b.predict_ground_position(0.0)
+		for i in 4:
+			var t := p.global_position.distance_to(target) / maxf(p.sprint_speed, 0.1)
+			target = b.predict_ground_position(t)
 	var d := target - p.global_position
 	d.y = 0.0
-	return d.normalized() if d.length() > 0.3 else Vector3.ZERO
+	if d.length() < 0.25:
+		return Vector3.ZERO
+	_chase_sprint = d.length() > 3.0
+	# Perto: devagar para dominar sem atropelar a bola.
+	return d.normalized() * clampf(d.length() / 1.6, 0.35, 1.0)
 
 
 func _near_ball() -> bool:

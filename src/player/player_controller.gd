@@ -60,6 +60,8 @@ var facing := Vector3.FORWARD
 var stamina := 1.0
 var is_human := false
 var formation_index := 0
+## Fora de jogo no modo TREINO (adversários desligados).
+var active := true
 
 var _action_kind: StringName = &""
 var _action_time := 0.0
@@ -209,12 +211,13 @@ func _update_move(delta: float) -> void:
 		_check_restart_unlock()
 	if _restart_lock:
 		input = Vector3.ZERO # parado: o analógico só gira o corpo (mira do passe)
-	elif is_human and input.length() < 0.1 and ball != null and ball.pass_target == self and ball.possessor == null:
-		# Passe vindo para mim e não mexi no analógico: dou uns passos ao encontro.
-		var meet := ball.global_position - global_position
-		meet.y = 0.0
-		if meet.length() > 1.2:
-			input = meet.normalized() * 0.45
+	elif ball != null and ball.pass_target == self and ball.possessor == null and ball.in_play \
+			and not (is_human and input.length() > 0.5):
+		# A bola vem para mim: vou buscá-la sozinho (IA ou humano sem mexer no
+		# analógico). Bola direto em mim → espero e dou um passo ao encontro;
+		# em profundidade → corro para onde ela vai estar.
+		_receive_pass(delta)
+		return
 	if input.length() > 1.0:
 		input = input.normalized()
 	var has_ball := ball_control.has_ball()
@@ -262,6 +265,8 @@ func _update_facing(delta: float) -> void:
 	var target_dir := facing
 	if state == State.ACTION and _action_face != Vector3.ZERO:
 		target_dir = _action_face
+	elif ball != null and ball.pass_target == self and ball.possessor == null and hv.length() < 2.0:
+		target_dir = _flat_dir_to(ball.global_position) # recebendo: olha para a bola
 	elif _restart_lock and intent.move.length() > 0.2:
 		target_dir = Vector3(intent.move.x, 0.0, intent.move.z).normalized()
 	elif _marking and state == State.MOVE:
@@ -588,6 +593,51 @@ func play_gesture(kind: StringName, duration: float) -> void:
 	if state == State.MOVE and get_horizontal_speed() < 0.3:
 		gesture = kind
 		_gesture_timer = duration
+
+
+func _receive_pass(delta: float) -> void:
+	var target := _pass_intercept_point()
+	var to := target - global_position
+	to.y = 0.0
+	var d := to.length()
+	var desired := Vector3.ZERO
+	if d > 0.35:
+		var t_ball := _ball_time_to(target)
+		var need := d / maxf(t_ball, 0.15)
+		desired = to / d * clampf(need, 0.8, sprint_speed)
+	var hv := get_flat_velocity()
+	hv = hv.move_toward(desired, (acceleration if desired.length() > hv.length() else deceleration) * delta)
+	velocity.x = hv.x
+	velocity.z = hv.z
+
+
+## Onde e quando consigo encontrar a bola em movimento.
+func _pass_intercept_point() -> Vector3:
+	var t := 0.1
+	while t <= 3.0:
+		var bp := ball.predict_ground_position(t)
+		var need := global_position.distance_to(bp) / sprint_speed + 0.1
+		if need <= t:
+			return bp
+		t += 0.1
+	return ball.predict_ground_position(3.0)
+
+
+func _ball_time_to(point: Vector3) -> float:
+	var v := ball.flat_velocity().length()
+	var d := Vector2(point.x - ball.global_position.x, point.z - ball.global_position.z).length()
+	return d / maxf(v, 1.0)
+
+
+func set_active(value: bool) -> void:
+	active = value
+	visible = value
+	set_physics_process(value)
+	collision_layer = 2 if value else 0
+	collision_mask = 3 if value else 0
+	if not value:
+		global_position = Vector3(0.0, -30.0, 0.0)
+		velocity = Vector3.ZERO
 
 
 func set_restart_lock(value: bool) -> void:

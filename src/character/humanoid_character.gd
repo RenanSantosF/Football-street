@@ -17,6 +17,7 @@ const BASES := {
 		## Skin enviada pelo autor, usada exatamente como veio (textura original,
 		## sem troca de pele, roupa, cabelo ou altura).
 		"original_skin": true,
+		"skin_ref": Color(0.479, 0.313, 0.227),
 		"bone_scales": {},
 		"hair_meshes": false,
 	},
@@ -60,7 +61,11 @@ func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
 		placeholder.apply_appearance(a, team, role)
 		return
 	if BASES[base_id].get("original_skin", false):
-		return # todos iguais: a skin original, sem nenhuma alteração
+		# Skin original. Só o time rival recebe pele branca (para diferenciar);
+		# bermuda, cabelo e o resto continuam exatamente iguais.
+		if team == Team.SKINS:
+			_apply_rival_skin()
+		return
 	_apply_body_variation(a)
 	_apply_materials(a, role)
 	if BASES[base_id].get("hair_meshes", false):
@@ -156,6 +161,27 @@ func _build(wanted: StringName) -> void:
 	# O deslocamento do corpo vem da física do jogador.
 	anim_tree.root_motion_track = NodePath("%GeneralSkeleton:Root")
 	anim_tree.active = true
+
+
+const RIVAL_SKIN := Color(0.93, 0.78, 0.66)
+
+
+func _apply_rival_skin() -> void:
+	if body_mesh == null:
+		return
+	var original := body_mesh.mesh.surface_get_material(0) as BaseMaterial3D
+	var m := ShaderMaterial.new()
+	m.shader = TEXTURED_SHADER
+	if original != null:
+		m.set_shader_parameter("albedo_tex", original.albedo_texture)
+	m.set_shader_parameter("skin_ref", BASES[base_id].get("skin_ref", Color(0.479, 0.313, 0.227)))
+	m.set_shader_parameter("skin_color", RIVAL_SKIN)
+	m.set_shader_parameter("hair_dark", 0.0)       # cabelo intocado
+	m.set_shader_parameter("has_shirt", 0.0)
+	m.set_shader_parameter("recolor_shorts", 0.0)  # bermuda jeans original
+	m.set_shader_parameter("has_shoes", 0.0)       # descalço, como a skin
+	m.set_shader_parameter("dirt", 0.0)
+	body_mesh.material_override = m
 
 
 func _find_body_mesh(cfg: Dictionary) -> MeshInstance3D:

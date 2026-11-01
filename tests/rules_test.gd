@@ -129,6 +129,13 @@ func _test_curb() -> void:
 	if t0 == 0:
 		t0 = f
 		me.global_position = Vector3(0, -50, 0)
+		for p in mm.players:
+			if p != me:
+				p.teleport(Vector3(-12, 0, -3), Vector3(1, 0, 0))
+		mm.ball_out_system.cancel() # descarta reinício pendente do teste anterior
+		mm.state = MatchManager.MatchState.PLAYING
+		ball.restricted_player = null
+		ball.in_play = true
 		ball.release()
 		ball.place_at(Vector3(5, Ball.RADIUS, 2.5))
 		ball.kick(Vector3(0, 0, 9.0), Vector3.ZERO, null)

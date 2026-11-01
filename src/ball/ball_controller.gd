@@ -152,6 +152,7 @@ func release() -> void:
 func place_at(pos: Vector3) -> void:
 	release()
 	restricted_player = null
+	pass_target = null
 	_pending_velocity = false
 	_new_linear = Vector3.ZERO
 	_teleport_position = Vector3(pos.x, maxf(pos.y, RADIUS), pos.z)

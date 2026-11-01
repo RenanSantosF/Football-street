@@ -73,6 +73,16 @@ func _think() -> void:
 		_think_waiting(mm.formation_position(player.team, player.formation_index, ball.global_position.x))
 		_keep_restart_distance()
 		return
+	# Reinício pendente (saída, lateral, escanteio, tiro de meta, falta): até o
+	# batedor tocar, ninguém vai na bola — cada um na sua posição da formação,
+	# parado do seu jeito ou andando pouquinho. Adversário no próprio campo.
+	if ball.restricted_player != null and ball.restricted_player != player:
+		var slot := mm.formation_position(player.team, player.formation_index, ball.global_position.x)
+		if mm.waiting_kickoff:
+			slot.x = minf(slot.x * Field.attack_sign(player.team), -1.5) * Field.attack_sign(player.team)
+		_think_waiting(slot)
+		_keep_restart_distance()
+		return
 	if player.is_goalkeeper():
 		_think_goalkeeper()
 	elif player.ball_control.has_ball():
@@ -83,8 +93,8 @@ func _think() -> void:
 			# Reinício do meu time (ou do outro): não vou na bola, me posiciono.
 			_support_or_mark(ball.restricted_player if ball.restricted_player.team == player.team else null)
 		elif carrier == null and ball.pass_target == player:
-			# O passe é para mim: vou ao encontro da bola (sem correr demais).
-			_move_target = _intercept_point()
+			# O passe é para mim: o Player busca a bola sozinho (_receive_pass).
+			_move_target = player.global_position
 		elif carrier == null:
 			if _is_best_chaser():
 				_move_target = _intercept_point()
@@ -407,7 +417,10 @@ func _separate_from_teammates() -> void:
 ## Durante reinício do adversário, manter distância da bola.
 func _keep_restart_distance() -> void:
 	var ball := player.ball
-	if ball.restricted_team < 0 or ball.restricted_team == player.team:
+	var restricted := ball.restricted_team
+	if ball.restricted_player != null:
+		restricted = ball.restricted_player.team
+	if restricted < 0 or restricted == player.team:
 		return
 	var bp := Vector3(ball.global_position.x, 0.0, ball.global_position.z)
 	var off := _move_target - bp
