@@ -14,24 +14,15 @@ extends Node3D
 const BASES := {
 	&"teen_01": {
 		"path": "res://assets/characters/teen_01/teen_01.fbx",
-		"textured": true,
-		## cor média da pele na textura (medida), referência da troca de tom
-		"skin_ref": Color(0.479, 0.313, 0.227),
+		## Skin enviada pelo autor, usada exatamente como veio (textura original,
+		## sem troca de pele, roupa, cabelo ou altura).
+		"original_skin": true,
 		"bone_scales": {},
 		"hair_meshes": false,
 	},
-	&"superhero": {
-		"path": "res://assets/characters/base/Superhero_Male_FullBody.gltf",
-		"textured": false,
-		"body_mesh": "SuperHero_Male",
-		"eyebrows_mesh": "Eyebrows",
-		# corpo adulto → proporções juvenis
-		"bone_scales": {&"Chest": 0.95, &"UpperChest": 0.92, &"LeftUpperArm": 0.98,
-			&"RightUpperArm": 0.98, &"Neck": 0.95, &"Head": 1.2},
-		"hair_meshes": true,
-	},
 }
-const BASE_ORDER: Array[StringName] = [&"teen_01", &"superhero"]
+## Só a skin do autor. Novas skins entram aqui quando forem enviadas.
+const BASE_ORDER: Array[StringName] = [&"teen_01"]
 
 const HAIR_MODELS: Array[String] = [
 	"res://assets/characters/hair/Hair_SimpleParted.gltf",
@@ -68,6 +59,8 @@ func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
 	if placeholder != null:
 		placeholder.apply_appearance(a, team, role)
 		return
+	if BASES[base_id].get("original_skin", false):
+		return # todos iguais: a skin original, sem nenhuma alteração
 	_apply_body_variation(a)
 	_apply_materials(a, role)
 	if BASES[base_id].get("hair_meshes", false):
@@ -132,7 +125,7 @@ func _build(wanted: StringName) -> void:
 	_model_scale = TARGET_HEIGHT / maxf(height, 0.1)
 	model.scale = Vector3.ONE * _model_scale
 
-	if body_mesh != null:
+	if body_mesh != null and not cfg.get("original_skin", false):
 		var original := body_mesh.mesh.surface_get_material(0) as BaseMaterial3D
 		body_mesh.mesh = ClothingMeshBaker.bake(body_mesh.mesh as ArrayMesh, skeleton, body_mesh.skin)
 		_material = ShaderMaterial.new()

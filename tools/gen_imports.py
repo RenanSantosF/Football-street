@@ -175,10 +175,6 @@ _subresources={{
 
 if __name__ == "__main__":
     os.chdir(os.path.join(os.path.dirname(__file__), ".."))
-    ue = ue_names()
-    write("assets/characters/base/Superhero_Male_FullBody.gltf", "Armature/Skeleton3D", ue, False)
-    for h in ("Hair_SimpleParted", "Hair_Buzzed", "Hair_Long"):
-        write(f"assets/characters/hair/{h}.gltf", "Armature/Skeleton3D", ue, False)
     write("assets/animations/ual/AnimationLibrary_Godot_Standard.gltf", "Rig/Skeleton3D", rigify_names(), True)
     os.makedirs("assets/animations/mixamo/pack", exist_ok=True)
     for clip in USER_PACK:

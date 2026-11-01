@@ -17,16 +17,11 @@ Correções automáticas (valem para qualquer personagem novo do mesmo tipo):
   pela altura errada (0,03 m em vez de 0,53 m). O `AnimationCatalog` calcula a
   altura real pela própria pose (quadril → ponta do pé) e corrige.
 
-### Variação de cada jogador (uma malha só)
-| O que varia | Como |
-|---|---|
-| Tom de pele (7 tons) | shader troca o tom pela luminância, preservando sombras e detalhes |
-| Cor do cabelo | pixels escuros da cabeça recebem a cor escolhida |
-| Camiseta (ou sem camisa) | máscara por **pesos de skin** (tronco + meia manga), funciona em qualquer pose |
-| Bermuda | jeans original da textura **ou** cor nova |
-| Tênis + meia, ou **descalço** | 25% jogam descalços, como na rua |
-| Sujeira | manchas na roupa e no tênis |
-| Altura e porte | escala do modelo + ombros/tronco |
+### Skin única
+**Todos os jogadores usam exatamente esta skin**, como veio (textura original,
+mesma altura). O corpo antigo e os cabelos foram removidos do projeto. Novas
+skins serão adicionadas quando o autor enviar (cada uma é só registrar em
+`HumanoidCharacter.BASES`).
 
 ## Animações em uso
 

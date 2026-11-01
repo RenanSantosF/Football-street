@@ -99,7 +99,8 @@ func setup(mm: MatchManager, b: Ball) -> void:
 		appearance = CharacterAppearance.new()
 	if visual.has_method("apply_appearance"):
 		visual.call("apply_appearance", appearance, team, role)
-	visual.scale = Vector3.ONE * appearance.height_scale
+	# Todos os jogadores com a mesma skin e o mesmo tamanho.
+	visual.scale = Vector3.ONE
 	anim_controller.setup(self)
 	set_human(false, null)
 
