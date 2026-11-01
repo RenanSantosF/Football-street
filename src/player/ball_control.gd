@@ -38,6 +38,8 @@ var _since_contact := 10.0
 var _foot_side := 1.0
 var _save_rolled := false
 var _touch_wait := 0.0
+var _trapping := false
+var _since_aerial := 10.0
 ## O último toque saiu por tempo esgotado (nenhum pé chegou perto)?
 var last_touch_forced := false
 var _rng := RandomNumberGenerator.new()
@@ -60,8 +62,13 @@ func physics_update(delta: float) -> void:
 		return
 	_since_touch += delta
 	_since_contact += delta
+	_since_aerial += delta
 	if not ball.in_play:
 		return
+	if player.is_restart_locked():
+		if not has_ball():
+			_try_gain_control() # o batedor "assume" a bola parada (sem tocá-la)
+		return # reinício: a bola fica parada até o passe
 	if has_ball():
 		# Durante uma ação (chute, passe, drible) ou com chute pendente, sem toques de condução.
 		if player.state == Player.State.MOVE and not player._has_pending_kick():
@@ -169,10 +176,16 @@ func _try_gain_control() -> void:
 
 	ball.claim(player)
 	var pv := _flat(player.velocity)
-	# Primeiro toque orientado: ajeita a bola para onde o jogador quer ir.
+	# Primeiro toque: AMORTECE a bola (ela morre no pé, não fica "flutuando")
+	# e, se o analógico aponta para algum lado, já ajeita para lá (orientado).
 	var want := _flat(player.intent.move)
-	var settle := pv + (want.normalized() * 0.9 if want.length() > 0.3 else player.facing * (0.5 if pv.length() > 1.0 else 0.0))
-	ball.touch(settle, player)
+	var settle: Vector3
+	if want.length() > 0.3:
+		settle = pv * 0.9 + want.normalized() * 1.1
+	else:
+		var keep := player.global_position + player.facing * 0.38
+		settle = pv * 0.8 + _flat(keep - ball.global_position) * 3.0
+	ball.touch(Vector3(settle.x, minf(ball.velocity_now().y, 0.0), settle.z), player)
 	_since_touch = 0.0
 	player.notify_touch(&"gk_catch" if gk and rel_speed > 7.0 else &"receive")
 
@@ -188,6 +201,9 @@ func _deflect_save(bv: Vector3) -> void:
 func _body_contact() -> void:
 	if _since_contact < 0.12 or ball.is_ignoring(player):
 		return
+	if player.state == Player.State.ACTION and player._action_kind in Player.AERIAL_KINDS \
+			and not player._action_contact_done:
+		return # vai dominar no peito/coxa/cabeça: o contato é da animação
 	var off := ball_offset()
 	var d := off.length()
 	var r := (GK_BODY_RADIUS if player.is_goalkeeper() else BODY_RADIUS) + Ball.RADIUS
@@ -210,67 +226,111 @@ func _body_contact() -> void:
 func _conduct(delta: float) -> void:
 	var off := ball_offset()
 	var d := off.length()
-	if d > LOSE_RADIUS or ball.global_position.y > 1.3:
+	if d > LOSE_RADIUS or (ball.global_position.y > 1.3 and _since_aerial > 0.9):
 		ball.release()
 		return
-	var reach := TOUCH_REACH + 0.2
+	if ball.global_position.y > 0.35:
+		return # caindo do domínio no peito/coxa/cabeça: espera chegar ao pé
 	var want := _flat(player.intent.move)
-	if d <= reach and want.length() > 0.3 and _since_touch > 0.2:
-		var wdir := want.normalized()
-		if off.normalized().dot(wdir) < 0.5:
-			# Virada com a bola: puxa com a sola para a nova direção.
-			var pv0 := _flat(player.velocity)
-			ball.touch(wdir * (maxf(pv0.dot(wdir), 0.0) + 1.3), player)
-			_since_touch = 0.0
-			player.notify_touch(&"turn")
-			return
+	var pv := _flat(player.velocity)
+	var bv := _flat(ball.velocity_now())
+	if want.length() < 0.15:
+		_trap(delta, off, d, pv, bv)
+		return
+	_trapping = false
+	var w := want.normalized()
+	var ahead := off.normalized().dot(w) if d > 0.05 else 1.0
+	# PUXADA DE SOLA: pediu o lado contrário com a bola no pé → puxa a bola
+	# para trás com a sola e o corpo vira (não sai correndo e deixa a bola).
+	if d <= TOUCH_REACH + 0.05 and ahead < -0.35 and _since_touch > 0.25:
+		ball.touch(w * (1.25 + maxf(pv.dot(w), 0.0) * 0.6), player)
+		_since_touch = 0.0
+		_touch_wait = 0.0
+		player.notify_touch(&"pull")
+		return
 	_micro_steer(delta, off, d)
 	if d > TOUCH_REACH:
-		return # correndo atrás da bola: catch_up_velocity() cuida disso
-
-	var pv := _flat(player.velocity)
+		return # longe: o Player vai até a bola primeiro (approach_point)
 	var speed := pv.length()
-	var move_dir := _flat(player.intent.move)
-	var bv := _flat(ball.velocity_now())
-
-	if speed < 0.6 and move_dir.length() < 0.15:
-		# Parado: pisa na bola para segurá-la perto do pé.
-		if bv.length() > 0.35 and _since_touch > 0.25:
-			ball.touch(bv * 0.15, player)
-			_since_touch = 0.0
-			player.notify_touch(&"trap")
+	if _since_touch < 0.2:
 		return
-
-	if _since_touch < 0.22:
-		return
-	var dir := move_dir.normalized() if move_dir.length() > 0.15 else player.facing
-	var right := dir.cross(Vector3.UP)
-	var along := off.dot(dir)
+	var right := w.cross(Vector3.UP)
+	var along := off.dot(w)
 	var lateral := off.dot(right)
-	var rel_along := (bv - pv).dot(dir)
-	var behind := along < FOOT_DISTANCE + 0.3 and rel_along < 0.3
-	var drifting := absf(lateral) > 0.35
-	var mismatch := bv.length() > 0.5 and bv.normalized().dot(dir) < 0.75
+	var rel_along := (bv - pv).dot(w)
+	var behind := along < FOOT_DISTANCE + 0.25 and rel_along < 0.3
+	var drifting := absf(lateral) > 0.3
+	var mismatch := bv.length() > 0.4 and bv.normalized().dot(w) < 0.8
 	if not (behind or drifting or mismatch):
 		_touch_wait = 0.0
 		return
-	# Mudou de direção correndo: toque de lado NA HORA, levando a bola para o
-	# novo lado (o jogador "dá o toque pro lado").
-	var turning := bv.length() > 0.5 and bv.normalized().dot(dir) < 0.85 and speed > 1.2
-	if turning:
-		_touch_wait = 0.0
-		last_touch_forced = false
-		_do_touch(dir, speed, lateral)
-		player.notify_touch(&"side_touch")
-		return
-	# Sincronia com a animação: o toque sai quando um pé passa perto da bola
-	# (com limite de espera, para nunca perder o controle por causa disso).
-	if along > FOOT_DISTANCE - 0.1 and _touch_wait < MAX_TOUCH_WAIT and not _foot_near_ball():
+	# Toque de lado: para ir para a DIREITA o pé bate no lado ESQUERDO da bola
+	# (e vice-versa). Espera um instante pelo pé certo chegar na bola.
+	var turn_side := 0.0
+	if bv.length() > 0.4 or speed > 0.8:
+		var ref := bv.normalized() if bv.length() > 0.4 else player.facing
+		var ang := ref.signed_angle_to(w, Vector3.UP)
+		if absf(ang) > deg_to_rad(18.0):
+			turn_side = -signf(ang) # +1 = virando para a direita
+	var max_wait := 0.16 if turn_side != 0.0 else MAX_TOUCH_WAIT
+	if _touch_wait < max_wait and not _foot_near_ball(w, turn_side):
 		_touch_wait += delta
 		return
-	last_touch_forced = _touch_wait >= MAX_TOUCH_WAIT
+	last_touch_forced = _touch_wait >= max_wait
 	_touch_wait = 0.0
-	_do_touch(dir, speed, lateral)
+	_do_touch(w, speed, lateral)
+	if turn_side != 0.0:
+		player.notify_touch(&"side_touch")
+
+
+## Soltou o analógico: o jogador PARA A BOLA. Se ela rolou à frente, ele vai
+## até ela (Player.approach_point) e pisa; perto do pé, a sola segura a bola e
+## os dois param juntos.
+func _trap(_delta: float, off: Vector3, d: float, pv: Vector3, bv: Vector3) -> void:
+	_touch_wait = 0.0
+	if d > TOUCH_REACH + 0.1:
+		_trapping = false
+		return
+	var target := player.global_position + player.facing * 0.36 + pv * 0.08
+	var to := _flat(target - ball.global_position)
+	var new_v := pv * 0.85 + to * 5.0
+	if not _trapping:
+		if bv.length() < 0.25 and pv.length() < 0.3 and to.length() < 0.12:
+			return # já parada no pé
+		_trapping = true
+		player.notify_touch(&"trap")
+	if (new_v - bv).length() > 0.05:
+		ball.touch(new_v.limit_length(6.0), player)
+	_since_touch = 0.0
+
+
+## Bola parada/presa na sola (soltou o analógico)?
+func is_trapping() -> bool:
+	return _trapping
+
+
+## Ponto (mundo, no chão) aonde o jogador precisa ir ANTES de tocar a bola na
+## direção [param w]: atrás da bola em relação à nova direção, onde ela vai
+## estar daqui a pouco. Vector3.INF = não precisa (bola à frente, ao alcance).
+func approach_point(w: Vector3) -> Vector3:
+	if not has_ball():
+		return Vector3.INF
+	var off := ball_offset()
+	var d := off.length()
+	if d < 0.05:
+		return Vector3.INF
+	var ahead := off.normalized().dot(w)
+	var bv := ball.flat_velocity()
+	var ball_with_me := bv.length() < 0.5 or bv.normalized().dot(w) > 0.7
+	if ahead > 0.75 and ball_with_me:
+		return Vector3.INF # bola à frente indo junto: condução normal
+	if d <= TOUCH_REACH + 0.05 and ahead > -0.35:
+		return Vector3.INF # ao alcance: o toque de lado resolve
+	if d <= TOUCH_REACH + 0.05:
+		return Vector3.INF # ao alcance e atrás: a puxada de sola resolve
+	var t := clampf(d / maxf(player.sprint_speed, 0.1), 0.1, 0.45)
+	var p := ball.predict_ground_position(t) - w * 0.34
+	return Vector3(p.x, 0.0, p.z)
 
 
 ## Micro-correção entre os toques: em curva a bola tende a seguir reta e
@@ -290,18 +350,22 @@ func _micro_steer(delta: float, off: Vector3, d: float) -> void:
 		ball.touch(Vector3(new_v.x, ball.velocity_now().y, new_v.z), player)
 
 
-func _foot_near_ball() -> bool:
+func _foot_near_ball(dir := Vector3.ZERO, turn_side := 0.0) -> bool:
 	var feet := player.get_foot_positions()
 	if feet.is_empty():
 		return true # sem modelo animado: toca imediatamente
 	var b := ball.global_position
 	var fwd := player.facing
 	var p := player.global_position
+	var right := dir.cross(Vector3.UP) if dir != Vector3.ZERO else fwd.cross(Vector3.UP)
 	for f in feet:
 		# Pé baixo, perto da bola e à frente do corpo (não toca com o calcanhar).
 		var foot_along := (f - p).dot(fwd)
 		if f.y < 0.35 and Vector2(f.x - b.x, f.z - b.z).length() < FOOT_TOUCH_RADIUS \
-				and foot_along > 0.05 and foot_along <= (b - p).dot(fwd) + 0.02:
+				and foot_along > 0.0 and foot_along <= (b - p).dot(fwd) + 0.04:
+			# Virando: o pé tem que estar do lado de onde a bola sai.
+			if turn_side != 0.0 and (f - b).dot(right) * turn_side > 0.02:
+				continue
 			return true
 	return false
 
@@ -319,8 +383,8 @@ func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 	var T := clampf(0.55 - v_p * 0.035, 0.36, 0.55)
 	var extra := 0.0
 	if sprinting:
-		T = 0.7
-		extra = 0.45
+		T = 0.62
+		extra = 0.35
 	# Perto da linha: toque mais curto e sem empurrar a bola para fora.
 	var bp := ball.global_position
 	if Field.HALF_WIDTH - absf(bp.z) < 1.2 and signf(dir.z) == signf(bp.z):
@@ -329,7 +393,7 @@ func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 		extra = 0.0
 	_foot_side = -_foot_side
 	var right := dir.cross(Vector3.UP)
-	var lead := FOOT_DISTANCE + 0.12 + extra + _rng.randf_range(-0.05, 0.08)
+	var lead := FOOT_DISTANCE + 0.04 + extra + _rng.randf_range(-0.03, 0.05)
 	var p_next := player.global_position + dir * (v_p * T + lead) + right * (_foot_side * 0.07)
 	var to := _flat(p_next - bp)
 	var a := ball.rolling_resistance
@@ -337,6 +401,63 @@ func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 	ball.touch(to.normalized() * v0 if to.length() > 0.01 else dir * v_p, player)
 	_since_touch = 0.0
 	player.notify_touch(&"dribble_touch")
+
+
+## Contato do domínio no ar / cabeceio (no quadro de contato do clipe).
+func aerial_touch(kind: StringName, expected_h: float, aim: Vector3, power: float, shot: bool) -> void:
+	var off := ball_offset()
+	var h := ball.global_position.y
+	if off.length() > 1.0 or absf(h - expected_h) > 0.7 or not ball.can_be_claimed_by(player):
+		return # a bola não veio onde esperado: passou
+	var f := player.facing
+	_since_aerial = 0.0
+	_since_touch = 0.0
+	match kind:
+		&"recv_knee":
+			ball.claim(player)
+			ball.touch(f * 0.7 + Vector3.UP * 1.2, player)
+		&"recv_chest":
+			ball.claim(player)
+			ball.touch(f * 0.9 + Vector3.UP * 0.4, player)
+		&"head_control":
+			ball.claim(player)
+			ball.touch(f * 0.8 + Vector3.UP * 1.6, player)
+		&"header", &"header_jump":
+			_header(aim, power, shot)
+			return
+	player.notify_touch(&"receive_air")
+
+
+## Cabeceio de primeira: passe de cabeça para o companheiro (ou para o gol).
+func _header(aim: Vector3, power: float, shot: bool) -> void:
+	var from := ball.global_position
+	var dir := _aim_dir(aim)
+	var vel: Vector3
+	var receiver: Player = null
+	if shot:
+		var goal_x := Field.goal_line_x(Team.other(player.team))
+		var target := Vector3(goal_x, 0.35, _choose_shot_z(from, goal_x, aim))
+		var flat := _flat(target - from)
+		var speed := lerpf(8.0, 12.0, power)
+		var t := flat.length() / speed
+		var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+		vel = flat.normalized() * speed + Vector3.UP * ((target.y - from.y) / t + 0.5 * g * t)
+	else:
+		receiver = pick_pass_target(dir)
+		if receiver == null and _flat(aim).length() < 0.2:
+			receiver = pick_pass_target(dir, 180.0)
+		var dest := _lead_target(receiver, from) if receiver != null else from + dir * 6.0
+		var flat := _flat(dest - from)
+		var speed := clampf(flat.length() * 1.1, 5.0, lerpf(8.0, 11.0, power))
+		var t := flat.length() / speed
+		var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+		# Chega no pé do companheiro (altura ~0,2 m).
+		vel = flat.normalized() * speed + Vector3.UP * ((0.2 - from.y) / t + 0.5 * g * t)
+	vel = vel.rotated(Vector3.UP, _rng.randf_range(-0.03, 0.03))
+	ball.kick(vel, Vector3.ZERO, player)
+	ball.pass_target = receiver
+	player.notify_touch(&"header")
+	GameEvents.ball_kicked.emit(player, &"shoot" if shot else &"pass", power)
 
 
 # --- Ações com a bola ------------------------------------------------------------
@@ -360,22 +481,26 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 		var dest := _lead_target(mate, from)
 		var dist := _flat(dest - from).length()
 		if long:
-			vel = lofted_velocity(from, from + _flat(dest - from) * 0.92, lerpf(24.0, 34.0, power))
+			vel = lofted_velocity(from, from + _flat(dest - from) * 0.92, lerpf(32.0, 44.0, power))
 		else:
 			# Passe firme: chega com velocidade (o recebedor domina), nunca "mascando".
-			vel = ground_pass_velocity(from, dest, lerpf(4.5, 7.0, power))
-			vel = vel.normalized() * clampf(vel.length(), lerpf(8.5, 11.0, power), 19.0)
+			vel = ground_pass_velocity(from, dest, lerpf(5.5, 7.5, power))
+			vel = vel.normalized() * clampf(vel.length(), lerpf(9.5, 12.0, power), 19.0)
 	else:
 		# Passe em profundidade (para o espaço): vai quem estiver melhor para chegar.
 		var dest := from + dir * lerpf(7.0, 18.0, power)
 		dest = Field.clamp_inside(dest, 0.5)
 		receiver = _best_runner_to(dest)
 		if long:
-			vel = lofted_velocity(from, dest, 30.0)
+			vel = lofted_velocity(from, dest, 40.0)
 		else:
-			vel = ground_pass_velocity(from, dest, 2.5)
-			vel = vel.normalized() * clampf(vel.length(), lerpf(8.0, 10.5, power), 19.0)
-	var err := deg_to_rad(0.6 + 1.2 * power)
+			# Para o espaço: a bola tem que MORRER perto do ponto (não sair do campo).
+			vel = ground_pass_velocity(from, dest, lerpf(1.5, 3.0, power))
+			vel = vel.normalized() * clampf(vel.length(), 4.5, 16.0)
+	# Precisão: toque curto praticamente no pé; passe forte um pouco menos.
+	var err := deg_to_rad(0.25 + 0.75 * power)
+	if ball_distance() > 0.75:
+		err *= 1.5 # bola longe do pé
 	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err))
 	ball.kick(vel, Vector3.ZERO, player)
 	ball.pass_target = receiver
@@ -412,7 +537,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
 	# Imprecisão: maior com força alta, bola longe do pé ou corpo desalinhado.
-	var spread := deg_to_rad(lerpf(1.5, 6.5, power))
+	var spread := deg_to_rad(lerpf(0.8, 3.5, power))
 	if ball_distance() > 0.7:
 		spread *= 1.3
 	if player.facing.dot(dir) < 0.3:
@@ -434,9 +559,9 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
 	var from := ball.global_position
 	var speed := lerpf(8.0, 17.0, power)
-	var spread := deg_to_rad(lerpf(0.8, 3.0, power))
+	var spread := deg_to_rad(lerpf(0.4, 1.8, power))
 	if player.facing.dot(dir) < 0.3:
-		spread *= 1.8 # chutar de lado para onde o corpo não está virado
+		spread *= 1.6 # chutar de lado para onde o corpo não está virado
 	dir = dir.rotated(Vector3.UP, _rng.randf_range(-spread, spread))
 	# Altura: até o gol (se estiver mirando para ele) ou ~10 m.
 	var goal_x := Field.goal_line_x(Team.other(player.team))
@@ -459,7 +584,7 @@ func _execute_chip(power: float, dir: Vector3) -> bool:
 	var spread := deg_to_rad(2.0)
 	dir = dir.rotated(Vector3.UP, _rng.randf_range(-spread, spread))
 	var speed := lerpf(4.5, 8.0, power)
-	var vy := lerpf(4.0, 6.0, power)
+	var vy := lerpf(5.5, 7.5, power)
 	ball.kick(dir * speed + Vector3.UP * vy, Vector3.ZERO, player)
 	player.notify_touch(&"shoot")
 	GameEvents.ball_kicked.emit(player, &"shoot", power)
@@ -491,7 +616,9 @@ func execute_tackle() -> bool:
 		chance -= 0.15
 	var from_carrier := _flat(player.global_position - carrier.global_position).normalized()
 	if carrier.facing.dot(from_carrier) < -0.3:
-		chance -= 0.15 # vindo por trás
+		chance -= 0.2 # vindo por trás
+	elif carrier.facing.dot(from_carrier) > 0.5:
+		chance += 0.12 # de frente: fecha o caminho da bola
 	if _rng.randf() > chance:
 		# Errou a bola: se pegou o adversário, é FALTA.
 		if player.global_position.distance_to(carrier.global_position) < 0.95 and _rng.randf() < 0.55:

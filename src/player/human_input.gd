@@ -34,6 +34,12 @@ var _last_dribble_tap := -10.0
 ## Segurando BUSCAR (sem a bola): o jogador corre sozinho atrás da bola.
 var chasing := false
 var _chase_sprint := false
+## Direção suavizada do analógico (girar rápido de um lado para o outro não
+## deixa o jogador "perdido": o corpo acompanha numa velocidade humana).
+var _smooth := Vector3.ZERO
+var _raw_dir := Vector3.ZERO
+var _raw_steady := 0.0
+var _last_auto_poke := -10.0
 
 
 func _ready() -> void:
@@ -42,7 +48,7 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	var v := Input.get_vector("move_left", "move_right", "move_up", "move_down")
-	_move = _to_world(v)
+	_move = _smooth_input(_to_world(v), delta)
 	_sprint = Input.is_action_pressed("sprint")
 	# Segurando CHUTE com a bola (ou perto dela): o analógico vira a MIRA e o
 	# jogador para; a direção escolhida é exatamente para onde a bola vai.
@@ -71,8 +77,24 @@ func _physics_process(delta: float) -> void:
 		_last_dribble_tap = now
 	chasing = not has_ball_context() and Input.is_action_pressed("dribble")
 	if chasing and current_player != null and current_player.ball != null:
-		_move = _chase_direction()
+		var auto := _chase_direction()
+		if _move.length() > 0.3 and auto.length() > 0.05:
+			# Analógico junto com BUSCAR: escolhe por onde chegar (ex.: dar a
+			# volta e pegar o adversário de frente, não por trás).
+			var mix := (auto.normalized() * 0.55 + _move.normalized() * 0.45).normalized()
+			_move = mix * maxf(auto.length(), 0.6)
+		else:
+			_move = auto
 		_sprint = _sprint or _chase_sprint
+		# Chegou no adversário com a bola: dá o bote sozinho (de frente é mais fácil).
+		var b := current_player.ball
+		if b.possessor != null and b.possessor.team != current_player.team \
+				and now - _last_auto_poke > 0.9 and current_player.state == Player.State.MOVE:
+			var dd := b.possessor.global_position - current_player.global_position
+			dd.y = 0.0
+			if dd.length() < 1.05:
+				_last_auto_poke = now
+				_queue(PlayerIntent.Action.DRIBBLE, 1.0)
 
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
@@ -101,6 +123,8 @@ func _physics_process(delta: float) -> void:
 	if charge != _last_charge:
 		_last_charge = charge
 		charge_changed.emit(clampf(charge, 0.0, 1.0), kind)
+		if current_player != null:
+			current_player.set_charge(charge, kind)
 
 
 func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
@@ -146,13 +170,45 @@ func _queue(a: PlayerIntent.Action, power: float) -> void:
 		_chip_pending = false
 
 
-## O jogador controlado está com a bola (ou com ela ao alcance do pé)?
-## Define o significado dos botões.
+## O jogador controlado está com a bola (ou com ela ao alcance do pé, ou com
+## um passe vindo para ele)? Define o significado dos botões.
 func has_ball_context() -> bool:
 	if current_player == null or current_player.ball == null:
 		return true
 	var bc := current_player.ball_control
-	return bc.has_ball() or (bc.can_kick() and current_player.ball.possessor == null)
+	var b := current_player.ball
+	if b.possessor == null and b.pass_target == current_player and b.in_play:
+		return true # passe a caminho: PASSE/CHUTE de primeira, sem trocar
+	return bc.has_ball() or (bc.can_kick() and b.possessor == null)
+
+
+## Suaviza a direção do analógico: inversões claras (> 135°, mantidas um
+## instante) passam direto — viram "puxada" de sola; o resto gira numa
+## velocidade natural, então chacoalhar o analógico não embaralha o corpo.
+func _smooth_input(raw: Vector3, delta: float) -> Vector3:
+	var l := raw.length()
+	if l < 0.1:
+		_smooth = Vector3.ZERO
+		_raw_steady = 0.0
+		return Vector3.ZERO
+	var dir := raw / l
+	if _raw_dir != Vector3.ZERO and dir.dot(_raw_dir) > 0.94:
+		_raw_steady += delta
+	else:
+		_raw_steady = 0.0
+		_raw_dir = dir
+	if _smooth == Vector3.ZERO:
+		_smooth = dir
+	else:
+		var ang := _smooth.signed_angle_to(dir, Vector3.UP)
+		if absf(ang) > deg_to_rad(135.0):
+			if _raw_steady > 0.06:
+				_smooth = dir # inversão de verdade
+		else:
+			var with_ball := current_player != null and current_player.ball_control.has_ball()
+			var rate := (7.5 if with_ball else 12.0) * delta
+			_smooth = _smooth.rotated(Vector3.UP, clampf(ang, -rate, rate)).normalized()
+	return _smooth * l
 
 
 ## BUSCAR: para onde correr. Bola livre → ponto onde ela vai estar (corre
@@ -175,9 +231,9 @@ func _chase_direction() -> Vector3:
 	d.y = 0.0
 	if d.length() < 0.25:
 		return Vector3.ZERO
-	_chase_sprint = d.length() > 3.0
+	_chase_sprint = d.length() > 1.4
 	# Perto: devagar para dominar sem atropelar a bola.
-	return d.normalized() * clampf(d.length() / 1.6, 0.35, 1.0)
+	return d.normalized() * clampf(d.length() / 1.0, 0.4, 1.0)
 
 
 func _near_ball() -> bool:

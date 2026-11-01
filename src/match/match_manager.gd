@@ -138,6 +138,8 @@ func formation_position(team: int, index: int, ball_x := 0.0) -> Vector3:
 
 func _physics_process(delta: float) -> void:
 	_state_timer -= delta
+	if ball.held and (ball.restricted_player == null or not ball.restricted_player.is_restart_locked()):
+		ball.held = false # segurança: a trava do batedor acabou
 	match state:
 		MatchState.KICKOFF:
 			if _state_timer <= 0.0:
@@ -230,6 +232,7 @@ func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 	ball.restrict_to(team, 60.0)
 	ball.in_play = true
 	ball.claim(taker)
+	ball.hold_here() # parada no lugar: girar o corpo não mexe na bola
 	ball.restricted_player = taker # só o batedor toca até passar
 	taker.set_restart_lock(true)
 	if team == human_team and not autoplay:
@@ -271,6 +274,7 @@ func _start_kickoff(team: int) -> void:
 	ball.restrict_to(team, 60.0)
 	# Saída de bola: quem dá a saída tem que tocar (não sai conduzindo) e
 	# ninguém mais pode pegar a bola antes do passe.
+	ball.hold_here()
 	for p in get_team(team):
 		if p.formation_index == 2:
 			p.set_restart_lock(true)
@@ -311,6 +315,9 @@ func _on_switch_requested() -> void:
 		return
 	# Com a bola no pé não troca de jogador.
 	if controlled != null and controlled.ball_control.has_ball():
+		return
+	# Passe vindo para o controlado: não troca até ele dominar.
+	if controlled != null and ball.possessor == null and ball.pass_target == controlled:
 		return
 	var best: Player = null
 	var best_d := INF

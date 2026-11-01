@@ -18,6 +18,8 @@ var _invaded := false
 var _measure := 0
 var _first_owner: Node = null
 var _kicker: Node = null
+var _prof_kicker: Node = null
+var _prof_owner: Node = null
 
 
 func _ready() -> void:
@@ -107,6 +109,7 @@ func _test_through_pass() -> void:
 		ball.claim(me)
 		mm.state = MatchManager.MatchState.PLAYING
 		_target = null
+		_prof_kicker = me
 	var t := f - t0
 	var s2 := Field.attack_sign(mm.human_team)
 	if t == 20:
@@ -120,10 +123,14 @@ func _test_through_pass() -> void:
 		Input.action_release("move_down")
 	if ball.pass_target != null:
 		_target = ball.pass_target
+	if t > 36 and _prof_owner == null and ball.possessor != null and ball.possessor != _prof_kicker:
+		_prof_owner = ball.possessor
 	if t == 330:
 		results["profundidade_recebedor"] = _target != null
 		results["dono_apos_prof"] = str(ball.possessor.name) if ball.possessor else "solta@" + str(ball.global_position) + " st=" + str(mm.state)
-		results["profundidade_dominou"] = _target != null and ball.possessor == _target
+		results["prof_alvo"] = str(_target.name) if _target else "-"
+		results["prof_primeiro"] = str(_prof_owner.name) if _prof_owner else "-"
+		results["profundidade_dominou"] = _target != null and _prof_owner == _target
 		phase = 4
 		t0 = 0
 

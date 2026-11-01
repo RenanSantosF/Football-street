@@ -4,8 +4,8 @@ extends RefCounted
 ## editor do celular). Estrutura (StateMachine na raiz):
 ##
 ##   Estados-base (escolhidos continuamente pelo PlayerAnimationController):
-##     Locomotion      BlendSpace1D pela velocidade: parado/andar/trote/corrida/sprint
-##     LocomotionBall  idem com a bola: parado com bola/andar/CONDUÇÃO/corrida/sprint
+##     Locomotion      BlendSpace2D: velocidade × com bola (parado/andar/trote ou
+##                     condução/corrida/sprint)
 ##     Mark            BlendSpace2D pela velocidade local: postura de marcação,
 ##                     andar/correr de lado, de costas e nas diagonais
 ##   Ações (BlendTree: Clip → TimeSeek "Seek" → TimeScale "Scale"):
@@ -20,7 +20,7 @@ const XFADE_LOCOMOTION := 0.2
 const XFADE_ACTION := 0.12
 const XFADE_ACTION_OUT := 0.22
 
-const BASE_STATES: Array[StringName] = [&"Locomotion", &"LocomotionBall", &"Mark"]
+const BASE_STATES: Array[StringName] = [&"Locomotion", &"Mark"]
 
 ## estado -> nome lógico (ações com contato na bola, com Seek/Scale)
 const ACTION_CLIPS := {
@@ -39,6 +39,15 @@ const ACTION_CLIPS := {
 	&"TurnLeft": &"turn_l",
 	&"TurnRight": &"turn_r",
 	&"RunStop": &"run_stop",
+	&"PassShortL": &"pass_short_m",
+	&"PassLongL": &"pass_long_m",
+	&"ShootL": &"shoot_m",
+	&"ShootPowerL": &"shoot_power_m",
+	&"RecvChest": &"recv_chest",
+	&"RecvKnee": &"recv_knee",
+	&"Header": &"header",
+	&"HeadControl": &"head_control",
+	&"HeaderJump": &"header_jump",
 }
 ## estado -> [nome lógico, volta sozinho para a locomoção no fim?]
 const REACTION_CLIPS := {
@@ -64,8 +73,10 @@ static func build(tree: AnimationTree) -> void:
 			tree.add_animation_library(prefix, AnimationCatalog.get_libraries()[prefix])
 
 	var sm := AnimationNodeStateMachine.new()
-	sm.add_node(&"Locomotion", _blend_1d(AnimationCatalog.LOCOMOTION_POINTS), Vector2(300, 100))
-	sm.add_node(&"LocomotionBall", _blend_1d(AnimationCatalog.LOCOMOTION_BALL_POINTS), Vector2(300, 250))
+	# Com e sem bola no MESMO BlendSpace2D (x = velocidade, y = com bola 0..1),
+	# sincronizado: ganhar/perder a bola mistura as passadas sem trocar de
+	# estado (antes a pose "pulava" a cada passe/domínio).
+	sm.add_node(&"Locomotion", _blend_locomotion(), Vector2(300, 100))
 	sm.add_node(&"Mark", _blend_2d(AnimationCatalog.MARK_POINTS), Vector2(300, 400))
 	_add_transition(sm, &"Start", &"Locomotion", 0.0, AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO)
 	for a in BASE_STATES:
@@ -106,6 +117,21 @@ static func build(tree: AnimationTree) -> void:
 				_add_transition(sm, a, b, XFADE_ACTION)
 
 	tree.tree_root = sm
+
+
+static func _blend_locomotion() -> AnimationNodeBlendTree:
+	var bs := AnimationNodeBlendSpace2D.new()
+	bs.min_space = Vector2(0.0, 0.0)
+	bs.max_space = Vector2(8.0, 1.0)
+	bs.blend_mode = AnimationNodeBlendSpace2D.BLEND_MODE_INTERPOLATED
+	bs.sync = true
+	for row in [[AnimationCatalog.LOCOMOTION_POINTS, 0.0], [AnimationCatalog.LOCOMOTION_BALL_POINTS, 1.0]]:
+		for p in row[0]:
+			if AnimationCatalog.has_clip(p[0]):
+				var anim := AnimationNodeAnimation.new()
+				anim.animation = AnimationCatalog.clip(p[0])
+				bs.add_blend_point(anim, Vector2(p[1], row[1]))
+	return _with_scale(bs, &"Speed")
 
 
 static func _blend_1d(points: Array) -> AnimationNodeBlendTree:
@@ -161,14 +187,12 @@ static func _add_clip_state(sm: AnimationNodeStateMachine, state: StringName, lo
 	return true
 
 
-static func _connect_from_bases(sm: AnimationNodeStateMachine, state: StringName, auto_return: bool) -> void:
+## A volta para a locomoção é sempre por travel() (o PlayerAnimationController
+## volta no fim do clipe ou antes, se o jogador sair andando).
+static func _connect_from_bases(sm: AnimationNodeStateMachine, state: StringName, _auto_return: bool) -> void:
 	for b in BASE_STATES:
 		_add_transition(sm, b, state, XFADE_ACTION)
-		if not (auto_return and b == &"LocomotionBall"):
-			_add_transition(sm, state, b, XFADE_ACTION_OUT)
-	if auto_return:
-		var back := _add_transition(sm, state, &"LocomotionBall", XFADE_ACTION_OUT, AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO)
-		back.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
+		_add_transition(sm, state, b, XFADE_ACTION_OUT)
 
 
 static func _add_transition(sm: AnimationNodeStateMachine, from: StringName, to: StringName, xfade: float,

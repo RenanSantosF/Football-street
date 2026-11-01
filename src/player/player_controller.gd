@@ -108,6 +108,10 @@ var _steady_input := Vector3.ZERO
 var _steady_time := 0.0
 var _prev_input_len := 0.0
 var _turn_cooldown := 0.0
+## Chute/passe atual com o pé ESQUERDO (clipe espelhado)?
+var _kick_mirror := false
+## Giro com a bola antes de um passe/chute para trás.
+var _pivot_dir := Vector3.ZERO
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -129,6 +133,7 @@ func setup(mm: MatchManager, b: Ball) -> void:
 	visual.scale = Vector3.ONE
 	anim_controller.setup(self)
 	_add_team_disc()
+	_add_charge_ring()
 	set_human(false, null)
 
 
@@ -154,11 +159,40 @@ func _add_team_disc() -> void:
 	add_child(ring)
 
 
+var _charge_ring: MeshInstance3D = null
+
+
+## Barra de força do passe/chute no chão, em volta do jogador controlado.
+func _add_charge_ring() -> void:
+	_charge_ring = MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(1.25, 1.25)
+	_charge_ring.mesh = pm
+	var mat := ShaderMaterial.new()
+	mat.shader = preload("res://src/shaders/charge_ring.gdshader")
+	_charge_ring.material_override = mat
+	_charge_ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_charge_ring.position.y = 0.035
+	_charge_ring.visible = false
+	add_child(_charge_ring)
+
+
+## Força atual (0..1) do botão segurado; kind vazio = solto (esconde).
+func set_charge(value: float, kind: StringName) -> void:
+	if _charge_ring == null:
+		return
+	_charge_ring.visible = kind != &""
+	if _charge_ring.visible:
+		(_charge_ring.material_override as ShaderMaterial).set_shader_parameter("fill", clampf(value, 0.0, 1.0))
+
+
 ## Liga/desliga o controle humano. Sem humano, a própria IA assume.
 func set_human(value: bool, human_input: Node) -> void:
 	is_human = value and human_input != null
 	controller = human_input if is_human else ai
 	selection_ring.visible = is_human
+	if not is_human:
+		set_charge(0.0, &"")
 
 
 func _physics_process(delta: float) -> void:
@@ -181,6 +215,7 @@ func _physics_process(delta: float) -> void:
 	elif not _compute_marking_allowed():
 		_marking = false
 
+	_record_buffer()
 	match state:
 		State.MOVE:
 			_update_move(delta)
@@ -210,9 +245,17 @@ func _update_move(delta: float) -> void:
 	if _restart_lock:
 		_check_restart_unlock()
 	if _restart_lock:
-		input = Vector3.ZERO # parado: o analógico só gira o corpo (mira do passe)
-	elif ball != null and ball.pass_target == self and ball.possessor == null and ball.in_play \
-			and not (is_human and input.length() > 0.5):
+		_restart_orbit(input, delta)
+		return
+	if _try_aerial_reception():
+		return
+	if _pivot_dir != Vector3.ZERO:
+		_brake(delta, deceleration)
+		ball_control.carry_during_skill(delta)
+		if facing.angle_to(_pivot_dir) < deg_to_rad(30.0) or not ball_control.has_ball() or _buffer_timer <= 0.0:
+			_pivot_dir = Vector3.ZERO
+		return
+	elif ball != null and ball.pass_target == self and ball.possessor == null and ball.in_play:
 		# A bola vem para mim: vou buscá-la sozinho (IA ou humano sem mexer no
 		# analógico). Bola direto em mim → espero e dou um passo ao encontro;
 		# em profundidade → corro para onde ela vai estar.
@@ -236,20 +279,53 @@ func _update_move(delta: float) -> void:
 		var to_ball := ball_control.ball_offset()
 		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
 	elif has_ball and input.length() > 0.1:
-		var turn_target := ball_control.turn_approach_point(input.normalized())
-		if turn_target != Vector3.ZERO:
-			# Virou para o lado oposto da bola: vai até ela contornando, para
-			# puxá-la para a nova direção (não abandona a bola).
-			# Corre mais que a bola para alcançá-la (se ela estiver fugindo).
-			var chase := clampf(ball.flat_velocity().length() + 1.5, jog_speed * 0.85, sprint_speed)
-			desired = turn_target.normalized() * chase if turn_target.length() > 0.12 else input * jog_speed * 0.4
+		var w := input.normalized()
+		var ap := ball_control.approach_point(w)
+		if ap != Vector3.INF:
+			# A bola não está à frente na nova direção (passada longa, virada):
+			# PRIMEIRO alcança a bola, por trás dela em relação à nova direção,
+			# e só então dá o toque. Nunca larga a bola para trás.
+			var to := ap - global_position
+			to.y = 0.0
+			var chase := clampf(to.length() / 0.28, jog_speed * 0.5, sprint_speed * 1.05)
+			desired = to.normalized() * chase if to.length() > 0.08 else w * jog_speed * 0.3
 		else:
-			desired += ball_control.catch_up_velocity(input.normalized())
+			desired += ball_control.catch_up_velocity(w)
+	elif has_ball:
+		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
+		var off := ball_control.ball_offset()
+		var bv := ball.flat_velocity()
+		if off.length() > BallControl.TOUCH_REACH * 0.85 and not ball_control.is_trapping():
+			var stop_at := ball.predict_ground_position(0.3) - facing * 0.38
+			var to := stop_at - global_position
+			to.y = 0.0
+			desired = (to / 0.3).limit_length(maxf(get_horizontal_speed(), bv.length() + 0.8))
 	var hv := get_flat_velocity()
 	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
 	hv = hv.move_toward(desired, rate * delta)
+	velocity.x = hv.x
+	velocity.z = hv.z
+
+
+## Reinício: o analógico só escolhe a direção do passe. O jogador gira em
+## volta da bola parada (passinhos), sempre com a bola à frente do pé.
+func _restart_orbit(input: Vector3, delta: float) -> void:
+	var to_ball := ball.global_position - global_position
+	to_ball.y = 0.0
+	var aim := facing
+	if input.length() > 0.25:
+		aim = input.normalized()
+	var spot := ball.global_position - aim * 0.45
+	spot.y = global_position.y
+	var to := spot - global_position
+	to.y = 0.0
+	var desired := to * 5.0
+	desired = desired.limit_length(1.6)
+	if to.length() < 0.04:
+		desired = Vector3.ZERO
+	var hv := get_flat_velocity().move_toward(desired, deceleration * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
 
@@ -265,10 +341,12 @@ func _update_facing(delta: float) -> void:
 	var target_dir := facing
 	if state == State.ACTION and _action_face != Vector3.ZERO:
 		target_dir = _action_face
+	elif _pivot_dir != Vector3.ZERO:
+		target_dir = _pivot_dir
 	elif ball != null and ball.pass_target == self and ball.possessor == null and hv.length() < 2.0:
 		target_dir = _flat_dir_to(ball.global_position) # recebendo: olha para a bola
-	elif _restart_lock and intent.move.length() > 0.2:
-		target_dir = Vector3(intent.move.x, 0.0, intent.move.z).normalized()
+	elif _restart_lock:
+		target_dir = _flat_dir_to(ball.global_position) # sempre de frente para a bola
 	elif _marking and state == State.MOVE:
 		target_dir = _flat_dir_to(_mark_focus())
 	elif hv.length() > 0.4:
@@ -283,6 +361,8 @@ func _update_facing(delta: float) -> void:
 	var rate := turn_speed_with_ball if ball_control.has_ball() else turn_speed
 	if state == State.ACTION:
 		rate *= 1.6
+	if _pivot_dir != Vector3.ZERO:
+		rate = 11.0
 	rate *= lerpf(1.0, 0.55, clampf(hv.length() / sprint_speed, 0.0, 1.0))
 	facing = _rotate_flat(facing, target_dir, rate * delta)
 	rotation.y = atan2(-facing.x, -facing.z)
@@ -306,7 +386,9 @@ func _update_stamina(delta: float) -> void:
 
 # --- Ações ---------------------------------------------------------------------
 
-func _update_actions(delta: float) -> void:
+## Guarda o botão apertado (também durante uma ação: parada, virada...),
+## para não perder o comando.
+func _record_buffer() -> void:
 	if intent.action != PlayerIntent.Action.NONE:
 		_buffer_action = intent.action
 		_buffer_power = intent.power
@@ -314,7 +396,13 @@ func _update_actions(delta: float) -> void:
 		_buffer_target = intent.target
 		_buffer_precise = intent.precise
 		_buffer_lofted = intent.lofted
-		_buffer_timer = BUFFER_TIME_WITH_BALL if ball_control.has_ball() else BUFFER_TIME
+		var incoming := ball != null and ball.pass_target == self and ball.possessor == null
+		_buffer_timer = BUFFER_TIME_WITH_BALL if (ball_control.has_ball() or incoming) else BUFFER_TIME
+		if incoming:
+			_buffer_timer = 3.0 # de primeira: espera a bola chegar
+
+
+func _update_actions(delta: float) -> void:
 	if _buffer_timer <= 0.0:
 		return
 	_buffer_timer -= delta
@@ -325,6 +413,15 @@ func _update_actions(delta: float) -> void:
 	var done := false
 	match _buffer_action:
 		PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT:
+			if ball_control.has_ball() and ball_control.can_kick() and _pivot_dir == Vector3.ZERO and not _restart_lock:
+				# Passe/chute para TRÁS: primeiro gira o corpo com a bola na sola
+				# (passinhos rápidos), depois toca de frente — preciso, sem "cair".
+				var kd := _kick_direction(_buffer_action, _buffer_aim, _buffer_target)
+				if kd != Vector3.ZERO and facing.angle_to(kd) > deg_to_rad(100.0):
+					_pivot_dir = kd
+					return
+			if _pivot_dir != Vector3.ZERO:
+				return # ainda girando
 			if ball_control.can_kick() or ball_control.can_start_kick_on_run():
 				_start_kick(_buffer_action, _buffer_power, _buffer_aim, _buffer_target, _buffer_lofted)
 				_action_precise = _buffer_precise
@@ -377,9 +474,43 @@ func _has_pending_kick() -> bool:
 		or _buffer_action == PlayerIntent.Action.SHOOT)
 
 
+## Para onde a bola vai sair (para escolher o pé e saber se precisa girar).
+func _kick_direction(a: PlayerIntent.Action, aim: Vector3, target: Node3D) -> Vector3:
+	var kdir := Vector3(aim.x, 0.0, aim.z)
+	if target != null:
+		kdir = _flat_dir_to(target.global_position)
+	elif a == PlayerIntent.Action.SHOOT and kdir.length() < 0.2:
+		kdir = _flat_dir_to(Field.goal_center(Team.other(team)))
+	elif a == PlayerIntent.Action.PASS and kdir.length() < 0.2:
+		var mate := ball_control.pick_pass_target(facing, 180.0)
+		if mate != null:
+			kdir = _flat_dir_to(mate.global_position)
+	return kdir.normalized() if kdir.length() > 0.1 else Vector3.ZERO
+
+
+func kick_mirrored() -> bool:
+	return _kick_mirror
+
+
+## Qual pé chuta: o do lado em que a bola está e para onde ela vai. Bola à
+## esquerda do corpo / chute para a esquerda → pé ESQUERDO (clipe espelhado).
+func _choose_kick_foot(dir: Vector3) -> bool:
+	var right := facing.cross(Vector3.UP)
+	var lat_ball := ball_control.ball_offset().dot(right)
+	var lat_dir := dir.dot(right) if dir.length() > 0.1 else 0.0
+	var score := lat_ball * 2.5 + lat_dir
+	if score < -0.12:
+		return true
+	if score > 0.12:
+		return false
+	return _rng.randf() < 0.25 # neutro: pé direito na maioria das vezes
+
+
 func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Node3D, lofted := false) -> void:
 	if a == PlayerIntent.Action.PASS and lofted:
 		power = maxf(power, LONG_PASS_POWER) # passe por cima
+	var kdir := _kick_direction(a, aim, target)
+	_kick_mirror = _choose_kick_foot(kdir)
 	if a == PlayerIntent.Action.SHOOT:
 		var kind: StringName = &"shoot_power" if power > 0.7 else &"shoot"
 		var contact := 0.16 + 0.12 * power
@@ -407,6 +538,8 @@ func _setup_kick_root_motion() -> void:
 	if _kick_logical == &"" or not AnimationCatalog.has_clip(_kick_logical):
 		_kick_logical = &""
 		return
+	if _kick_mirror and AnimationCatalog.has_clip(AnimationCatalog.mirrored_name(_kick_logical)):
+		_kick_logical = AnimationCatalog.mirrored_name(_kick_logical)
 	var sp := PlayerAnimationController.ACTION_SPEED
 	_kick_seek = maxf(AnimationCatalog.contact_time(_kick_logical) - _action_contact * sp, 0.0)
 
@@ -447,7 +580,7 @@ func _update_action(delta: float) -> void:
 		var left := Vector3.UP.cross(facing)
 		var target := (facing * rv.z + left * rv.x) * hips_h * speed
 		hv = hv.move_toward(target, acceleration * 3.0 * delta)
-		if _action_kind == &"spin":
+		if _action_kind == &"spin" or _action_kind == &"run_stop":
 			ball_control.carry_during_skill(delta)
 	elif _action_kind == &"dribble":
 		var dir := Vector3(_action_aim.x, 0.0, _action_aim.z).normalized()
@@ -460,6 +593,11 @@ func _update_action(delta: float) -> void:
 			hips_h = visual.call("get_hips_height")
 		var left := Vector3.UP.cross(facing)
 		hv = hv.move_toward((facing * rv.z + left * rv.x) * hips_h * sp, acceleration * 2.0 * delta)
+	elif not _action_contact_done and _action_kind in AERIAL_KINDS:
+		var remaining := maxf(_action_contact - _action_time, 0.05)
+		var to := _aerial_point - global_position
+		to.y = 0.0
+		hv = hv.move_toward((to / remaining).limit_length(sprint_speed), acceleration * 3.0 * delta)
 	elif not _action_contact_done and _is_kick_action():
 		# Preparação do chute/passe: acompanhar a bola até o pé de apoio,
 		# para que no contato ela esteja ao alcance (sem "furar").
@@ -491,8 +629,9 @@ func _update_action(delta: float) -> void:
 			facing = _turn_target
 			rotation.y = atan2(-facing.x, -facing.z)
 			_turn_target = Vector3.ZERO
-	# Parada brusca: se voltar a mexer o analógico, sai da parada.
-	if state == State.ACTION and _action_kind == &"run_stop" and _action_time > 0.25 and intent.move.length() > 0.5:
+	# Parada brusca: se voltar a mexer o analógico (ou pedir passe/chute), sai da parada.
+	if state == State.ACTION and _action_kind == &"run_stop" and \
+			((_action_time > 0.25 and intent.move.length() > 0.5) or (_action_time > 0.1 and _has_pending_kick())):
 		state = State.MOVE
 	if state != State.ACTION and collision_mask != 3:
 		collision_mask = 3
@@ -518,6 +657,8 @@ func _do_contact() -> void:
 			ball_control.execute_slide_tackle()
 		&"spin":
 			ball_control.release_after_skill()
+		&"recv_chest", &"recv_knee", &"head_control", &"header", &"header_jump":
+			ball_control.aerial_touch(_action_kind, _aerial_height, _action_aim, _action_power, _action_precise)
 
 
 func action_time_left() -> float:
@@ -572,10 +713,15 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 			var turned := facing.rotated(Vector3.UP, signf(ang) * PI * 0.5)
 			_start_turn(&"turn_l" if ang > 0.0 else &"turn_r", &"turn_l" if ang > 0.0 else &"turn_r", turned)
 			return true
-	if released and speed > 3.2 and not ball_control.has_ball() and ball_control.ball_distance() > 3.0 \
-			and AnimationCatalog.has_clip(&"run_stop"):
-		_start_root_action(&"run_stop", &"run_stop", 0.0, facing)
-		return true
+	if released and speed > 3.2 and AnimationCatalog.has_clip(&"run_stop"):
+		var bc := ball_control
+		var ball_ok := bc.ball_distance() > 3.0
+		if bc.has_ball():
+			# Com a bola: parada brusca pisando na bola (ela para junto).
+			ball_ok = bc.ball_distance() < 1.4 and bc.ball_offset().dot(facing) > 0.0
+		if ball_ok and (is_human or not bc.has_ball()):
+			_start_root_action(&"run_stop", &"run_stop", 0.0, facing)
+			return true
 	return false
 
 
@@ -597,6 +743,9 @@ func play_gesture(kind: StringName, duration: float) -> void:
 
 func _receive_pass(delta: float) -> void:
 	var target := _pass_intercept_point()
+	if is_human and intent.move.length() > 0.3:
+		# O sistema leva o recebedor até a bola; o analógico só ajusta um pouco.
+		target += Vector3(intent.move.x, 0.0, intent.move.z) * 0.5
 	var to := target - global_position
 	to.y = 0.0
 	var d := to.length()
@@ -609,6 +758,64 @@ func _receive_pass(delta: float) -> void:
 	hv = hv.move_toward(desired, (acceleration if desired.length() > hv.length() else deceleration) * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
+
+
+const AERIAL_KINDS: Array[StringName] = [&"recv_chest", &"recv_knee", &"header", &"head_control", &"header_jump"]
+var _aerial_point := Vector3.ZERO
+var _aerial_height := 0.0
+
+
+## Bola alta vindo em mim: escolhe o domínio pela altura em que ela vai chegar
+## (coxa, peito, cabeça) ou cabeceia (com PASSE/CHUTE apertado: de primeira).
+## A ação começa antes, para o contato do clipe casar com a chegada da bola.
+func _try_aerial_reception() -> bool:
+	if ball == null or ball.possessor != null or not ball.in_play or is_goalkeeper():
+		return false
+	if not ball.can_be_claimed_by(self):
+		return false
+	var v := ball.flat_velocity()
+	if v.length() < 1.5:
+		return false
+	var rel := ball.global_position - global_position
+	rel.y = 0.0
+	var mine := ball.pass_target == self or (is_human and rel.length() < 6.0)
+	if not mine:
+		return false
+	var t := -rel.dot(v) / v.length_squared()
+	if t < 0.05 or t > 1.6:
+		return false
+	var closest := rel + v * t
+	if closest.length() > 0.9:
+		return false
+	var vy := ball.velocity_now().y
+	var h := ball.global_position.y + vy * t - 0.5 * _gravity * t * t
+	if h < 0.32 or h > 2.4:
+		return false # rasteira (domínio normal) ou alta demais
+	var kind: StringName
+	var pending := _buffer_timer > 0.0 and _buffer_action in [PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT]
+	if h < 0.75:
+		kind = &"recv_knee"
+	elif h < 1.35:
+		kind = &"recv_chest"
+	elif h < 2.0:
+		kind = &"header" if pending else &"head_control"
+	else:
+		kind = &"header_jump"
+	if not AnimationCatalog.has_clip(kind):
+		return false
+	var lead := AnimationCatalog.contact_time(kind) / PlayerAnimationController.ACTION_SPEED
+	if t > lead + 0.03:
+		return false # ainda cedo: o Player segue indo ao encontro (recepção normal)
+	_begin_action(kind, t, t + 0.45, 1.0, Vector3.ZERO, null, 0.3)
+	_action_face = -v.normalized()
+	_aerial_point = global_position + closest - v.normalized() * 0.12
+	_aerial_height = h
+	if kind in [&"header", &"header_jump"] and pending:
+		_action_aim = _buffer_aim
+		_action_power = _buffer_power
+		_action_precise = _buffer_action == PlayerIntent.Action.SHOOT
+		_buffer_timer = 0.0
+	return true
 
 
 ## Onde e quando consigo encontrar a bola em movimento.

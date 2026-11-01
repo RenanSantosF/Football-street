@@ -5,7 +5,6 @@ extends Node
 ## Estado-base escolhido continuamente:
 ##   Mark            sem a bola, marcando quem conduz (encara o adversário e
 ##                   anda de lado/de costas) — e o goleiro, sempre
-##   LocomotionBall  com a bola (condução)
 ##   Locomotion      o resto
 ## Os BlendSpaces recebem a velocidade REAL do corpo corrigida pelo tamanho do
 ## personagem, então o pé não desliza.
@@ -15,7 +14,7 @@ extends Node
 ## tempo até o contato do pé.
 
 const PARAM_PLAYBACK := "parameters/playback"
-const BASE_STATES: Array[StringName] = [&"Locomotion", &"LocomotionBall", &"Mark"]
+const BASE_STATES: Array[StringName] = [&"Locomotion", &"Mark"]
 
 ## tipo de ação/reação do Player -> estado do AnimationTree
 const ACTION_STATES := {
@@ -35,6 +34,11 @@ const ACTION_STATES := {
 	&"turn_l": &"TurnLeft",
 	&"turn_r": &"TurnRight",
 	&"run_stop": &"RunStop",
+	&"recv_chest": &"RecvChest",
+	&"recv_knee": &"RecvKnee",
+	&"header": &"Header",
+	&"head_control": &"HeadControl",
+	&"header_jump": &"HeaderJump",
 	&"tackle": &"PassLong",
 	&"celebrate": &"Celebrate",
 	&"samba": &"Samba",
@@ -57,7 +61,22 @@ const ACTION_LOGICAL := {
 	&"turn_l": &"turn_l",
 	&"turn_r": &"turn_r",
 	&"run_stop": &"run_stop",
+	&"recv_chest": &"recv_chest",
+	&"recv_knee": &"recv_knee",
+	&"header": &"header",
+	&"head_control": &"head_control",
+	&"header_jump": &"header_jump",
 }
+## Estados que voltam sozinhos para a locomoção no fim do clipe.
+const AUTO_RETURN: Array[StringName] = [
+	&"PassShort", &"PassLong", &"Shoot", &"ShootPower", &"PassShortL", &"PassLongL", &"ShootL",
+	&"ShootPowerL", &"Receive", &"Spin", &"GKPass", &"GKCatch", &"Jump", &"Turn180", &"TurnLeft",
+	&"TurnRight", &"RunStop", &"RecvChest", &"Header", &"HeadControl", &"HeaderJump", &"Burst",
+	&"Stumble", &"GetUpFront", &"GetUpBack",
+]
+## Domínios no ar: depois do contato voltam para a locomoção (o joelho é um
+## clipe em ciclo, então não acaba sozinho).
+const AERIAL_STATES: Array[StringName] = [&"RecvChest", &"RecvKnee", &"Header", &"HeadControl", &"HeaderJump"]
 ## Velocidade de reprodução por tipo (as viradas casam com a física do Player).
 const KIND_SPEED := {
 	&"turn180": Player.TURN_SPEED_UP, &"turn_l": Player.TURN_SPEED_UP,
@@ -89,6 +108,7 @@ var _getting_up := false
 var _prev_facing := Vector3.FORWARD
 var _turn_rate := 0.0
 var _gesture_state: StringName = &""
+var _ball_blend := 0.0
 var _rng := RandomNumberGenerator.new()
 
 
@@ -124,6 +144,8 @@ func kick_foot(kind: StringName) -> float:
 	if not is_active() or not ACTION_LOGICAL.has(kind):
 		return 0.0
 	var logical: StringName = ACTION_LOGICAL[kind]
+	if player.kick_mirrored() and AnimationCatalog.has_clip(AnimationCatalog.mirrored_name(logical)):
+		logical = AnimationCatalog.mirrored_name(logical)
 	return AnimationCatalog.contact_foot(logical) if AnimationCatalog.has_clip(logical) else 0.0
 
 
@@ -142,9 +164,10 @@ func physics_update(delta: float) -> void:
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
 	var stride_speed := maxf(v.length(), minf(_turn_rate * 0.35, 1.2)) / k
 	var time_scale := stride_speed / AnimationCatalog.TOP_SPEED if stride_speed > AnimationCatalog.TOP_SPEED else 1.0
-	for base in [&"Locomotion", &"LocomotionBall"]:
-		anim_tree.set("parameters/%s/Speed/blend_position" % base, stride_speed)
-		anim_tree.set("parameters/%s/Scale/scale" % base, time_scale)
+	var ball_target := 1.0 if player.ball_control.has_ball() else 0.0
+	_ball_blend = move_toward(_ball_blend, ball_target, delta * 4.0)
+	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(stride_speed, _ball_blend))
+	anim_tree.set("parameters/Locomotion/Scale/scale", time_scale)
 	# Marcação: velocidade no referencial do corpo (x = direita, y = frente).
 	var right := player.facing.cross(Vector3.UP)
 	anim_tree.set("parameters/Mark/Dir/blend_position", Vector2(v.dot(right), v.dot(player.facing)) / k)
@@ -197,19 +220,27 @@ func physics_update(delta: float) -> void:
 		# (antes ficava com o pé levantado deslizando).
 		playback.travel(wanted)
 		_action_state = &""
+	elif current in AERIAL_STATES and player.state == Player.State.MOVE and _time_since_contact > 0.35:
+		playback.travel(wanted)
+		_action_state = &""
 	elif current == _action_state and player.state == Player.State.MOVE \
 			and _time_since_contact > RELEASE_AFTER_CONTACT and player.get_horizontal_speed() > RELEASE_SPEED:
 		playback.travel(wanted)
 		_action_state = &""
 	elif current in [&"Celebrate", &"CelebrateIdle", &"Samba", &"Defeated"]:
 		playback.travel(wanted)
+	elif current in AUTO_RETURN and player.state != Player.State.ACTION \
+			and playback.get_current_play_position() >= playback.get_current_length() - 0.2:
+		# Fim do clipe: volta para a locomoção (mistura de 0,22 s).
+		playback.travel(wanted)
+		_action_state = &""
 	_prev_speed = v.length()
 
 
 func _wanted_base() -> StringName:
 	if player.is_marking() and _has_state(&"Mark"):
 		return &"Mark"
-	return &"LocomotionBall" if player.ball_control.has_ball() else &"Locomotion"
+	return &"Locomotion"
 
 
 ## Carrinho / tropeço: no chão até faltar o tempo de levantar. O tropeço
@@ -244,14 +275,20 @@ func _on_action_started(kind: StringName) -> void:
 	if not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
+	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power"] \
+		and _has_state(StringName(String(state_name) + "L"))
+	if mirrored:
+		state_name = StringName(String(state_name) + "L")
 	if not _has_state(state_name):
 		return
 	_action_kind = kind
 	_getting_up = false
 	if ACTION_LOGICAL.has(kind):
 		var logical: StringName = ACTION_LOGICAL[kind]
+		if mirrored:
+			logical = AnimationCatalog.mirrored_name(logical)
 		var seek := 0.0
-		if AnimationCatalog.CONTACTS.has(logical):
+		if AnimationCatalog.has_contact(logical):
 			seek = maxf(AnimationCatalog.contact_time(logical) - player.time_to_contact() * ACTION_SPEED, 0.0)
 		_play_action(state_name, seek, KIND_SPEED.get(kind, ACTION_SPEED))
 		_time_since_contact = -player.time_to_contact()
@@ -268,7 +305,7 @@ func _on_ball_touched(kind: StringName) -> void:
 		_time_since_contact = 0.0
 		return
 	# Domínio: o pé pisa na bola — só quase parado (correndo, a passada segue).
-	if kind != &"receive" or not _has_state(&"Receive"):
+	if not (kind == &"receive" or kind == &"trap") or not _has_state(&"Receive"):
 		return
 	if playback.get_current_node() in BASE_STATES and player.get_horizontal_speed() < 1.0:
 		_action_kind = kind

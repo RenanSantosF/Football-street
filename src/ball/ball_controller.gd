@@ -10,6 +10,7 @@ extends RigidBody3D
 ## vínculo físico.
 
 const RADIUS := 0.11
+const LOSE_TEAMMATE_DIST := 2.4
 
 @export_group("Física")
 ## Desaceleração ao rolar nos bloquinhos (m/s²): piso irregular segura a bola.
@@ -30,6 +31,9 @@ var restricted_player: Player = null
 ## Companheiro para quem o último passe foi feito (ele vem ao encontro).
 var pass_target: Player = null
 var grounded := false
+## Reinício: bola parada no lugar até o batedor passar (ninguém empurra).
+var held := false
+var _hold_pos := Vector3.ZERO
 
 var _restrict_timer := 0.0
 var _ignore_player: Player = null
@@ -46,6 +50,11 @@ func _physics_process(delta: float) -> void:
 		_ignore_timer -= delta
 		if _ignore_timer <= 0.0:
 			_ignore_player = null
+	# Passe que morreu longe de quem ia receber: bola livre para todos.
+	if pass_target != null and possessor == null and flat_velocity().length() < 0.4:
+		var d := pass_target.global_position - global_position
+		if Vector2(d.x, d.z).length() > 1.5:
+			pass_target = null
 	if _restrict_timer > 0.0:
 		_restrict_timer -= delta
 		if _restrict_timer <= 0.0:
@@ -64,6 +73,13 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		_pending_velocity = false
 		state.linear_velocity = _new_linear
 		state.angular_velocity = _new_angular
+	if held:
+		var th := state.transform
+		th.origin = _hold_pos
+		state.transform = th
+		state.linear_velocity = Vector3.ZERO
+		state.angular_velocity = Vector3.ZERO
+		return
 
 	grounded = false
 	for i in state.get_contact_count():
@@ -111,6 +127,7 @@ func flat_velocity() -> Vector3:
 
 ## Chute/passe: a bola fica livre e o chutador não pode reaver por um instante.
 func kick(velocity: Vector3, spin: Vector3, by: Player, ignore_time := 0.3) -> void:
+	held = false
 	release()
 	last_toucher = by
 	if by != null:
@@ -125,6 +142,8 @@ func kick(velocity: Vector3, spin: Vector3, by: Player, ignore_time := 0.3) -> v
 
 ## Toque de condução/domínio/desvio: muda a velocidade sem alterar a posse.
 func touch(velocity: Vector3, by: Player) -> void:
+	if held:
+		return # reinício: a bola só sai com o passe
 	last_toucher = by
 	var h := Vector3(velocity.x, 0.0, velocity.z)
 	_set_velocity(velocity, Vector3.UP.cross(h) / RADIUS)
@@ -150,6 +169,7 @@ func release() -> void:
 
 ## Coloca a bola parada num ponto (reinícios de jogo).
 func place_at(pos: Vector3) -> void:
+	held = false
 	release()
 	restricted_player = null
 	pass_target = null
@@ -160,6 +180,15 @@ func place_at(pos: Vector3) -> void:
 	global_position = _teleport_position
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
+
+
+## Trava a bola parada onde está (reinício) até o próximo chute/passe.
+func hold_here() -> void:
+	held = true
+	_hold_pos = Vector3(_teleport_position.x, RADIUS, _teleport_position.z) if _pending_teleport \
+		else Vector3(global_position.x, RADIUS, global_position.z)
+	_new_linear = Vector3.ZERO
+	_pending_velocity = false
 
 
 ## Só [param team] pode tocar na bola por [param time] segundos (ou até chutar).
@@ -191,9 +220,15 @@ func can_be_claimed_by(player: Player) -> bool:
 		return false
 	if restricted_team >= 0 and player.team != restricted_team:
 		return false
+	if possessor == null and pass_target != null and pass_target != player \
+			and pass_target.team == player.team and pass_target.active:
+		return false # passe para um companheiro: só ele pega (adversário pode cortar)
 	if possessor == null or possessor == player:
 		return true
-	# Bola "espirrada" longe de quem conduzia pode ser roubada.
+	# Bola "espirrada" longe de quem conduzia pode ser roubada (companheiro
+	# só pega se ela escapou de vez).
+	if possessor.team == player.team:
+		return distance_to_possessor() > LOSE_TEAMMATE_DIST
 	return distance_to_possessor() > 1.1
 
 

@@ -44,6 +44,11 @@ const LIBRARY_SOURCES := {
 	&"m_receive": "Stall Soccerball (1)",
 	&"m_spin": "Soccer Spin",
 	&"m_cut": "Change Direction",
+	# domínio no ar e cabeceio
+	&"m_chest": "Receive",
+	&"m_header": "Header",
+	&"m_head_ctrl": "Header Soccerball",
+	&"m_header_jump": "Soccer Header",
 	# defesa / quedas
 	&"m_tackle": "Soccer Tackle (2)",
 	&"m_trip": "Soccer Trip",
@@ -109,6 +114,11 @@ const CLIPS := {
 	&"receive": &"m_receive/mixamo_com",
 	&"spin": &"m_spin/mixamo_com",
 	&"cut": &"m_cut/mixamo_com",
+	&"recv_chest": &"m_chest/mixamo_com",
+	&"recv_knee": &"m_kneeing/mixamo_com",
+	&"header": &"m_header/mixamo_com",
+	&"head_control": &"m_head_ctrl/mixamo_com",
+	&"header_jump": &"m_header_jump/mixamo_com",
 	&"tackle": &"m_tackle/mixamo_com",
 	&"trip": &"m_trip/mixamo_com",
 	&"fallen": &"m_fallen/mixamo_com",
@@ -155,6 +165,12 @@ const CONTACTS := {
 	&"tackle": [0.36, -1.0],
 	&"spin": [1.0, 1.0],
 	&"gk_pass": [1.15, 1.0],
+	# domínio no ar / cabeceio (0 = corpo/cabeça; -1 joelho esquerdo)
+	&"recv_chest": [0.45, 0.0],
+	&"recv_knee": [0.52, -1.0],
+	&"header": [0.6, 0.0],
+	&"head_control": [0.75, 0.0],
+	&"header_jump": [1.2, 0.0],
 }
 
 ## Levantar do chão: trecho útil de cada clipe (o resto é deitado ou em pé
@@ -241,7 +257,61 @@ static func get_libraries() -> Dictionary:
 				lib = _make_in_place(prefix, lib)
 			_libraries[prefix] = lib
 		_apply_loops()
+		_add_mirrored()
 	return _libraries
+
+
+## Chutes/passes com o OUTRO pé: o mesmo clipe espelhado (troca esquerda ↔
+## direita). O esqueleto do retarget é simétrico, então o espelho é exato.
+const MIRRORED: Array[StringName] = [&"pass_short", &"pass_long", &"shoot", &"shoot_power"]
+
+
+static func mirrored_name(logical: StringName) -> StringName:
+	return StringName(String(logical) + "_m")
+
+
+static func _add_mirrored() -> void:
+	for logical in MIRRORED:
+		if not has_clip(logical):
+			continue
+		var parts := String(CLIPS[logical]).split("/")
+		var lib := _libraries[StringName(parts[0])] as AnimationLibrary
+		var src := lib.get_animation(StringName(parts[1]))
+		var mname := StringName(parts[1] + "_m")
+		if not lib.has_animation(mname):
+			lib.add_animation(mname, _mirror(src))
+		var key := String(CLIPS[logical])
+		var mkey := parts[0] + "/" + String(mname)
+		if root_curves.has(key):
+			var c: PackedVector3Array = root_curves[key]
+			var mc := PackedVector3Array()
+			for v in c:
+				mc.append(Vector3(-v.x, v.y, v.z))
+			root_curves[mkey] = mc
+		_mirror_clips[mirrored_name(logical)] = StringName(mkey)
+
+
+static var _mirror_clips := {}
+
+
+static func _mirror(a: Animation) -> Animation:
+	var m := a.duplicate(true) as Animation
+	for i in m.get_track_count():
+		var path := String(m.track_get_path(i))
+		if path.contains(":Left"):
+			path = path.replace(":Left", ":Right")
+		elif path.contains(":Right"):
+			path = path.replace(":Right", ":Left")
+		m.track_set_path(i, NodePath(path))
+		var ty := m.track_get_type(i)
+		for k in m.track_get_key_count(i):
+			if ty == Animation.TYPE_ROTATION_3D:
+				var q: Quaternion = m.track_get_key_value(i, k)
+				m.track_set_key_value(i, k, Quaternion(q.x, -q.y, -q.z, q.w))
+			elif ty == Animation.TYPE_POSITION_3D:
+				var p: Vector3 = m.track_get_key_value(i, k)
+				m.track_set_key_value(i, k, Vector3(-p.x, p.y, p.z))
+	return m
 
 
 static func _apply_loops() -> void:
@@ -253,6 +323,9 @@ static func _apply_loops() -> void:
 
 
 static func has_clip(logical: StringName) -> bool:
+	if String(logical).ends_with("_m"):
+		get_libraries()
+		return _mirror_clips.has(logical)
 	if not CLIPS.has(logical):
 		return false
 	var parts := String(CLIPS[logical]).split("/")
@@ -262,10 +335,18 @@ static func has_clip(logical: StringName) -> bool:
 
 
 static func clip(logical: StringName) -> StringName:
+	if _mirror_clips.has(logical):
+		return _mirror_clips[logical]
 	return CLIPS.get(logical, &"")
 
 
+static func _base(logical: StringName) -> StringName:
+	var s := String(logical)
+	return StringName(s.substr(0, s.length() - 2)) if s.ends_with("_m") else logical
+
+
 static func clip_length(logical: StringName) -> float:
+	logical = _base(logical)
 	if not has_clip(logical):
 		return 0.0
 	var parts := String(CLIPS[logical]).split("/")
@@ -273,11 +354,19 @@ static func clip_length(logical: StringName) -> float:
 
 
 static func contact_time(logical: StringName) -> float:
+	logical = _base(logical)
 	return CONTACTS[logical][0] if CONTACTS.has(logical) else 0.0
 
 
 static func contact_foot(logical: StringName) -> float:
-	return CONTACTS[logical][1] if CONTACTS.has(logical) else 1.0
+	var mirrored := String(logical).ends_with("_m")
+	logical = _base(logical)
+	var f: float = CONTACTS[logical][1] if CONTACTS.has(logical) else 1.0
+	return -f if mirrored else f
+
+
+static func has_contact(logical: StringName) -> bool:
+	return CONTACTS.has(_base(logical))
 
 
 static func _is_root_motion_prefix(prefix: StringName) -> bool:
@@ -290,7 +379,7 @@ static func _is_root_motion_prefix(prefix: StringName) -> bool:
 ## Velocidade do root motion no instante t (alturas de quadril por segundo,
 ## no espaço do modelo: +Z = para a frente, +X = para a esquerda).
 static func root_motion_velocity(logical: StringName, t: float) -> Vector3:
-	var curve: PackedVector3Array = root_curves.get(String(CLIPS.get(logical, "")), PackedVector3Array())
+	var curve: PackedVector3Array = root_curves.get(String(clip(logical)), PackedVector3Array())
 	if curve.size() < 2:
 		return Vector3.ZERO
 	var i := clampi(int(t * ROOT_MOTION_FPS), 0, curve.size() - 2)

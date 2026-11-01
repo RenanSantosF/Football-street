@@ -63,7 +63,17 @@ func _process(delta: float) -> void:
 ## Os botões mudam de significado: com a bola / sem a bola.
 func _update_button_labels() -> void:
 	var with_ball := human_input == null or human_input.has_ball_context()
-	if with_ball:
+	var incoming := human_input != null and human_input.current_player != null \
+		and human_input.current_player.ball != null and human_input.current_player.ball.possessor == null \
+		and human_input.current_player.ball.pass_target == human_input.current_player
+	if with_ball and incoming:
+		shoot_button.set_label("CHUTE")
+		shoot_button.alt_hint = "de primeira"
+		pass_button.set_label("PASSE")
+		pass_button.alt_hint = "de primeira"
+		dribble_button.set_label("DRIBLE")
+		dribble_button.alt_hint = ""
+	elif with_ball:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "arraste: cavadinha"
 		pass_button.set_label("PASSE")
@@ -327,7 +337,7 @@ func _on_charge_changed(value: float, kind: StringName) -> void:
 	charge_bar.visible = false
 	shoot_button.charge = value if kind == &"shoot" else 0.0
 	pass_button.charge = value if kind == &"pass" else 0.0
-	_power_panel.visible = kind != &""
+	_power_panel.visible = false # a força aparece no anel do próprio jogador
 	if kind != &"":
 		_power_label.text = "FORÇA DO CHUTE" if kind == &"shoot" else "FORÇA DO PASSE"
 		_power_fill.size = Vector2(332.0 * clampf(value, 0.0, 1.0), 22)

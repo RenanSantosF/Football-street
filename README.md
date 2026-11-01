@@ -13,6 +13,7 @@ roupas sujas e dribles naturais.
 - 🎮 Etapa 6 (animação, controles, condução, fundo, desempenho, ferramentas): [`docs/ETAPA_06.md`](docs/ETAPA_06.md)
 - 🏃 Etapa 7 (viradas, parada, domínio, chutes, espera, buscar/bote): [`docs/ETAPA_07.md`](docs/ETAPA_07.md)
 - 🎯 Etapa 8 (passe, recepção automática, modos treino/partida, saída de bola): [`docs/ETAPA_08.md`](docs/ETAPA_08.md)
+- 🦶 Etapa 9 (condução reescrita, domínio por altura, pé esquerdo, cabeceio): [`docs/ETAPA_09.md`](docs/ETAPA_09.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado
