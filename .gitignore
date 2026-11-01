@@ -1,0 +1,7 @@
+# Cache gerado pelo Godot (recriado automaticamente ao abrir o projeto)
+.godot/
+*.tmp
+export_presets.cfg
+*.apk
+*.aab
+*.keystore

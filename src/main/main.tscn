@@ -1,0 +1,54 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="PackedScene" path="res://src/street/street.tscn" id="1_street"]
+[ext_resource type="PackedScene" path="res://src/goal/goal.tscn" id="2_goal"]
+[ext_resource type="PackedScene" path="res://src/ball/ball.tscn" id="3_ball"]
+[ext_resource type="Script" path="res://src/player/human_input.gd" id="4_human"]
+[ext_resource type="Script" path="res://src/camera/match_camera.gd" id="5_camera"]
+[ext_resource type="Script" path="res://src/match/match_manager.gd" id="6_match"]
+[ext_resource type="Script" path="res://src/match/ball_out_system.gd" id="7_out"]
+[ext_resource type="PackedScene" path="res://src/player/player.tscn" id="8_player"]
+[ext_resource type="PackedScene" path="res://src/ui/mobile_ui.tscn" id="9_ui"]
+
+[node name="Main" type="Node3D"]
+
+[node name="Street" parent="." instance=ExtResource("1_street")]
+
+[node name="GoalLeft" parent="." instance=ExtResource("2_goal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -14, 0, 0)
+defending_team = 0
+
+[node name="GoalRight" parent="." instance=ExtResource("2_goal")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 14, 0, 0)
+defending_team = 1
+
+[node name="Ball" parent="." instance=ExtResource("3_ball")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.11, 0)
+
+[node name="MatchCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.766, 0.643, 0, -0.643, 0.766, 0, 8.5, 10.5)
+current = true
+script = ExtResource("5_camera")
+
+[node name="HumanInput" type="Node" parent="." node_paths=PackedStringArray("camera")]
+script = ExtResource("4_human")
+camera = NodePath("../MatchCamera")
+
+[node name="Players" type="Node3D" parent="."]
+
+[node name="MatchManager" type="Node" parent="." node_paths=PackedStringArray("ball", "goal_left", "goal_right", "players_root", "human_input", "camera", "ball_out_system")]
+script = ExtResource("6_match")
+player_scene = ExtResource("8_player")
+ball = NodePath("../Ball")
+goal_left = NodePath("../GoalLeft")
+goal_right = NodePath("../GoalRight")
+players_root = NodePath("../Players")
+human_input = NodePath("../HumanInput")
+camera = NodePath("../MatchCamera")
+ball_out_system = NodePath("BallOutSystem")
+
+[node name="BallOutSystem" type="Node" parent="MatchManager"]
+script = ExtResource("7_out")
+
+[node name="MobileUI" parent="." node_paths=PackedStringArray("human_input") instance=ExtResource("9_ui")]
+human_input = NodePath("../HumanInput")

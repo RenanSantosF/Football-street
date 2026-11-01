@@ -1,0 +1,38 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://src/street/street_builder.gd" id="1_street"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.32, 0.5, 0.78, 1)
+sky_horizon_color = Color(0.8, 0.79, 0.76, 1)
+ground_bottom_color = Color(0.22, 0.2, 0.18, 1)
+ground_horizon_color = Color(0.68, 0.66, 0.62, 1)
+sun_angle_max = 25.0
+
+[sub_resource type="Sky" id="Sky_street"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_street"]
+background_mode = 2
+sky = SubResource("Sky_street")
+ambient_light_source = 3
+ambient_light_color = Color(0.85, 0.82, 0.76, 1)
+ambient_light_sky_contribution = 0.35
+ambient_light_energy = 0.7
+reflected_light_source = 2
+tonemap_mode = 2
+tonemap_white = 6.0
+
+[node name="Street" type="Node3D"]
+script = ExtResource("1_street")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_street")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.81915, 0, -0.57358, -0.3838, 0.74314, -0.54812, 0.42625, 0.66913, 0.60875, 0, 12, 0)
+light_color = Color(1, 0.94, 0.84, 1)
+light_energy = 1.5
+shadow_enabled = true
+directional_shadow_mode = 1
+directional_shadow_max_distance = 45.0

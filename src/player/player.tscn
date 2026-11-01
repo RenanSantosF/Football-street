@@ -1,0 +1,50 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://src/player/player_controller.gd" id="1_player"]
+[ext_resource type="Script" path="res://src/player/placeholder_body.gd" id="2_body"]
+[ext_resource type="Script" path="res://src/player/ball_control.gd" id="3_ballctl"]
+[ext_resource type="Script" path="res://src/ai/ai_controller.gd" id="4_ai"]
+[ext_resource type="Script" path="res://src/player/player_animation_controller.gd" id="5_anim"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_body"]
+radius = 0.28
+height = 1.65
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ring"]
+shading_mode = 0
+albedo_color = Color(1, 0.85, 0.2, 1)
+
+[sub_resource type="TorusMesh" id="TorusMesh_ring"]
+material = SubResource("StandardMaterial3D_ring")
+inner_radius = 0.42
+outer_radius = 0.5
+rings = 24
+ring_segments = 4
+
+[node name="Player" type="CharacterBody3D"]
+collision_layer = 2
+collision_mask = 3
+floor_snap_length = 0.2
+script = ExtResource("1_player")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.825, 0)
+shape = SubResource("CapsuleShape3D_body")
+
+[node name="Visual" type="Node3D" parent="."]
+script = ExtResource("2_body")
+
+[node name="SelectionRing" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.1, 0, 0, 0, 1, 0, 0.02, 0)
+visible = false
+cast_shadow = 0
+mesh = SubResource("TorusMesh_ring")
+
+[node name="BallControl" type="Node" parent="."]
+script = ExtResource("3_ballctl")
+
+[node name="AIController" type="Node" parent="."]
+script = ExtResource("4_ai")
+
+[node name="PlayerAnimationController" type="Node" parent="."]
+script = ExtResource("5_anim")
