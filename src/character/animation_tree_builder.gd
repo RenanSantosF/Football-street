@@ -35,6 +35,10 @@ const ACTION_CLIPS := {
 	&"GKCatch": &"gk_catch",
 	&"Jump": &"jump",
 	&"Trip": &"trip",
+	&"Turn180": &"turn180",
+	&"TurnLeft": &"turn_l",
+	&"TurnRight": &"turn_r",
+	&"RunStop": &"run_stop",
 }
 ## estado -> [nome lógico, volta sozinho para a locomoção no fim?]
 const REACTION_CLIPS := {
@@ -45,6 +49,10 @@ const REACTION_CLIPS := {
 	&"CelebrateIdle": [&"victory_idle", false],
 	&"Samba": [&"samba", false],
 	&"Defeated": [&"defeated", false],
+	&"Argue": [&"argue", false],
+	&"Warmup": [&"warmup", false],
+	&"Talk": [&"talk", false],
+	&"KickUp": [&"kick_up", false],
 	&"GetUpFront": [&"getup", true],
 	&"GetUpBack": [&"getup_b", true],
 }

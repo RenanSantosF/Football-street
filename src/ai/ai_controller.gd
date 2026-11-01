@@ -23,6 +23,11 @@ var _action_target: Player = null
 var _hold_time := 0.0
 var _tackle_cooldown := 0.0
 var _patience := 2.5
+## Espera (bola parada): comportamento variado e mais lento.
+var _idle_timer := 0.0
+var _idle_target := Vector3.ZERO
+var _walk_only := false
+const GESTURES: Array[StringName] = [&"argue", &"warmup", &"talk", &"kick_up"]
 var _rng := RandomNumberGenerator.new()
 
 
@@ -49,7 +54,9 @@ func fill_intent(p: Player, intent: PlayerIntent, delta: float) -> void:
 	to.y = 0.0
 	var d := to.length()
 	intent.move = Vector3.ZERO if d < 0.25 else to / d * clampf(d / 1.5, 0.3, 1.0)
-	intent.sprint = _sprint and d > 2.0
+	if _walk_only:
+		intent.move = intent.move.limit_length(0.42) # andando, sem pressa
+	intent.sprint = _sprint and d > 2.0 and not _walk_only
 	if _action != PlayerIntent.Action.NONE:
 		intent.set_action(_action, _action_power, _action_aim, _action_target)
 		_action = PlayerIntent.Action.NONE
@@ -61,8 +68,9 @@ func _think() -> void:
 	var mm := player.match_manager
 	var ball := player.ball
 	_sprint = false
+	_walk_only = false
 	if not mm.is_ball_live():
-		_move_target = mm.formation_position(player.team, player.formation_index, ball.global_position.x)
+		_think_waiting(mm.formation_position(player.team, player.formation_index, ball.global_position.x))
 		_keep_restart_distance()
 		return
 	if player.is_goalkeeper():
@@ -74,6 +82,9 @@ func _think() -> void:
 		if carrier == null and ball.restricted_player != null and ball.restricted_player != player:
 			# Reinício do meu time (ou do outro): não vou na bola, me posiciono.
 			_support_or_mark(ball.restricted_player if ball.restricted_player.team == player.team else null)
+		elif carrier == null and ball.pass_target == player:
+			# O passe é para mim: vou ao encontro da bola (sem correr demais).
+			_move_target = _intercept_point()
 		elif carrier == null:
 			if _is_best_chaser():
 				_move_target = _intercept_point()
@@ -86,6 +97,27 @@ func _think() -> void:
 			_defend(carrier)
 	_keep_restart_distance()
 	_move_target = Field.clamp_inside(_move_target, 0.3)
+
+
+## Bola parada (tiro de meta, lateral, saída, gol): cada um faz uma coisa —
+## parado respirando, andando um pouco, reclamando, aquecendo, conversando,
+## fazendo embaixadinha. Sempre andando (devagar), nunca correndo.
+func _think_waiting(slot: Vector3) -> void:
+	_walk_only = true
+	if _idle_target == Vector3.ZERO or _idle_target.distance_to(slot) > 4.5:
+		_idle_target = slot
+	_idle_timer -= 0.15
+	if _idle_timer <= 0.0:
+		_idle_timer = _rng.randf_range(2.5, 6.5)
+		var r := _rng.randf()
+		if r < 0.35:
+			_idle_target = slot + Vector3(_rng.randf_range(-2.5, 2.5), 0.0, _rng.randf_range(-1.5, 1.5))
+		elif r < 0.75:
+			_idle_target = player.global_position
+			player.play_gesture(GESTURES[_rng.randi_range(0, GESTURES.size() - 1)], _rng.randf_range(2.5, 5.5))
+		else:
+			_idle_target = player.global_position
+	_move_target = Field.clamp_inside(_idle_target, 0.5)
 
 
 func _think_with_ball() -> void:

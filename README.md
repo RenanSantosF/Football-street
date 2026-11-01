@@ -11,6 +11,7 @@ roupas sujas e dribles naturais.
 - 🧍‍♂️ Etapa 4 (animações e skins do pack do autor): [`docs/ETAPA_04.md`](docs/ETAPA_04.md)
 - 🌇 Etapa 5 (jogo mais lento, rua nova, regras de pelada, câmera e placar): [`docs/ETAPA_05.md`](docs/ETAPA_05.md)
 - 🎮 Etapa 6 (animação, controles, condução, fundo, desempenho, ferramentas): [`docs/ETAPA_06.md`](docs/ETAPA_06.md)
+- 🏃 Etapa 7 (viradas, parada, domínio, chutes, espera, buscar/bote): [`docs/ETAPA_07.md`](docs/ETAPA_07.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado

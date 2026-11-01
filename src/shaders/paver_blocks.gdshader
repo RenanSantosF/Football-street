@@ -25,19 +25,27 @@ void vertex() {
 }
 
 void fragment() {
+	// Nada milimétrico: as fileiras ondulam (o piso assentou torto com os anos).
 	vec2 p = world_pos.xz;
-	// Fileiras desencontradas (meia peça), como na calçada de bloquete.
+	p += vec2(sin(p.y * 0.9 + sin(p.x * 0.23) * 2.0), sin(p.x * 0.7 + 1.3)) * 0.035;
 	float row = floor(p.y / block_size.y);
-	vec2 q = vec2(p.x / block_size.x + mod(row, 2.0) * 0.5, p.y / block_size.y);
+	float row_shift = mod(row, 2.0) * 0.5 + (h2(vec2(row, 7.0)) - 0.5) * 0.18;
+	vec2 q = vec2(p.x / block_size.x + row_shift, p.y / block_size.y);
 	vec2 cell = floor(q);
 	vec2 f = fract(q);
+	// Cada bloco um pouco deslocado/girado e com tamanho levemente diferente.
+	vec2 jit = (vec2(h2(cell + 3.1), h2(cell + 9.7)) - 0.5) * 0.12;
+	float rot = (h2(cell + 5.5) - 0.5) * 0.16;
+	vec2 fc = f - 0.5 - jit;
+	fc = vec2(fc.x * cos(rot) - fc.y * sin(rot), fc.x * sin(rot) + fc.y * cos(rot));
+	f = clamp(fc * (1.0 + (h2(cell + 2.2) - 0.5) * 0.1) + 0.5, 0.0, 1.0);
 	float r = h2(cell);
 	float r2 = h2(cell + 17.3);
 	float r3 = h2(cell + 41.0);
 
 	vec2 edge_m = min(f, 1.0 - f) * block_size;
 	float e = min(edge_m.x, edge_m.y);
-	float jw = joint * (0.7 + 0.8 * r2);
+	float jw = joint * (0.6 + 1.3 * r2);
 	float in_joint = 1.0 - smoothstep(jw * 0.6, jw, e);
 	float bevel = smoothstep(jw, jw + 0.018, e);
 
@@ -76,6 +84,7 @@ void fragment() {
 	SPECULAR = mix(0.25, 0.6, puddle);
 	vec2 grad = vec2(f.x < 0.5 ? -1.0 : 1.0, f.y < 0.5 ? -1.0 : 1.0);
 	vec2 near = vec2(step(edge_m.x, edge_m.y), step(edge_m.y, edge_m.x));
-	vec2 slope = grad * near * (1.0 - bevel) * 0.6 * (1.0 - puddle);
+	vec2 tilt = (vec2(h2(cell + 11.0), h2(cell + 13.0)) - 0.5) * 0.25; // bloco desnivelado
+	vec2 slope = (grad * near * (1.0 - bevel) * 0.6 + tilt) * (1.0 - puddle);
 	NORMAL_MAP = normalize(vec3(slope.x * 0.5 + 0.5, slope.y * 0.5 + 0.5, 1.0));
 }

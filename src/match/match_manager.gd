@@ -41,6 +41,9 @@ var _rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
+	# O painel de ajustes saiu do jogo: apaga ajustes antigos (volta ao padrão).
+	if FileAccess.file_exists("user://dev_tools.cfg"):
+		DirAccess.remove_absolute("user://dev_tools.cfg")
 	if OS.get_cmdline_user_args().has("--autoplay"):
 		autoplay = true
 	if match_seed != 0:
@@ -50,6 +53,7 @@ func _ready() -> void:
 	ball_out_system.setup(self)
 	human_input.switch_requested.connect(_on_switch_requested)
 	GameEvents.possession_changed.connect(_on_possession_changed)
+	GameEvents.ball_kicked.connect(_on_ball_kicked)
 	camera.ball = ball
 	_spawn_players()
 	_start_kickoff(Team.SHIRTS)
@@ -181,7 +185,9 @@ func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 	_prev_ball_pos = ball.global_position
 	var into_field := (Vector3(0.0, 0.0, 0.0) - Vector3(pos.x * 0.4, 0.0, pos.z)).normalized()
 	if kind == BallOutSystem.Kind.SIDELINE:
-		into_field = Vector3(0.0, 0.0, -signf(pos.z))
+		into_field = Vector3(0.0, 0.0, -signf(pos.z) if absf(pos.z) > 0.1 else 1.0)
+	elif kind == BallOutSystem.Kind.FREE_KICK:
+		into_field = Vector3(Field.attack_sign(team), 0.0, 0.0)
 	var taker := _closest_field_player(team, pos)
 	taker.teleport(pos - into_field * 0.45, into_field)
 	# Adversários afastados da bola.
@@ -201,6 +207,19 @@ func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 	GameEvents.restart_started.emit(team, kind, pos)
 	_state_timer = 0.5
 	_set_state(MatchState.RESTART)
+
+
+## Falta: bola parada no local para o time que sofreu (batedor obrigado a tocar).
+func award_free_kick(team: int, pos: Vector3) -> void:
+	if not is_ball_live():
+		return
+	ball.in_play = false
+	ball.release()
+	GameEvents.match_message.emit("FALTA!", 1.4)
+	_set_state(MatchState.BALL_OUT)
+	var spot := Field.clamp_inside(Vector3(pos.x, Ball.RADIUS, pos.z), 0.6)
+	spot.y = Ball.RADIUS
+	ball_out_system.schedule_restart(team, BallOutSystem.Kind.FREE_KICK, spot)
 
 
 func _start_kickoff(team: int) -> void:
@@ -287,6 +306,16 @@ func _on_possession_changed(new_owner: Node, _old_owner: Node) -> void:
 			- closest.global_position.distance_to(ball.global_position)
 		if gain > 3.0:
 			set_controlled(closest)
+
+
+## Passe do time humano: o controle vai para quem vai receber já no toque,
+## para você poder se mexer ao encontro da bola.
+func _on_ball_kicked(kicker: Node, kind: StringName, _power: float) -> void:
+	if autoplay or not (kind == &"pass" or kind == &"long_pass"):
+		return
+	var k := kicker as Player
+	if k != null and k.team == human_team and ball.pass_target != null and ball.pass_target.team == human_team:
+		set_controlled(ball.pass_target)
 
 
 func _closest_field_player(team: int, point: Vector3) -> Player:

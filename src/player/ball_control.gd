@@ -169,7 +169,9 @@ func _try_gain_control() -> void:
 
 	ball.claim(player)
 	var pv := _flat(player.velocity)
-	var settle := pv + player.facing * (0.5 if pv.length() > 1.0 else 0.0)
+	# Primeiro toque orientado: ajeita a bola para onde o jogador quer ir.
+	var want := _flat(player.intent.move)
+	var settle := pv + (want.normalized() * 0.9 if want.length() > 0.3 else player.facing * (0.5 if pv.length() > 1.0 else 0.0))
 	ball.touch(settle, player)
 	_since_touch = 0.0
 	player.notify_touch(&"gk_catch" if gk and rel_speed > 7.0 else &"receive")
@@ -250,6 +252,15 @@ func _conduct(delta: float) -> void:
 	var mismatch := bv.length() > 0.5 and bv.normalized().dot(dir) < 0.75
 	if not (behind or drifting or mismatch):
 		_touch_wait = 0.0
+		return
+	# Mudou de direção correndo: toque de lado NA HORA, levando a bola para o
+	# novo lado (o jogador "dá o toque pro lado").
+	var turning := bv.length() > 0.5 and bv.normalized().dot(dir) < 0.85 and speed > 1.2
+	if turning:
+		_touch_wait = 0.0
+		last_touch_forced = false
+		_do_touch(dir, speed, lateral)
+		player.notify_touch(&"side_touch")
 		return
 	# Sincronia com a animação: o toque sai quando um pé passa perto da bola
 	# (com limite de espera, para nunca perder o controle por causa disso).
@@ -335,6 +346,7 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 	var err := deg_to_rad(2.0 + 3.0 * power)
 	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err))
 	ball.kick(vel, Vector3.ZERO, player)
+	ball.pass_target = mate
 	player.notify_touch(&"pass")
 	GameEvents.ball_kicked.emit(player, &"long_pass" if long else &"pass", power)
 	return true
@@ -437,6 +449,14 @@ func execute_tackle() -> bool:
 	if carrier.facing.dot(from_carrier) < -0.3:
 		chance -= 0.15 # vindo por trás
 	if _rng.randf() > chance:
+		# Errou a bola: se pegou o adversário, é FALTA.
+		if player.global_position.distance_to(carrier.global_position) < 0.95 and _rng.randf() < 0.55:
+			if _rng.randf() < 0.5:
+				carrier.trip()
+			else:
+				carrier.stumble(0.6)
+			if player.match_manager != null:
+				player.match_manager.award_free_kick(carrier.team, carrier.global_position)
 		return false
 	var poke := _flat(player.global_position - ball.global_position).normalized()
 	if poke.length() < 0.1:
@@ -491,6 +511,15 @@ func release_after_skill() -> void:
 	if has_ball():
 		ball.touch(_flat(player.velocity) + player.facing * 1.2, player)
 		_since_touch = 0.0
+
+
+## Virada animada com a bola: puxa a bola com a sola para a nova direção,
+## devagar, para ela terminar junto ao pé quando o corpo terminar de virar.
+func drag_ball_to(dir: Vector3) -> void:
+	if has_ball():
+		ball.touch(dir * 0.9, player)
+		_since_touch = 0.0
+		player.notify_touch(&"drag")
 
 
 ## Empurra a bola à frente (ex.: ao pular um carrinho).

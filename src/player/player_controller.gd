@@ -33,6 +33,8 @@ const DODGE_CHANCE_AI := 0.35
 const DODGE_CHANCE_HUMAN := 0.25
 ## Tempo caído antes de levantar (quando não há clipe de levantar).
 const DOWN_TIME := 0.7
+## Viradas tocadas um pouco mais rápidas (responsivo sem perder o movimento).
+const TURN_SPEED_UP := 1.35
 
 @export var team: int = Team.SHIRTS
 @export var role: Role = Role.FIELD
@@ -40,14 +42,14 @@ const DOWN_TIME := 0.7
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 3.9
-@export var sprint_speed := 5.6
+@export var jog_speed := 3.5
+@export var sprint_speed := 5.2
 @export var ball_speed_factor := 0.92
-@export var acceleration := 7.5
-@export var deceleration := 10.0
+@export var acceleration := 6.5
+@export var deceleration := 9.0
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 7.5
-@export var turn_speed_with_ball := 6.0
+@export var turn_speed := 6.5
+@export var turn_speed_with_ball := 5.5
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -69,6 +71,8 @@ var _action_aim := Vector3.ZERO
 var _action_target: Node3D = null
 var _action_precise := false
 var _action_lofted := false
+var _kick_logical: StringName = &""
+var _kick_seek := 0.0
 var _action_move_factor := 0.4
 var _action_face := Vector3.ZERO
 var _stun_timer := 0.0
@@ -93,6 +97,15 @@ var _rng := RandomNumberGenerator.new()
 var _restart_lock := false
 ## Testes/laboratórios: força a chance de pular carrinhos (-1 = normal).
 var debug_dodge_chance := -1.0
+## Gesto de espera (reclamar, aquecer, conversar...) enquanto parado.
+var gesture: StringName = &""
+var _gesture_timer := 0.0
+## Virada animada: direção final aplicada ao terminar o clipe.
+var _turn_target := Vector3.ZERO
+var _steady_input := Vector3.ZERO
+var _steady_time := 0.0
+var _prev_input_len := 0.0
+var _turn_cooldown := 0.0
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -122,8 +135,8 @@ func setup(mm: MatchManager, b: Ball) -> void:
 func _add_team_disc() -> void:
 	var ring := MeshInstance3D.new()
 	var m := TorusMesh.new()
-	m.inner_radius = 0.3
-	m.outer_radius = 0.34
+	m.inner_radius = 0.31
+	m.outer_radius = 0.325
 	m.rings = 24
 	m.ring_segments = 3
 	ring.mesh = m
@@ -131,7 +144,7 @@ func _add_team_disc() -> void:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	var c := Team.COLORS[team]
-	mat.albedo_color = Color(c.r, c.g, c.b, 0.22)
+	mat.albedo_color = Color(c.r, c.g, c.b, 0.16)
 	ring.material_override = mat
 	ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	ring.position.y = 0.01
@@ -155,6 +168,10 @@ func _physics_process(delta: float) -> void:
 	_burst_timer = maxf(_burst_timer - delta, 0.0)
 	_jump_timer = maxf(_jump_timer - delta, 0.0)
 	_mark_timer += delta
+	if gesture != &"":
+		_gesture_timer -= delta
+		if _gesture_timer <= 0.0 or get_horizontal_speed() > 0.4 or state != State.MOVE:
+			gesture = &""
 	var want_mark := _compute_marking()
 	if want_mark != _marking and _mark_timer >= MARK_MIN_TIME:
 		_marking = want_mark
@@ -192,9 +209,17 @@ func _update_move(delta: float) -> void:
 		_check_restart_unlock()
 	if _restart_lock:
 		input = Vector3.ZERO # parado: o analógico só gira o corpo (mira do passe)
+	elif is_human and input.length() < 0.1 and ball != null and ball.pass_target == self and ball.possessor == null:
+		# Passe vindo para mim e não mexi no analógico: dou uns passos ao encontro.
+		var meet := ball.global_position - global_position
+		meet.y = 0.0
+		if meet.length() > 1.2:
+			input = meet.normalized() * 0.45
 	if input.length() > 1.0:
 		input = input.normalized()
 	var has_ball := ball_control.has_ball()
+	if _try_animated_turn_or_stop(input, delta):
+		return
 	var max_speed := sprint_speed if (intent.sprint and stamina > 0.05) else jog_speed
 	if has_ball:
 		max_speed *= ball_speed_factor
@@ -366,6 +391,19 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 			_action_face = Vector3(aim.x, 0.0, aim.z).normalized()
 		else:
 			_action_face = facing
+	_setup_kick_root_motion()
+
+
+## Continuação do corpo depois do contato: segue o deslocamento do próprio
+## clipe (antes o quadril ficava pregado e os pés deslizavam).
+func _setup_kick_root_motion() -> void:
+	var map := {&"pass": &"pass_short", &"long_pass": &"pass_long", &"shoot": &"shoot", &"shoot_power": &"shoot_power"}
+	_kick_logical = map.get(_action_kind, &"")
+	if _kick_logical == &"" or not AnimationCatalog.has_clip(_kick_logical):
+		_kick_logical = &""
+		return
+	var sp := PlayerAnimationController.ACTION_SPEED
+	_kick_seek = maxf(AnimationCatalog.contact_time(_kick_logical) - _action_contact * sp, 0.0)
 
 
 func _begin_action(kind: StringName, contact: float, length: float, power: float,
@@ -384,6 +422,7 @@ func _begin_action(kind: StringName, contact: float, length: float, power: float
 	_action_logical = &""
 	_action_precise = false
 	_action_lofted = false
+	_kick_logical = &""
 	action_started.emit(kind)
 
 
@@ -393,6 +432,8 @@ func _update_action(delta: float) -> void:
 	if _action_logical != &"":
 		# Root motion: o corpo segue a curva de deslocamento gravada no clipe.
 		var speed := PlayerAnimationController.ACTION_SPEED
+		if _turn_target != Vector3.ZERO:
+			speed = TURN_SPEED_UP
 		var anim_t := _action_seek + _action_time * speed
 		var rv := AnimationCatalog.root_motion_velocity(_action_logical, anim_t)
 		var hips_h := 0.85
@@ -406,6 +447,14 @@ func _update_action(delta: float) -> void:
 	elif _action_kind == &"dribble":
 		var dir := Vector3(_action_aim.x, 0.0, _action_aim.z).normalized()
 		hv = hv.move_toward(dir * sprint_speed * 0.95, acceleration * 1.5 * delta)
+	elif _action_contact_done and _kick_logical != &"":
+		var sp := PlayerAnimationController.ACTION_SPEED
+		var rv := AnimationCatalog.root_motion_velocity(_kick_logical, _kick_seek + _action_time * sp)
+		var hips_h := 0.85
+		if visual != null and visual.has_method("get_hips_height"):
+			hips_h = visual.call("get_hips_height")
+		var left := Vector3.UP.cross(facing)
+		hv = hv.move_toward((facing * rv.z + left * rv.x) * hips_h * sp, acceleration * 2.0 * delta)
 	elif not _action_contact_done and _is_kick_action():
 		# Preparação do chute/passe: acompanhar a bola até o pé de apoio,
 		# para que no contato ela esteja ao alcance (sem "furar").
@@ -432,6 +481,13 @@ func _update_action(delta: float) -> void:
 		else:
 			_do_contact()
 	if state == State.ACTION and _action_time >= _action_length:
+		state = State.MOVE
+		if _turn_target != Vector3.ZERO:
+			facing = _turn_target
+			rotation.y = atan2(-facing.x, -facing.z)
+			_turn_target = Vector3.ZERO
+	# Parada brusca: se voltar a mexer o analógico, sai da parada.
+	if state == State.ACTION and _action_kind == &"run_stop" and _action_time > 0.25 and intent.move.length() > 0.5:
 		state = State.MOVE
 	if state != State.ACTION and collision_mask != 3:
 		collision_mask = 3
@@ -476,6 +532,62 @@ func get_foot_positions() -> Array[Vector3]:
 		return visual.call("get_foot_positions")
 	var none: Array[Vector3] = []
 	return none
+
+
+## Virada animada / parada brusca (clipes do Mixamo com o corpo girando):
+##  - correndo e invertendo a direção → "Running Turn 180"
+##  - parado e pedindo direção a 60–135° → "Left/Right Turn" (90°)
+##  - correndo e soltando o analógico → "Run To Stop"
+## Durante o clipe o corpo gira pela própria animação; no fim aplicamos a nova
+## direção de uma vez (o clipe termina exatamente virado).
+func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
+	var hv := get_flat_velocity()
+	var speed := hv.length()
+	var in_len := input.length()
+	# Entrada estável (evita disparar com toques rápidos no analógico).
+	if in_len > 0.4 and _steady_input.length() > 0.01 and input.normalized().dot(_steady_input) > 0.9:
+		_steady_time += delta
+	else:
+		_steady_time = 0.0
+		_steady_input = input.normalized() if in_len > 0.4 else Vector3.ZERO
+	var released := in_len < 0.1 and _prev_input_len > 0.5
+	_prev_input_len = in_len
+	_turn_cooldown -= delta
+	if _marking or _restart_lock or _turn_cooldown > 0.0:
+		return false
+	# IA: viradas animadas com moderação (senão fica lenta e repetitiva).
+	var ai_turn_ok := is_human or _rng.randf() < 0.04
+	if in_len > 0.6 and speed > (2.6 if is_human else 3.6) and ai_turn_ok and AnimationCatalog.has_clip(&"turn180"):
+		if hv.normalized().dot(input.normalized()) < -0.55:
+			_start_turn(&"turn180", &"turn180", input.normalized())
+			return true
+	if in_len > 0.6 and speed < 0.5 and not ball_control.has_ball() and ai_turn_ok:
+		var ang := facing.signed_angle_to(input.normalized(), Vector3.UP)
+		if absf(ang) > deg_to_rad(60.0) and absf(ang) < deg_to_rad(135.0) and AnimationCatalog.has_clip(&"turn_l"):
+			var turned := facing.rotated(Vector3.UP, signf(ang) * PI * 0.5)
+			_start_turn(&"turn_l" if ang > 0.0 else &"turn_r", &"turn_l" if ang > 0.0 else &"turn_r", turned)
+			return true
+	if released and speed > 3.2 and not ball_control.has_ball() and ball_control.ball_distance() > 3.0 \
+			and AnimationCatalog.has_clip(&"run_stop"):
+		_start_root_action(&"run_stop", &"run_stop", 0.0, facing)
+		return true
+	return false
+
+
+func _start_turn(kind: StringName, logical: StringName, new_dir: Vector3) -> void:
+	_turn_cooldown = 1.2
+	_start_root_action(kind, logical, 0.0, facing)
+	_action_length /= TURN_SPEED_UP
+	_turn_target = Vector3(new_dir.x, 0.0, new_dir.z).normalized()
+	if ball_control.has_ball():
+		ball_control.drag_ball_to(_turn_target) # puxa a bola junto na virada
+
+
+## Gesto de espera (só parado).
+func play_gesture(kind: StringName, duration: float) -> void:
+	if state == State.MOVE and get_horizontal_speed() < 0.3:
+		gesture = kind
+		_gesture_timer = duration
 
 
 func set_restart_lock(value: bool) -> void:

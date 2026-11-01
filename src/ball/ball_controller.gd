@@ -27,6 +27,8 @@ var in_play := true
 var restricted_team := -1
 ## Reinício: só este jogador pode tocar na bola até ela ser passada.
 var restricted_player: Player = null
+## Companheiro para quem o último passe foi feito (ele vem ao encontro).
+var pass_target: Player = null
 var grounded := false
 
 var _restrict_timer := 0.0
@@ -129,6 +131,7 @@ func touch(velocity: Vector3, by: Player) -> void:
 
 
 func claim(player: Player) -> void:
+	pass_target = null
 	if possessor == player:
 		return
 	var old := possessor

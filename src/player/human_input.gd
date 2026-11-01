@@ -30,6 +30,9 @@ var _aiming := false
 var _lob_pending := false
 var _chip_pending := false
 var _queued_lofted := false
+var _last_dribble_tap := -10.0
+## Segurando BUSCAR (sem a bola): o jogador corre sozinho atrás da bola.
+var chasing := false
 
 
 func _ready() -> void:
@@ -56,9 +59,18 @@ func _physics_process(delta: float) -> void:
 
 	if Input.is_action_just_pressed("switch_player"):
 		switch_requested.emit()
+	var now := Time.get_ticks_msec() / 1000.0
 	if Input.is_action_just_pressed("dribble"):
-		# Com a bola: drible. Sem a bola: desarme (DRIBLE vira DESARME).
-		_queue(PlayerIntent.Action.DRIBBLE, 1.0)
+		if has_ball_context():
+			_queue(PlayerIntent.Action.DRIBBLE, 1.0)
+		elif now - _last_dribble_tap < 0.35:
+			# Dois toques em BUSCAR = BOTE (estica o pé; errar e acertar o
+			# adversário é falta).
+			_queue(PlayerIntent.Action.DRIBBLE, 1.0)
+		_last_dribble_tap = now
+	chasing = not has_ball_context() and Input.is_action_pressed("dribble")
+	if chasing and current_player != null and current_player.ball != null:
+		_move = _chase_direction()
 
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
@@ -139,6 +151,20 @@ func has_ball_context() -> bool:
 		return true
 	var bc := current_player.ball_control
 	return bc.has_ball() or (bc.can_kick() and current_player.ball.possessor == null)
+
+
+## Para onde correr para chegar na bola (ponto onde ela vai estar).
+func _chase_direction() -> Vector3:
+	var p := current_player
+	var b := p.ball
+	var t := 0.0
+	var target := b.predict_ground_position(0.0)
+	for i in 3:
+		t = p.global_position.distance_to(target) / maxf(p.jog_speed, 0.1)
+		target = b.predict_ground_position(t)
+	var d := target - p.global_position
+	d.y = 0.0
+	return d.normalized() if d.length() > 0.3 else Vector3.ZERO
 
 
 func _near_ball() -> bool:

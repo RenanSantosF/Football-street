@@ -50,6 +50,13 @@ const LIBRARY_SOURCES := {
 	&"m_fallen": "Fallen Idle caído depois da falta",
 	&"m_jump": "Running Jump pulando fugindo do carrinho",
 	# opcional: levantar do chão (se o arquivo existir no pack)
+	&"m_breathing": "Breathing Idle",
+	&"m_walking": "Walking",
+	&"m_turn_l": "Left Turn",
+	&"m_turn_r": "Right Turn",
+	&"m_turn180": "Running Turn 180",
+	&"m_run_stop": "Run To Stop",
+	&"m_argue": "Standing Arguing",
 	&"m_getup": "Standing Up",
 	&"m_getup_b": "Stand Up",
 	&"m_getup_c": "Stand Up (1)",
@@ -71,9 +78,15 @@ const LIBRARY_SOURCES := {
 
 ## nome lógico -> "prefixo/clipe"
 const CLIPS := {
-	&"idle": &"m_soccer_idle/mixamo_com",
+	&"idle": &"m_breathing/mixamo_com",
+	&"soccer_idle": &"m_soccer_idle/mixamo_com",
+	&"turn_l": &"m_turn_l/mixamo_com",
+	&"turn_r": &"m_turn_r/mixamo_com",
+	&"turn180": &"m_turn180/mixamo_com",
+	&"run_stop": &"m_run_stop/mixamo_com",
+	&"argue": &"m_argue/mixamo_com",
 	&"idle_ball": &"m_offensive_idle/mixamo_com",
-	&"walk": &"ual/Walk",
+	&"walk": &"m_walking/mixamo_com",
 	&"slow_jog": &"m_slow_jog/mixamo_com",
 	&"jog": &"m_jog/mixamo_com",
 	&"run": &"m_run/mixamo_com",
@@ -125,7 +138,7 @@ const CLIPS := {
 
 ## Clipes que repetem em ciclo (o FBX do Mixamo não marca loop).
 const LOOPING: Array[StringName] = [
-	&"idle", &"idle_ball", &"walk", &"slow_jog", &"jog", &"run", &"sprint", &"dribble",
+	&"idle", &"soccer_idle", &"argue", &"idle_ball", &"walk", &"slow_jog", &"jog", &"run", &"sprint", &"dribble",
 	&"mark_idle", &"back", &"strafe_l_jog", &"strafe_r_jog", &"strafe_l_walk",
 	&"strafe_l_fast", &"strafe_r_fast", &"diag_l", &"diag_r", &"fallen",
 	&"victory_idle", &"samba", &"sad_run", &"kick_up", &"kneeing", &"warmup", &"talk",
@@ -135,9 +148,9 @@ const LOOPING: Array[StringName] = [
 ## Conferido quadro a quadro (docs/ETAPA_04.md).
 const CONTACTS := {
 	&"pass_short": [0.50, 1.0],
-	&"pass_long": [0.20, -1.0],
+	&"pass_long": [0.15, -1.0],
 	&"shoot": [0.45, 1.0],
-	&"shoot_power": [0.79, 1.0],
+	&"shoot_power": [0.75, 1.0],
 	&"receive": [0.29, 1.0],
 	&"tackle": [0.36, -1.0],
 	&"spin": [1.0, 1.0],
@@ -165,10 +178,10 @@ static func getup_duration(logical: StringName) -> float:
 ## quadril de 0,93 m (HumanoidCharacter.REF_HIPS_HEIGHT). Medida pelo
 ## deslocamento do quadril no clipe original (os clipes do Mixamo andam).
 const LOCOMOTION_POINTS: Array = [
-	[&"idle", 0.0], [&"walk", 1.05], [&"slow_jog", 1.96], [&"run", 4.04], [&"sprint", 5.65],
+	[&"idle", 0.0], [&"walk", 1.64], [&"slow_jog", 1.96], [&"run", 4.04], [&"sprint", 5.65],
 ]
 const LOCOMOTION_BALL_POINTS: Array = [
-	[&"idle_ball", 0.0], [&"walk", 1.05], [&"dribble", 2.56], [&"run", 4.04], [&"sprint", 5.65],
+	[&"idle_ball", 0.0], [&"walk", 1.64], [&"dribble", 2.56], [&"run", 4.04], [&"sprint", 5.65],
 ]
 ## Marcação: velocidade local (x = para a direita, y = para a frente), m/s.
 const MARK_POINTS: Array = [
@@ -192,7 +205,7 @@ const LOCOMOTION_SPEEDS := {&"sprint": 5.65}
 const HIPS_POSITION_TRACK := "%GeneralSkeleton:Hips"
 ## Clipes cujo deslocamento do corpo vem da própria animação (root motion):
 ## a física do jogador segue a curva do quadril gravada no clipe.
-const ROOT_MOTION: Array[StringName] = [&"tackle", &"trip", &"jump", &"spin"]
+const ROOT_MOTION: Array[StringName] = [&"tackle", &"trip", &"jump", &"spin", &"turn180", &"turn_l", &"turn_r", &"run_stop"]
 const ROOT_MOTION_FPS := 30.0
 ## Clipes que levantam no lugar (quadril fixo na horizontal).
 const IN_PLACE_FIXED: Array[StringName] = [&"getup", &"getup_b", &"getup_c", &"fallen"]

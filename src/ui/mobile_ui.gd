@@ -62,12 +62,14 @@ func _update_button_labels() -> void:
 		pass_button.set_label("PASSE")
 		pass_button.alt_hint = "arraste: por cima"
 		dribble_button.set_label("DRIBLE")
+		dribble_button.alt_hint = ""
 	else:
 		shoot_button.set_label("CARRINHO")
 		shoot_button.alt_hint = ""
 		pass_button.set_label("TROCAR")
 		pass_button.alt_hint = ""
-		dribble_button.set_label("DESARME")
+		dribble_button.set_label("BUSCAR")
+		dribble_button.alt_hint = "2 toques: bote"
 
 
 # --- Placar ------------------------------------------------------------------------
@@ -225,7 +227,7 @@ func _build_minimap() -> void:
 
 ## Dica rápida dos controles no começo da partida.
 func _show_hints() -> void:
-	var l := _label("Segure CHUTE e use o analógico para MIRAR  •  Arraste PASSE: toque por cima\nArraste CHUTE: cavadinha  •  Sem a bola: CARRINHO, TROCAR e DESARME", 18, Color(1, 1, 1, 0.95))
+	var l := _label("Segure CHUTE e use o analógico para MIRAR  •  Arraste PASSE: toque por cima\nArraste CHUTE: cavadinha  •  Sem a bola: segure BUSCAR (2 toques = bote), CARRINHO, TROCAR", 18, Color(1, 1, 1, 0.95))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	l.grow_horizontal = Control.GROW_DIRECTION_BOTH

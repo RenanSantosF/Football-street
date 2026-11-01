@@ -8,9 +8,9 @@ extends Node
 ## pegar a bola e devolvê-la — e só então chamar begin_restart(). A interface
 ## com o MatchManager (handle_out → begin_restart) já é a definitiva.
 
-enum Kind { SIDELINE, END_LINE }
+enum Kind { SIDELINE, END_LINE, FREE_KICK }
 
-@export var restart_delay := 1.4
+@export var restart_delay := 2.2
 
 var match_manager: MatchManager
 
@@ -60,6 +60,15 @@ func handle_out(kind: Kind, exit_pos: Vector3, last_touch_team: int) -> void:
 				Field.goal_line_x(defending) + Field.attack_sign(defending) * 1.6,
 				Ball.RADIUS, 0.0)
 			GameEvents.match_message.emit("TIRO DE META", 1.2)
+	_timer = restart_delay
+	_waiting = true
+
+
+## Reinício já decidido (ex.: falta) depois do atraso padrão.
+func schedule_restart(team: int, kind: Kind, pos: Vector3) -> void:
+	_restart_team = team
+	_restart_kind = kind
+	_restart_pos = pos
 	_timer = restart_delay
 	_waiting = true
 

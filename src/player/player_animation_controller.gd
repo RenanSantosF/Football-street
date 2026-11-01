@@ -31,6 +31,11 @@ const ACTION_STATES := {
 	&"stumble": &"Stumble",
 	&"gk_pass": &"GKPass",
 	&"gk_catch": &"GKCatch",
+	&"turn180": &"Turn180",
+	&"turn_l": &"TurnLeft",
+	&"turn_r": &"TurnRight",
+	&"run_stop": &"RunStop",
+	&"tackle": &"PassLong",
 	&"celebrate": &"Celebrate",
 	&"samba": &"Samba",
 	&"defeated": &"Defeated",
@@ -47,6 +52,23 @@ const ACTION_LOGICAL := {
 	&"gk_pass": &"gk_pass",
 	&"trip": &"trip",
 	&"jump": &"jump",
+	&"tackle": &"pass_long",
+	&"turn180": &"turn180",
+	&"turn_l": &"turn_l",
+	&"turn_r": &"turn_r",
+	&"run_stop": &"run_stop",
+}
+## Velocidade de reprodução por tipo (as viradas casam com a física do Player).
+const KIND_SPEED := {
+	&"turn180": Player.TURN_SPEED_UP, &"turn_l": Player.TURN_SPEED_UP,
+	&"turn_r": Player.TURN_SPEED_UP, &"run_stop": 1.0,
+}
+## Gesto de espera -> estado.
+const GESTURE_STATES := {
+	&"argue": &"Argue", &"warmup": &"Warmup", &"talk": &"Talk", &"kick_up": &"KickUp",
+}
+const GESTURE_CLIPS := {
+	&"argue": &"argue", &"warmup": &"warmup", &"talk": &"talk", &"kick_up": &"kick_up",
 }
 ## Ações que ficam no chão no fim (carrinho, tropeço): levantam depois.
 const DOWN_ACTIONS: Array[StringName] = [&"slide", &"trip"]
@@ -66,6 +88,8 @@ var _prev_speed := 0.0
 var _getting_up := false
 var _prev_facing := Vector3.FORWARD
 var _turn_rate := 0.0
+var _gesture_state: StringName = &""
+var _rng := RandomNumberGenerator.new()
 
 
 func setup(p: Player) -> void:
@@ -86,6 +110,9 @@ func refresh_model() -> void:
 	if anim_tree != null:
 		anim_tree.active = true
 		playback = anim_tree.get(PARAM_PLAYBACK) as AnimationNodeStateMachinePlayback
+		# Cada jogador começa num ponto diferente do ciclo (ninguém sincronizado).
+		_rng.randomize()
+		anim_tree.advance(_rng.randf_range(0.0, 3.0))
 
 
 func is_active() -> bool:
@@ -130,6 +157,23 @@ func physics_update(delta: float) -> void:
 		return # comemoração/lamento: fica até a próxima saída de bola
 
 	var wanted := _wanted_base()
+	# Gestos de espera (parado): reclamar, aquecer, conversar, embaixadinha.
+	if player.gesture != &"" and current in BASE_STATES and v.length() < 0.3 \
+			and GESTURE_STATES.has(player.gesture) and _has_state(GESTURE_STATES[player.gesture]):
+		var gs: StringName = GESTURE_STATES[player.gesture]
+		var clip_len := AnimationCatalog.clip_length(GESTURE_CLIPS[player.gesture])
+		anim_tree.set("parameters/%s/Seek/seek_request" % gs, _rng.randf_range(0.0, maxf(clip_len - 3.0, 0.0)))
+		anim_tree.set("parameters/%s/Scale/scale" % gs, _rng.randf_range(0.9, 1.1))
+		_gesture_state = gs
+		playback.travel(gs)
+		_prev_speed = v.length()
+		return
+	if current == _gesture_state and _gesture_state != &"":
+		if player.gesture == &"" or v.length() > 0.3:
+			_gesture_state = &""
+			playback.travel(wanted)
+		_prev_speed = v.length()
+		return
 	if current in BASE_STATES:
 		_action_state = &""
 		_action_kind = &""
@@ -148,6 +192,11 @@ func physics_update(delta: float) -> void:
 	elif current in [&"Fallen", &"GetUpFront", &"GetUpBack"]:
 		if player.state == Player.State.MOVE:
 			playback.travel(wanted)
+	elif current == &"Receive" and (player.get_horizontal_speed() > 0.6 or _time_since_contact > 0.6):
+		# Domínio: sola na bola só parado; voltou a andar → sai na hora
+		# (antes ficava com o pé levantado deslizando).
+		playback.travel(wanted)
+		_action_state = &""
 	elif current == _action_state and player.state == Player.State.MOVE \
 			and _time_since_contact > RELEASE_AFTER_CONTACT and player.get_horizontal_speed() > RELEASE_SPEED:
 		playback.travel(wanted)
@@ -204,7 +253,7 @@ func _on_action_started(kind: StringName) -> void:
 		var seek := 0.0
 		if AnimationCatalog.CONTACTS.has(logical):
 			seek = maxf(AnimationCatalog.contact_time(logical) - player.time_to_contact() * ACTION_SPEED, 0.0)
-		_play_action(state_name, seek)
+		_play_action(state_name, seek, KIND_SPEED.get(kind, ACTION_SPEED))
 		_time_since_contact = -player.time_to_contact()
 	else:
 		_play(state_name)
@@ -218,18 +267,18 @@ func _on_ball_touched(kind: StringName) -> void:
 		_play_action(&"GKCatch", 0.3)
 		_time_since_contact = 0.0
 		return
-	# Domínio (ou virada puxando a bola): o pé pisa na bola.
-	if (kind != &"receive" and kind != &"turn") or not _has_state(&"Receive"):
+	# Domínio: o pé pisa na bola — só quase parado (correndo, a passada segue).
+	if kind != &"receive" or not _has_state(&"Receive"):
 		return
-	if playback.get_current_node() in BASE_STATES and player.get_horizontal_speed() < 3.5:
+	if playback.get_current_node() in BASE_STATES and player.get_horizontal_speed() < 1.0:
 		_action_kind = kind
 		_play_action(&"Receive", maxf(AnimationCatalog.contact_time(&"receive") - 0.08, 0.0))
 		_time_since_contact = -0.08
 
 
-func _play_action(state_name: StringName, seek: float) -> void:
+func _play_action(state_name: StringName, seek: float, speed := ACTION_SPEED) -> void:
 	anim_tree.set("parameters/%s/Seek/seek_request" % state_name, seek)
-	anim_tree.set("parameters/%s/Scale/scale" % state_name, ACTION_SPEED)
+	anim_tree.set("parameters/%s/Scale/scale" % state_name, speed)
 	_action_state = state_name
 	_play(state_name)
 

@@ -31,6 +31,8 @@ func _physics_process(_d: float) -> void:
 				p.set_physics_process(false)
 				p.global_position = Vector3(0, -50, 0) # tira do caminho
 		me = mm.controlled
+		me.action_started.connect(func(k): results["acao_" + String(k)] = results.get("acao_" + String(k), 0) + 1)
+		me.ball_touched.connect(func(k): if k == &"side_touch" or k == &"drag": results["toque_" + String(k)] = results.get("toque_" + String(k), 0) + 1)
 	if f < 80:
 		return
 	match phase:
@@ -39,7 +41,9 @@ func _physics_process(_d: float) -> void:
 		2: _test_restart_lock()
 		3: _test_curb()
 		4: _test_zigzag()
-		5:
+		5: _test_stop_and_turn()
+		6: _test_chase()
+		7:
 			print("RESULTADOS: ", results)
 			get_tree().quit()
 
@@ -161,3 +165,45 @@ func _test_zigzag() -> void:
 		results["zigue_zague_posse_%"] = int(100.0 * _zz_has / maxf(_zz_total, 1))
 		results["zigue_zague_dist_max"] = snappedf(_zz_max, 0.01)
 		phase = 5
+		t0 = 0
+
+
+func _test_stop_and_turn() -> void:
+	# Sem a bola: corre forte e solta o analógico (parada brusca); depois,
+	# parado, pede direção a 90° (giro parado).
+	if t0 == 0:
+		t0 = f
+		ball.place_at(Vector3(12, Ball.RADIUS, 0.0))
+		ball.in_play = false
+		me.set_frozen(false)
+		me.teleport(Vector3(-8, 0, 0), Vector3(1, 0, 0))
+		Input.action_press("move_right", 1.0)
+		Input.action_press("sprint")
+	var t := f - t0
+	if t == 70:
+		Input.action_release("move_right")
+		Input.action_release("sprint")
+	if t == 160:
+		Input.action_press("move_up", 1.0)
+	if t == 230:
+		Input.action_release("move_up")
+		results["virou_para_cima"] = me.facing.dot(Vector3(0, 0, -1)) > 0.8
+		ball.in_play = true
+		phase = 6
+		t0 = 0
+
+
+func _test_chase() -> void:
+	# Sem a bola: segurar BUSCAR leva o jogador até a bola.
+	if t0 == 0:
+		t0 = f
+		ball.release()
+		ball.place_at(Vector3(4, Ball.RADIUS, 2))
+		ball.kick(Vector3(1.5, 0, 0), Vector3.ZERO, null)
+		me.teleport(Vector3(-3, 0, -2), Vector3(1, 0, 0))
+		Input.action_press("dribble")
+	var t := f - t0
+	if t == 200:
+		Input.action_release("dribble")
+		results["buscar_pegou_bola"] = me.ball_control.has_ball() or me.ball_control.ball_distance() < 1.0
+		phase = 7
