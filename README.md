@@ -5,15 +5,17 @@ rua de bairro brasileira, com traves de ferro, adolescentes assistindo e esperan
 roupas sujas e dribles naturais.
 
 - 📐 Planejamento técnico completo: [`docs/PLANEJAMENTO.md`](docs/PLANEJAMENTO.md)
-- ▶️ Etapa atual e como rodar no celular: [`docs/ETAPA_01.md`](docs/ETAPA_01.md)
+- ▶️ Etapa 1 (fundação) e como rodar no celular: [`docs/ETAPA_01.md`](docs/ETAPA_01.md)
+- 🧍 Etapa 2 (personagens e animação): [`docs/ETAPA_02.md`](docs/ETAPA_02.md)
+- 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado
 
 | Etapa | Situação |
 |---|---|
-| 1. Fundação jogável (rua, bola, condução, controles, regras, IA simples) | ✅ entregue, aguardando teste |
-| 2. Personagem humanoide + pipeline de animação | próxima |
-| 3. Animações de futebol sincronizadas com a bola | — |
+| 1. Fundação jogável (rua, bola, condução, controles, regras, IA simples) | ✅ testada no celular |
+| 2. Personagem humanoide + pipeline de animação | ✅ entregue, aguardando teste |
+| 3. Animações de futebol sincronizadas com a bola | próxima |
 | 4. Dribles e defesa | — |
 | 5. IA completa e goleiro | — |
 | 6. Torcida e sistema de busca da bola | — |

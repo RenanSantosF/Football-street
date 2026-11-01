@@ -2,17 +2,18 @@ class_name PlayerAnimationController
 extends Node
 ## Ponte entre a lógica do jogador e o AnimationTree do modelo humanoide.
 ##
-## Etapa 1: o manequim provisório não tem esqueleto, então este nó fica inativo.
-## Etapa 2: o modelo real terá um AnimationTree com uma AnimationNodeStateMachine
-## na raiz contendo os estados abaixo. Os nomes são o "contrato" entre código e
-## animação: basta o AnimationTree ter estados com esses nomes.
+## O AnimationTree (montado pelo AnimationTreeBuilder) tem uma
+## AnimationNodeStateMachine na raiz. Os nomes dos estados são o "contrato"
+## entre código e animação; estado que ainda não existe é simplesmente ignorado
+## (ex.: chutes chegam na Etapa 3).
 ##
-## Locomoção usa BlendSpace1D (parado→andando→trotando→correndo) dirigido pela
-## velocidade REAL do corpo, evitando o efeito de "deslizar".
+## Locomoção: BlendSpace1D cujas posições são as velocidades naturais das
+## passadas (m/s). Passamos a velocidade REAL do corpo, corrigida pelo tamanho
+## do personagem, então o pé não desliza. Acima do clipe mais rápido, o
+## TimeScale acelera a passada.
 
 const PARAM_PLAYBACK := "parameters/playback"
-const PARAM_LOCOMOTION := "parameters/Locomotion/blend_position"
-const PARAM_LOCOMOTION_BALL := "parameters/LocomotionBall/blend_position"
+const LOCOMOTION_STATES_PARAMS: Array[String] = ["parameters/Locomotion", "parameters/LocomotionBall"]
 
 const LOCOMOTION_STATES: Array[StringName] = [&"Locomotion", &"LocomotionBall"]
 
@@ -58,9 +59,15 @@ func is_active() -> bool:
 func physics_update(_delta: float) -> void:
 	if not is_active():
 		return
-	var speed01 := clampf(player.get_horizontal_speed() / player.sprint_speed, 0.0, 1.0)
-	anim_tree.set(PARAM_LOCOMOTION, speed01)
-	anim_tree.set(PARAM_LOCOMOTION_BALL, speed01)
+	var k := 1.0
+	if player.visual.has_method("get_locomotion_scale"):
+		k = player.visual.call("get_locomotion_scale")
+	var stride_speed := player.get_horizontal_speed() / maxf(k, 0.01)
+	var top: float = AnimationCatalog.LOCOMOTION_SPEEDS[&"sprint"]
+	var time_scale := stride_speed / top if stride_speed > top else 1.0
+	for base in LOCOMOTION_STATES_PARAMS:
+		anim_tree.set(base + "/Speed/blend_position", stride_speed)
+		anim_tree.set(base + "/Scale/scale", time_scale)
 	var current := playback.get_current_node()
 	if current in LOCOMOTION_STATES:
 		var wanted: StringName = &"LocomotionBall" if player.ball_control.has_ball() else &"Locomotion"
@@ -72,7 +79,11 @@ func _on_action_started(kind: StringName) -> void:
 	if not is_active() or not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
-	if _has_state(state_name):
+	if not _has_state(state_name):
+		return
+	if playback.get_current_node() == state_name:
+		playback.start(state_name) # reinicia o clipe
+	else:
 		playback.travel(state_name)
 
 

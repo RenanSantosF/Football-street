@@ -1,7 +1,7 @@
 [gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://src/player/player_controller.gd" id="1_player"]
-[ext_resource type="Script" path="res://src/player/placeholder_body.gd" id="2_body"]
+[ext_resource type="Script" path="res://src/character/humanoid_character.gd" id="2_body"]
 [ext_resource type="Script" path="res://src/player/ball_control.gd" id="3_ballctl"]
 [ext_resource type="Script" path="res://src/ai/ai_controller.gd" id="4_ai"]
 [ext_resource type="Script" path="res://src/player/player_animation_controller.gd" id="5_anim"]
