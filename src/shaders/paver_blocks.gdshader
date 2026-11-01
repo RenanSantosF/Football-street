@@ -33,46 +33,47 @@ void fragment() {
 	vec2 f = fract(q);
 	float r = h2(cell);
 	float r2 = h2(cell + 17.3);
+	float r3 = h2(cell + 41.0);
 
-	// Distância até a borda do bloco (em metros) -> juntas e quinas gastas.
 	vec2 edge_m = min(f, 1.0 - f) * block_size;
 	float e = min(edge_m.x, edge_m.y);
 	float jw = joint * (0.7 + 0.8 * r2);
 	float in_joint = 1.0 - smoothstep(jw * 0.6, jw, e);
 	float bevel = smoothstep(jw, jw + 0.018, e);
 
+	// OTIMIZADO: só 4 avaliações de ruído por pixel (um fbm de 2 oitavas
+	// reaproveitado para sujeira, desgaste e poças + 1 granulado).
+	float low = noise3(world_pos * 0.35);
+	float mid = noise3(world_pos * 1.3 + vec3(9.0));
+	float big = noise3(world_pos * 0.11 + vec3(8.0, 0.0, 2.0));
+	float grain = noise3(world_pos * 22.0);
+
 	vec3 col = mix(block_a, block_b, r);
 	col = mix(col, block_red, step(0.97, r2) * 0.6);
-	col *= 0.9 + 0.14 * noise3(world_pos * 22.0);        // granulado do concreto
-	col *= mix(0.82, 1.0, bevel);                        // quinas gastas mais escuras
-	float grime = fbm3(world_pos * 0.6 + vec3(3.1, 0.0, 1.7));
-	col = mix(col, dirt_color * 1.15, smoothstep(0.42, 0.78, grime) * 0.7); // sujeira/terra
-	float worn = fbm3(world_pos * 0.12 + vec3(8.0, 0.0, 2.0));
-	col *= mix(0.78, 1.05, worn);                                         // áreas mais escuras de uso
-	float oil = smoothstep(0.72, 0.8, noise3(world_pos * 0.9 + vec3(1.0, 5.0, 2.0)));
-	col = mix(col, vec3(0.12, 0.11, 0.10), oil * 0.5);                    // manchas de óleo
+	col *= 0.9 + 0.14 * grain;
+	col *= mix(0.82, 1.0, bevel);
+	float grime = low * 0.7 + mid * 0.3;
+	col = mix(col, dirt_color * 1.15, smoothstep(0.42, 0.78, grime) * 0.7);
+	col *= mix(0.78, 1.05, big);
+	float oil = smoothstep(0.78, 0.86, mid * (1.0 - low));
+	col = mix(col, vec3(0.12, 0.11, 0.10), oil * 0.5);
 
-	// Juntas: terra e um pouco de mato.
-	float grass = smoothstep(0.55, 0.75, noise3(world_pos * 1.3 + vec3(9.0)));
+	float grass = smoothstep(0.55, 0.75, mid);
 	vec3 joint_col = mix(dirt_color * 0.75, grass_color, grass * step(0.6, h2(cell + 3.7)) * 0.7);
 	col = mix(col, joint_col, in_joint);
 
-	// Bloco faltando ou quebrado: terra aparecendo.
-	float missing = step(1.0 - missing_amount, h2(cell + 41.0));
-	col = mix(col, dirt_color * (0.8 + 0.3 * noise3(world_pos * 9.0)), missing);
-	float sunk = step(0.96, h2(cell + 7.7));
-	col *= 1.0 - sunk * 0.18;
+	float missing = step(1.0 - missing_amount, r3);
+	col = mix(col, dirt_color * (0.8 + 0.3 * grain), missing);
+	col *= 1.0 - step(0.96, h2(cell + 7.7)) * 0.18;
 
-	// Poças rasas (água parada nos blocos afundados).
-	float wet_n = fbm3(world_pos * 0.22 + vec3(21.0, 0.0, 4.0));
-	float puddle = smoothstep(0.66, 0.72, wet_n) * puddle_amount;
-	float damp = smoothstep(0.55, 0.66, wet_n) * puddle_amount;
+	float wet_n = big * 0.6 + low * 0.4;
+	float puddle = smoothstep(0.68, 0.74, wet_n) * puddle_amount;
+	float damp = smoothstep(0.58, 0.68, wet_n) * puddle_amount;
 	col *= 1.0 - damp * 0.35;
 
 	ALBEDO = col;
-	ROUGHNESS = mix(mix(0.92, 0.75, bevel * 0.3), 0.08, max(puddle, missing * 0.0));
+	ROUGHNESS = mix(0.9, 0.08, puddle);
 	SPECULAR = mix(0.25, 0.6, puddle);
-	// Relevo: bisel dos blocos (normal inclinada perto da borda).
 	vec2 grad = vec2(f.x < 0.5 ? -1.0 : 1.0, f.y < 0.5 ? -1.0 : 1.0);
 	vec2 near = vec2(step(edge_m.x, edge_m.y), step(edge_m.y, edge_m.x));
 	vec2 slope = grad * near * (1.0 - bevel) * 0.6 * (1.0 - puddle);

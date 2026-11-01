@@ -145,8 +145,8 @@ func physics_update(delta: float) -> void:
 	elif current == &"Burst":
 		if player.state != Player.State.MOVE or player.intent.move.length() < 0.3:
 			playback.travel(wanted)
-	elif current == &"Fallen" or current == &"GetUp":
-		if player.state == Player.State.MOVE and current == &"Fallen":
+	elif current in [&"Fallen", &"GetUpFront", &"GetUpBack"]:
+		if player.state == Player.State.MOVE:
 			playback.travel(wanted)
 	elif current == _action_state and player.state == Player.State.MOVE \
 			and _time_since_contact > RELEASE_AFTER_CONTACT and player.get_horizontal_speed() > RELEASE_SPEED:
@@ -163,19 +163,26 @@ func _wanted_base() -> StringName:
 	return &"LocomotionBall" if player.ball_control.has_ball() else &"Locomotion"
 
 
-## Carrinho / tropeço: no chão até faltar o tempo de levantar.
+## Carrinho / tropeço: no chão até faltar o tempo de levantar. O tropeço
+## termina de bruços (levanta com "Standing Up"); o carrinho, de costas ("Stand Up").
 func _update_down() -> void:
 	if player.state != Player.State.ACTION:
 		if not _getting_up:
 			playback.travel(_wanted_base())
 		_action_kind = &""
 		return
-	var getup_len := AnimationCatalog.clip_length(&"getup") / ACTION_SPEED
+	var logical: StringName = &"getup" if _action_kind == &"trip" else &"getup_b"
+	var state_name: StringName = &"GetUpFront" if _action_kind == &"trip" else &"GetUpBack"
+	var getup_len := AnimationCatalog.getup_duration(logical)
 	var remaining := player.action_time_left()
 	if not _getting_up and remaining <= maxf(getup_len, 0.35):
 		_getting_up = true
-		if _has_state(&"GetUp"):
-			_play_action(&"GetUp", 0.0)
+		if getup_len > 0.0 and _has_state(state_name):
+			var seg: Array = AnimationCatalog.GETUP_SEGMENTS[logical]
+			anim_tree.set("parameters/%s/Seek/seek_request" % state_name, seg[0])
+			anim_tree.set("parameters/%s/Scale/scale" % state_name, AnimationCatalog.GETUP_SPEED)
+			_action_state = state_name
+			_play(state_name)
 		else:
 			playback.travel(_wanted_base())
 

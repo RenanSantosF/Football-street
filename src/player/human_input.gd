@@ -27,6 +27,9 @@ var _queued_power := 0.0
 var _last_charge := -1.0
 var _aim := Vector3.ZERO
 var _aiming := false
+var _lob_pending := false
+var _chip_pending := false
+var _queued_lofted := false
 
 
 func _ready() -> void:
@@ -54,14 +57,24 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("switch_player"):
 		switch_requested.emit()
 	if Input.is_action_just_pressed("dribble"):
+		# Com a bola: drible. Sem a bola: desarme (DRIBLE vira DESARME).
 		_queue(PlayerIntent.Action.DRIBBLE, 1.0)
 
-	# Sem a bola e com adversário conduzindo perto: chute vira desarme imediato.
-	if Input.is_action_just_pressed("shoot") and _wants_tackle():
-		_queue(PlayerIntent.Action.SHOOT, 0.0)
-	else:
+	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
-	_pass_hold = _update_charge("pass", _pass_hold, delta, PlayerIntent.Action.PASS)
+		_pass_hold = _update_charge("pass", _pass_hold, delta, PlayerIntent.Action.PASS)
+		if Input.is_action_pressed("pass_lob") and _pass_hold >= 0.0:
+			_lob_pending = true
+		if Input.is_action_pressed("shoot_chip") and _shoot_hold >= 0.0:
+			_chip_pending = true
+	else:
+		# Sem a bola: CHUTE vira CARRINHO e PASSE vira TROCAR de jogador.
+		_shoot_hold = -1.0
+		_pass_hold = -1.0
+		if Input.is_action_just_pressed("shoot"):
+			_queue(PlayerIntent.Action.SHOOT, 0.0)
+		if Input.is_action_just_pressed("pass"):
+			switch_requested.emit()
 
 	var charge := -1.0
 	var kind: StringName = &""
@@ -85,7 +98,9 @@ func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 			intent.precise = true
 		else:
 			intent.set_action(_queued, _queued_power, _move if _move.length() > 0.2 else Vector3.ZERO)
+		intent.lofted = _queued_lofted
 		_queued = PlayerIntent.Action.NONE
+		_queued_lofted = false
 		_aim = Vector3.ZERO
 
 
@@ -106,6 +121,24 @@ func _update_charge(action: StringName, hold: float, delta: float, kind: PlayerI
 func _queue(a: PlayerIntent.Action, power: float) -> void:
 	_queued = a
 	_queued_power = power
+	_queued_lofted = false
+	if a == PlayerIntent.Action.PASS and _lob_pending:
+		_queued_lofted = true
+	if a == PlayerIntent.Action.SHOOT and _chip_pending:
+		_queued_lofted = true
+	if a == PlayerIntent.Action.PASS:
+		_lob_pending = false
+	if a == PlayerIntent.Action.SHOOT:
+		_chip_pending = false
+
+
+## O jogador controlado está com a bola (ou com ela ao alcance do pé)?
+## Define o significado dos botões.
+func has_ball_context() -> bool:
+	if current_player == null or current_player.ball == null:
+		return true
+	var bc := current_player.ball_control
+	return bc.has_ball() or (bc.can_kick() and current_player.ball.possessor == null)
 
 
 func _near_ball() -> bool:

@@ -63,7 +63,7 @@ def mixamo_names(prefix="mixamorig_"):
 ## Animações do Mixamo enviadas pelo autor do projeto (nomes exatos dos arquivos).
 USER_PACK = [
     # pedidos ao autor (ainda não enviados; a importação já fica pronta)
-    'Standing Up', 'Goalkeeper Diving Save',
+    'Standing Up', 'Stand Up', 'Stand Up (1)', 'Goalkeeper Diving Save',
     'Change Direction',
     'Defeated',
     'Dribble',
@@ -128,7 +128,7 @@ def bone_map(names):
         parts.append(f'"bone_map/{b}":&"{names.get(b, "")}"')
     return ",".join(parts) + ',"script":null)'
 
-def write(path, skeleton_path, names, animations, extra_node=""):
+def write(path, skeleton_path, names, animations, extra_node="", fix_silhouette=False):
     src = path
     txt = f'''[remap]
 
@@ -163,7 +163,8 @@ _subresources={{
 "nodes": {{
 "PATH:{skeleton_path}": {{
 {bone_map(names)},
-"retarget/remove_tracks/unmapped_bones": true{extra_node}
+"retarget/remove_tracks/unmapped_bones": true,
+"retarget/rest_fixer/fix_silhouette/enable": {"true" if fix_silhouette else "false"}{extra_node}
 }}
 }}
 }}
@@ -178,6 +179,8 @@ if __name__ == "__main__":
     write("assets/animations/ual/AnimationLibrary_Godot_Standard.gltf", "Rig/Skeleton3D", rigify_names(), True)
     os.makedirs("assets/animations/mixamo/pack", exist_ok=True)
     for clip in USER_PACK:
-        write(f"assets/animations/mixamo/pack/{clip}.fbx", "Skeleton3D", mixamo_names(), True)
-    # Personagem adolescente (malha + textura), rigado no Mixamo.
-    write("assets/characters/teen_01/teen_01.fbx", "Skeleton3D", mixamo_names(), True)
+        write(f"assets/animations/mixamo/pack/{clip}.fbx", "Skeleton3D", mixamo_names(), True, fix_silhouette=True)
+    # Personagem adolescente (malha + textura), rigado no Mixamo. A malha está
+    # em pose A e os clipes "sem skin" em pose T: Fix Silhouette normaliza as
+    # duas para a mesma silhueta antes do retarget (senão os braços vão para trás).
+    write("assets/characters/teen_01/teen_01.fbx", "Skeleton3D", mixamo_names(), True, fix_silhouette=True)

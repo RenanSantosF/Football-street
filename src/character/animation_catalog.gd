@@ -51,6 +51,8 @@ const LIBRARY_SOURCES := {
 	&"m_jump": "Running Jump pulando fugindo do carrinho",
 	# opcional: levantar do chão (se o arquivo existir no pack)
 	&"m_getup": "Standing Up",
+	&"m_getup_b": "Stand Up",
+	&"m_getup_c": "Stand Up (1)",
 	# reações
 	&"m_victory": "Victory",
 	&"m_victory_idle": "Victory Idle",
@@ -99,6 +101,8 @@ const CLIPS := {
 	&"fallen": &"m_fallen/mixamo_com",
 	&"jump": &"m_jump/mixamo_com",
 	&"getup": &"m_getup/mixamo_com",
+	&"getup_b": &"m_getup_b/mixamo_com",
+	&"getup_c": &"m_getup_c/mixamo_com",
 	&"victory": &"m_victory/mixamo_com",
 	&"victory_idle": &"m_victory_idle/mixamo_com",
 	&"samba": &"m_samba/mixamo_com",
@@ -140,6 +144,23 @@ const CONTACTS := {
 	&"gk_pass": [1.15, 1.0],
 }
 
+## Levantar do chão: trecho útil de cada clipe (o resto é deitado ou em pé
+## parado) e velocidade de reprodução. getup = de bruços (depois do tropeço),
+## getup_b = de costas (depois do carrinho).
+const GETUP_SEGMENTS := {
+	&"getup": [3.8, 8.6],
+	&"getup_b": [1.6, 7.0],
+}
+const GETUP_SPEED := 1.7
+
+
+static func getup_duration(logical: StringName) -> float:
+	if not has_clip(logical) or not GETUP_SEGMENTS.has(logical):
+		return 0.0
+	var seg: Array = GETUP_SEGMENTS[logical]
+	return (seg[1] - seg[0]) / GETUP_SPEED
+
+
 ## Velocidade natural (m/s) da passada de cada clipe, normalizada para um
 ## quadril de 0,93 m (HumanoidCharacter.REF_HIPS_HEIGHT). Medida pelo
 ## deslocamento do quadril no clipe original (os clipes do Mixamo andam).
@@ -173,6 +194,8 @@ const HIPS_POSITION_TRACK := "%GeneralSkeleton:Hips"
 ## a física do jogador segue a curva do quadril gravada no clipe.
 const ROOT_MOTION: Array[StringName] = [&"tackle", &"trip", &"jump", &"spin"]
 const ROOT_MOTION_FPS := 30.0
+## Clipes que levantam no lugar (quadril fixo na horizontal).
+const IN_PLACE_FIXED: Array[StringName] = [&"getup", &"getup_b", &"getup_c", &"fallen"]
 
 static var _libraries := {}
 ## clipe "prefixo/nome" -> deslocamento horizontal total retirado (root motion).
@@ -245,7 +268,7 @@ static func contact_foot(logical: StringName) -> float:
 
 
 static func _is_root_motion_prefix(prefix: StringName) -> bool:
-	for logical in ROOT_MOTION:
+	for logical in ROOT_MOTION + IN_PLACE_FIXED:
 		if String(CLIPS.get(logical, "")).begins_with(String(prefix) + "/"):
 			return true
 	return false

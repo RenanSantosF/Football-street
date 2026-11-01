@@ -29,16 +29,19 @@ void fragment() {
 	float grain = noise3(p * 19.0);
 	vec3 col = base_color * (1.0 + (low - 0.5) * variation * 2.0 + (grain - 0.5) * grain_amount * 2.0);
 
-	float stain = smoothstep(0.6, 0.85, fbm3(p * noise_scale * 0.45 + vec3(13.1, 3.3, 7.7)));
+	float stain = smoothstep(0.6, 0.85, noise3(p * noise_scale * 0.45 + vec3(13.1, 3.3, 7.7)));
 	col = mix(col, stain_color, stain * stain_amount);
 
-	// Rachaduras: ruído "ridged" deformado, só em algumas regiões.
-	float warp = noise3(p * 0.8) * 1.7;
-	float r = noise3(p * crack_scale + vec3(warp));
-	float ridge = 1.0 - abs(r * 2.0 - 1.0);
-	float area = smoothstep(0.55, 0.75, noise3(p * 0.13 + vec3(5.0, 1.0, 9.0)));
-	float crack = smoothstep(0.972, 0.993, ridge) * area * crack_amount * 0.85;
-	col = mix(col, crack_color, crack);
+	// Rachaduras: ruído "ridged" deformado, só em algumas regiões (e só
+	// calculado quando o material tem rachaduras — economia no celular).
+	if (crack_amount > 0.0) {
+		float warp = noise3(p * 0.8) * 1.7;
+		float r = noise3(p * crack_scale + vec3(warp));
+		float ridge = 1.0 - abs(r * 2.0 - 1.0);
+		float area = smoothstep(0.42, 0.68, noise3(p * 0.13 + vec3(5.0, 1.0, 9.0)));
+		float crack = smoothstep(0.935, 0.985, ridge) * area * crack_amount;
+		col = mix(col, crack_color, crack);
+	}
 
 	if (dirt_bottom > 0.0) {
 		float d = 1.0 - smoothstep(0.0, 0.9, p.y);

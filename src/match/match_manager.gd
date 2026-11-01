@@ -191,9 +191,10 @@ func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 		if off.length() < 3.0:
 			var dir := off.normalized() if off.length() > 0.1 else into_field
 			p.teleport(Field.clamp_inside(pos + dir * 3.1, 0.4), -dir)
-	ball.restrict_to(team, 6.0)
+	ball.restrict_to(team, 60.0)
 	ball.in_play = true
 	ball.claim(taker)
+	ball.restricted_player = taker # só o batedor toca até passar
 	taker.set_restart_lock(true)
 	if team == human_team and not autoplay:
 		set_controlled(taker)
@@ -214,11 +215,13 @@ func _start_kickoff(team: int) -> void:
 			pos = Vector3(-0.45 * s, 0.0, 0.0) # quem dá a saída
 		p.teleport(pos, Vector3(Field.attack_sign(p.team), 0.0, 0.0))
 		p.set_frozen(true)
-	ball.restrict_to(team, 6.0)
-	# Saída de bola: quem dá a saída tem que tocar (não sai conduzindo).
+	ball.restrict_to(team, 60.0)
+	# Saída de bola: quem dá a saída tem que tocar (não sai conduzindo) e
+	# ninguém mais pode pegar a bola antes do passe.
 	for p in get_team(team):
 		if p.formation_index == 2:
 			p.set_restart_lock(true)
+			ball.restricted_player = p
 	if not autoplay:
 		var start := _closest_field_player(human_team, ball.global_position)
 		set_controlled(start)
@@ -251,6 +254,9 @@ func set_controlled(p: Player) -> void:
 
 func _on_switch_requested() -> void:
 	if autoplay:
+		return
+	# Com a bola no pé não troca de jogador.
+	if controlled != null and controlled.ball_control.has_ball():
 		return
 	var best: Player = null
 	var best_d := INF

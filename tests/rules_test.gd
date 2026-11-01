@@ -38,7 +38,8 @@ func _physics_process(_d: float) -> void:
 		1: _test_aim()
 		2: _test_restart_lock()
 		3: _test_curb()
-		4:
+		4: _test_zigzag()
+		5:
 			print("RESULTADOS: ", results)
 			get_tree().quit()
 
@@ -132,3 +133,31 @@ func _test_curb() -> void:
 		results["meio_fio_devolve"] = ball.linear_velocity.z < 0.0 and ball.global_position.z < Field.HALF_WIDTH
 		results["sem_lateral"] = mm.state != MatchManager.MatchState.BALL_OUT
 		phase = 4
+		t0 = 0
+
+
+var _zz_has := 0
+var _zz_total := 0
+var _zz_max := 0.0
+func _test_zigzag() -> void:
+	const DIRS := ["move_right", "move_up", "move_right", "move_down", "move_left", "move_down"]
+	if t0 == 0:
+		t0 = f
+		_setup_ball_at_feet(Vector3(-6, 0, 0), Vector3(1, 0, 0))
+	var t := f - t0
+	var seg := int(t / 50)
+	if t % 50 == 0 and seg < DIRS.size():
+		for d in DIRS:
+			Input.action_release(d)
+		Input.action_press(DIRS[seg], 1.0)
+	if t > 20:
+		_zz_total += 1
+		if me.ball_control.has_ball():
+			_zz_has += 1
+		_zz_max = maxf(_zz_max, me.ball_control.ball_distance())
+	if seg >= DIRS.size():
+		for d in DIRS:
+			Input.action_release(d)
+		results["zigue_zague_posse_%"] = int(100.0 * _zz_has / maxf(_zz_total, 1))
+		results["zigue_zague_dist_max"] = snappedf(_zz_max, 0.01)
+		phase = 5

@@ -71,7 +71,10 @@ func _think() -> void:
 		_think_with_ball()
 	else:
 		var carrier := ball.possessor
-		if carrier == null:
+		if carrier == null and ball.restricted_player != null and ball.restricted_player != player:
+			# Reinício do meu time (ou do outro): não vou na bola, me posiciono.
+			_support_or_mark(ball.restricted_player if ball.restricted_player.team == player.team else null)
+		elif carrier == null:
 			if _is_best_chaser():
 				_move_target = _intercept_point()
 				_sprint = true
@@ -176,12 +179,13 @@ func _defend(carrier: Player) -> void:
 		if d < 1.3 and _tackle_cooldown <= 0.0:
 			_tackle_cooldown = _rng.randf_range(1.0, 2.0)
 			if _rng.randf() < 0.45:
-				_set_action(PlayerIntent.Action.SHOOT, 0.0, Vector3.ZERO, null)
+				# Desarme em pé (mesmo botão do drible, sem a bola).
+				_set_action(PlayerIntent.Action.DRIBBLE, 0.0, Vector3.ZERO, null)
 		elif d < Player.SLIDE_RANGE - 0.4 and d > 1.8 and _tackle_cooldown <= 0.0:
 			# Carrinho: mais provável quando o atacante se aproxima do gol.
 			_tackle_cooldown = _rng.randf_range(1.5, 3.0)
 			var danger := 1.0 - clampf(carrier.global_position.distance_to(own_goal) / 20.0, 0.0, 1.0)
-			if _rng.randf() < 0.12 + 0.25 * danger:
+			if _rng.randf() < 0.06 + 0.16 * danger:
 				_set_action(PlayerIntent.Action.SHOOT, 0.0, Vector3.ZERO, null)
 	else:
 		# Marcar o outro atacante pelo lado do gol.

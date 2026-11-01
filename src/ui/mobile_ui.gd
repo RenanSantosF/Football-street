@@ -16,6 +16,11 @@ var _banner: Control
 var _banner_title: Label
 var _banner_team: Label
 var _minimap: Minimap
+var _fps_label: Label
+@onready var shoot_button: TouchButton = $ShootButton
+@onready var pass_button: TouchButton = $PassButton
+@onready var dribble_button: TouchButton = $DribbleButton
+var _charge_kind: StringName = &""
 
 
 func _ready() -> void:
@@ -25,6 +30,8 @@ func _ready() -> void:
 	_build_scoreboard()
 	_build_banner()
 	_build_minimap()
+	_build_fps()
+	_show_hints()
 	GameEvents.score_changed.connect(_on_score_changed)
 	GameEvents.goal_scored.connect(_on_goal)
 	GameEvents.match_message.connect(_on_message)
@@ -42,6 +49,25 @@ func _process(delta: float) -> void:
 	if _minimap.match_manager == null and match_manager != null:
 		_minimap.match_manager = match_manager
 		_minimap.ball = match_manager.ball
+	_fps_label.text = "%d FPS" % Engine.get_frames_per_second()
+	_update_button_labels()
+
+
+## Os botões mudam de significado: com a bola / sem a bola.
+func _update_button_labels() -> void:
+	var with_ball := human_input == null or human_input.has_ball_context()
+	if with_ball:
+		shoot_button.set_label("CHUTE")
+		shoot_button.alt_hint = "arraste: cavadinha"
+		pass_button.set_label("PASSE")
+		pass_button.alt_hint = "arraste: por cima"
+		dribble_button.set_label("DRIBLE")
+	else:
+		shoot_button.set_label("CARRINHO")
+		shoot_button.alt_hint = ""
+		pass_button.set_label("TROCAR")
+		pass_button.alt_hint = ""
+		dribble_button.set_label("DESARME")
 
 
 # --- Placar ------------------------------------------------------------------------
@@ -185,13 +211,42 @@ func _on_goal(team: int, _scorer: Node) -> void:
 
 func _build_minimap() -> void:
 	_minimap = Minimap.new()
-	_minimap.anchor_left = 0.0
-	_minimap.anchor_top = 0.0
-	_minimap.offset_left = 14
-	_minimap.offset_top = 12
-	_minimap.offset_right = 14 + 230
-	_minimap.offset_bottom = 12 + 96
+	# Embaixo, no meio.
+	_minimap.anchor_left = 0.5
+	_minimap.anchor_right = 0.5
+	_minimap.anchor_top = 1.0
+	_minimap.anchor_bottom = 1.0
+	_minimap.offset_left = -125
+	_minimap.offset_right = 125
+	_minimap.offset_top = -112
+	_minimap.offset_bottom = -10
 	add_child(_minimap)
+
+
+## Dica rápida dos controles no começo da partida.
+func _show_hints() -> void:
+	var l := _label("Segure CHUTE e use o analógico para MIRAR  •  Arraste PASSE: toque por cima\nArraste CHUTE: cavadinha  •  Sem a bola: CARRINHO, TROCAR e DESARME", 18, Color(1, 1, 1, 0.95))
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	l.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	l.offset_top = 70
+	add_child(l)
+	var tw := create_tween()
+	tw.tween_interval(7.0)
+	tw.tween_property(l, "modulate", Color(1, 1, 1, 0), 1.0)
+	tw.tween_callback(l.queue_free)
+
+
+func _build_fps() -> void:
+	_fps_label = _label("60 FPS", 16, Color(1, 1, 1, 0.8))
+	_fps_label.anchor_left = 1.0
+	_fps_label.anchor_right = 1.0
+	_fps_label.offset_left = -110
+	_fps_label.offset_right = -14
+	_fps_label.offset_top = 8
+	_fps_label.offset_bottom = 30
+	_fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	add_child(_fps_label)
 
 
 func _on_message(text: String, duration: float) -> void:
@@ -200,6 +255,8 @@ func _on_message(text: String, duration: float) -> void:
 	_message_timer = duration
 
 
+## Força do passe/chute: anel em volta do próprio botão.
 func _on_charge_changed(value: float, kind: StringName) -> void:
-	charge_bar.visible = kind != &""
-	charge_bar.value = value * 100.0
+	charge_bar.visible = false
+	shoot_button.charge = value if kind == &"shoot" else 0.0
+	pass_button.charge = value if kind == &"pass" else 0.0

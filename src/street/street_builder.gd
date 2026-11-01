@@ -24,6 +24,14 @@ const WOOD_SHADER := preload("res://src/shaders/weathered_wood.gdshader")
 const BARK_SHADER := preload("res://src/shaders/tree_bark.gdshader")
 const FOLIAGE_SHADER := preload("res://src/shaders/foliage.gdshader")
 const IRON_SHADER := preload("res://src/shaders/old_iron.gdshader")
+const BRICK_SHADER := preload("res://src/shaders/bricks.gdshader")
+
+## Cores de fachada de periferia, desbotadas pelo sol.
+const HOUSE_COLORS: Array[Color] = [
+	Color(0.90, 0.84, 0.66), Color(0.86, 0.70, 0.56), Color(0.70, 0.80, 0.68),
+	Color(0.92, 0.90, 0.84), Color(0.80, 0.66, 0.50), Color(0.72, 0.78, 0.84),
+	Color(0.88, 0.76, 0.48),
+]
 
 ## Onde começa a cerca (fim da calçada).
 var FENCE_Z: float = Field.ASPHALT_HALF_WIDTH + Field.SIDEWALK_WIDTH
@@ -63,6 +71,7 @@ func rebuild() -> void:
 	for side in [-1.0, 1.0]:
 		_build_fence_line(root, side)
 		_build_yard(root, side)
+		_build_houses(root, side)
 	_build_street_ends(root)
 	_build_poles(root)
 	_build_props(root)
@@ -208,7 +217,8 @@ func _iron_gate(root: Node3D, x0: float, side: float, w: float) -> void:
 
 func _block_wall(root: Node3D, x0: float, side: float, w: float) -> void:
 	var z := side * (FENCE_Z + 0.1)
-	var block := _surface("raw_block", Color(0.56, 0.55, 0.52), 0.25, 0.7, 0.4, 0.8)
+	var block := ShaderMaterial.new()
+	block.shader = BRICK_SHADER
 	var h := _rng.randf_range(1.6, 2.0)
 	_mesh_box(root, Vector3(x0 + w * 0.5, h * 0.5, z), Vector3(w, h, 0.15), block)
 	# Fileira de cima incompleta (obra parada).
@@ -221,13 +231,17 @@ func _block_wall(root: Node3D, x0: float, side: float, w: float) -> void:
 # --- Quintais e árvores -----------------------------------------------------------
 
 func _build_yard(root: Node3D, side: float) -> void:
-	var yard := _surface("yard_%d" % int(side), Color(0.25, 0.23, 0.15), 0.5, 0.7, 0.0, 0.0)
-	var depth := 12.0
+	var yard := _surface("yard_%d" % int(side), Color(0.24, 0.30, 0.13), 0.6, 0.6, 0.0, 0.0)
+	var depth := 16.0
 	_mesh_box(root, Vector3(0, 0.0, side * (FENCE_Z + depth * 0.5)), Vector3(Field.STREET_HALF_LENGTH * 2.0 + 8.0, 0.02, depth), yard)
 	var bark := ShaderMaterial.new()
 	bark.shader = BARK_SHADER
-	var leaves := ShaderMaterial.new()
-	leaves.shader = FOLIAGE_SHADER
+	var leaves := _leaves_mat()
+	# Arbustos e mato alto junto da cerca (do lado de dentro dos quintais).
+	var bx := -Field.STREET_HALF_LENGTH + _rng.randf_range(0.0, 3.0)
+	while bx < Field.STREET_HALF_LENGTH:
+		_foliage(root, Vector3(bx, 0.35, side * (FENCE_Z + _rng.randf_range(0.5, 1.2))), _rng.randf_range(0.45, 0.8), leaves)
+		bx += _rng.randf_range(3.0, 7.0)
 	var count := 7 if side < 0.0 else 4
 	for i in count:
 		var tx := _rng.randf_range(-Field.STREET_HALF_LENGTH + 2.0, Field.STREET_HALF_LENGTH - 2.0)
@@ -274,13 +288,148 @@ func _foliage(root: Node3D, center: Vector3, radius: float, leaves: Material) ->
 	var mesh := SphereMesh.new()
 	mesh.radius = radius
 	mesh.height = radius * 1.6
-	mesh.radial_segments = 14
-	mesh.rings = 7
+	mesh.radial_segments = 10
+	mesh.rings = 5
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = leaves
 	mi.position = center
+	# Copas não projetam sombra (o recorte das folhas é caro no passe de sombra).
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(mi)
+
+
+func _leaves_mat() -> ShaderMaterial:
+	if _materials.has("leaves"):
+		return _materials["leaves"]
+	var m := ShaderMaterial.new()
+	m.shader = FOLIAGE_SHADER
+	_materials["leaves"] = m
+	return m
+
+
+# --- Casas do fundo ----------------------------------------------------------------
+
+## Casas de periferia atrás dos quintais: reboco pintado e desbotado, telhado de
+## barro, janelas com vidro, caixa d'água azul na laje, às vezes o andar de cima
+## de tijolo à mostra (obra que nunca terminou), varal com roupas.
+func _build_houses(root: Node3D, side: float) -> void:
+	var x := -Field.STREET_HALF_LENGTH - 2.0
+	while x < Field.STREET_HALF_LENGTH + 2.0:
+		var w := _rng.randf_range(6.5, 10.0)
+		var d := _rng.randf_range(6.0, 8.0)
+		var z0 := side * (FENCE_Z + _rng.randf_range(6.0, 8.5))
+		if side > 0.0 and absf(x + w * 0.5) < 9.0:
+			x += w + _rng.randf_range(1.0, 3.0)
+			continue # do lado da câmera, só nas pontas
+		_house(root, Vector3(x + w * 0.5, 0.0, z0 + side * d * 0.5), w, d, side)
+		x += w + _rng.randf_range(1.5, 4.0)
+
+
+func _house(root: Node3D, c: Vector3, w: float, d: float, side: float) -> void:
+	var color := HOUSE_COLORS[_rng.randi_range(0, HOUSE_COLORS.size() - 1)]
+	var wall := _surface("house_%d" % color.to_rgba32(), color, 0.12, 0.55, 0.25, 0.7)
+	var h := _rng.randf_range(2.8, 3.1)
+	_mesh_box(root, c + Vector3(0, h * 0.5, 0), Vector3(w, h, d), wall)
+	var front_z := c.z - side * d * 0.5  # face voltada para a rua
+	var two_floors := _rng.randf() < 0.45
+	var top := h
+	if two_floors:
+		# Laje + segundo andar (às vezes de tijolo à mostra).
+		var slab := _surface("slab", Color(0.62, 0.60, 0.57), 0.15, 0.6, 0.3, 0.0)
+		_mesh_box(root, c + Vector3(0, h + 0.07, 0), Vector3(w + 0.3, 0.14, d + 0.3), slab)
+		var w2 := w * _rng.randf_range(0.55, 0.85)
+		var h2 := _rng.randf_range(2.5, 2.8)
+		var bricks := _rng.randf() < 0.6
+		var upper: Material
+		if bricks:
+			var bm := ShaderMaterial.new()
+			bm.shader = BRICK_SHADER
+			upper = bm
+		else:
+			upper = wall
+		var ux := c.x + _rng.randf_range(-(w - w2) * 0.5, (w - w2) * 0.5)
+		_mesh_box(root, Vector3(ux, h + 0.14 + h2 * 0.5, c.z), Vector3(w2, h2, d * 0.8), upper)
+		top = h + 0.14 + h2
+		_roof(root, Vector3(ux, top, c.z), w2 + 0.5, d * 0.8 + 0.6)
+		# Caixa d'água azul na laje.
+		_water_tank(root, Vector3(c.x + (w * 0.35 if ux < c.x else -w * 0.35), h + 0.14, c.z))
+		_window(root, Vector3(ux, h + 1.6, front_z - side * 0.06 + side * d * 0.1), 1.2, 1.0, side)
+	else:
+		_roof(root, Vector3(c.x, h, c.z), w + 0.6, d + 0.6)
+		if _rng.randf() < 0.5:
+			_water_tank(root, Vector3(c.x + _rng.randf_range(-w * 0.3, w * 0.3), h + 0.9, c.z))
+	# Porta e janelas na frente.
+	var door := _flat_mat("door_%d" % _rng.randi_range(0, 2), [Color(0.35, 0.22, 0.14), Color(0.20, 0.28, 0.22), Color(0.55, 0.55, 0.52)][_rng.randi_range(0, 2)], 0.6, 0.2)
+	_mesh_box(root, Vector3(c.x - w * 0.25, 1.05, front_z - side * 0.03), Vector3(0.9, 2.1, 0.06), door)
+	_window(root, Vector3(c.x + w * 0.2, 1.5, front_z - side * 0.03), 1.4, 1.1, side)
+	if _rng.randf() < 0.5:
+		_clothesline(root, Vector3(c.x, 0, front_z - side * 2.2), w * 0.7)
+
+
+## Telhado de duas águas com telha de barro.
+func _roof(root: Node3D, base: Vector3, w: float, d: float) -> void:
+	var tile := _surface("roof_tile", Color(0.58, 0.28, 0.17), 0.2, 0.55, 0.0, 0.0)
+	var rise := d * 0.22
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var hw := w * 0.5
+	var hd := d * 0.5
+	var a := Vector3(-hw, 0, -hd)
+	var b := Vector3(hw, 0, -hd)
+	var cc := Vector3(hw, rise, 0)
+	var dd := Vector3(-hw, rise, 0)
+	var e := Vector3(-hw, 0, hd)
+	var f := Vector3(hw, 0, hd)
+	for tri in [[a, dd, cc], [a, cc, b], [e, f, cc], [e, cc, dd], [a, e, dd], [b, cc, f]]:
+		var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+		for v in tri:
+			st.set_normal(n)
+			st.add_vertex(v)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = tile
+	mi.position = base
+	root.add_child(mi)
+
+
+func _window(root: Node3D, c: Vector3, w: float, h: float, side: float) -> void:
+	var frame := _flat_mat("win_frame", Color(0.85, 0.85, 0.82), 0.5, 0.3)
+	var glass := _flat_mat("glass", Color(0.12, 0.16, 0.2), 0.08, 0.3)
+	_mesh_box(root, c, Vector3(w + 0.1, h + 0.1, 0.05), frame)
+	_mesh_box(root, c - Vector3(0, 0, side * 0.02), Vector3(w, h, 0.05), glass)
+	_mesh_box(root, c - Vector3(0, 0, side * 0.035), Vector3(0.04, h, 0.03), frame)
+	# Grade de ferro (comum na periferia).
+	var bar := _flat_mat("win_bar", Color(0.18, 0.18, 0.18), 0.5, 0.5)
+	var bx := -w * 0.5 + 0.15
+	while bx < w * 0.5:
+		_mesh_box(root, c + Vector3(bx, 0, -side * 0.06), Vector3(0.015, h, 0.015), bar)
+		bx += 0.15
+
+
+func _water_tank(root: Node3D, base: Vector3) -> void:
+	var blue := _flat_mat("water_tank", Color(0.12, 0.30, 0.62), 0.45)
+	_cylinder_between(root, base, base + Vector3(0, 0.75, 0), 0.62, 0.68, blue)
+	_cylinder_between(root, base + Vector3(0, 0.75, 0), base + Vector3(0, 0.85, 0), 0.7, 0.55, blue)
+
+
+func _clothesline(root: Node3D, base: Vector3, length: float) -> void:
+	var wire := _flat_mat("wire", Color(0.32, 0.30, 0.28), 0.45, 0.6)
+	var a := base + Vector3(-length * 0.5, 1.8, 0)
+	var b := base + Vector3(length * 0.5, 1.8, 0)
+	_cylinder_between(root, base + Vector3(-length * 0.5, 0, 0), a, 0.03, 0.03, _wood_mat())
+	_cylinder_between(root, base + Vector3(length * 0.5, 0, 0), b, 0.03, 0.03, _wood_mat())
+	_sag_wire(root, a, b, 0.12, wire, 0.004)
+	var colors: Array[Color] = [Color(0.8, 0.15, 0.15), Color(0.9, 0.9, 0.85), Color(0.2, 0.35, 0.7), Color(0.95, 0.75, 0.2)]
+	var cx := -length * 0.4
+	while cx < length * 0.4:
+		var cloth := _flat_mat("cloth_%d" % _rng.randi_range(0, 3), colors[_rng.randi_range(0, 3)], 0.9)
+		var cw := _rng.randf_range(0.35, 0.6)
+		var ch := _rng.randf_range(0.4, 0.7)
+		var t := (cx + length * 0.5) / length
+		var y := 1.8 - 0.12 * 4.0 * t * (1.0 - t)
+		_mesh_box(root, base + Vector3(cx, y - ch * 0.5, 0), Vector3(cw, ch, 0.01), cloth)
+		cx += cw + _rng.randf_range(0.1, 0.4)
 
 
 # --- Postes, fios, pontas da rua e objetos ------------------------------------------

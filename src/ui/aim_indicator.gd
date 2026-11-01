@@ -17,8 +17,9 @@ func _ready() -> void:
 	_mat = StandardMaterial3D.new()
 	_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_mat.albedo_color = Color(1.0, 0.85, 0.2, 0.75)
+	_mat.albedo_color = Color(1.0, 0.85, 0.2, 0.85)
 	_mat.no_depth_test = false
+	_mat.cull_mode = BaseMaterial3D.CULL_DISABLED # visível de cima (antes ficava invisível)
 	_mesh = MeshInstance3D.new()
 	_mesh.mesh = _build_arrow()
 	_mesh.material_override = _mat

@@ -21,6 +21,8 @@ var target: Node3D = null
 ## Chute mirado pelo jogador humano: a bola vai EXATAMENTE para [member aim]
 ## (sem mira automática no gol).
 var precise := false
+## Passe por cima (levantada) / chute de cavadinha (gesto de arrastar o botão).
+var lofted := false
 
 
 func set_action(a: Action, p := 0.0, aim_dir := Vector3.ZERO, tgt: Node3D = null) -> void:
@@ -29,6 +31,7 @@ func set_action(a: Action, p := 0.0, aim_dir := Vector3.ZERO, tgt: Node3D = null
 	aim = aim_dir
 	target = tgt
 	precise = false
+	lofted = false
 
 
 func clear_action() -> void:
@@ -37,3 +40,4 @@ func clear_action() -> void:
 	aim = Vector3.ZERO
 	target = null
 	precise = false
+	lofted = false

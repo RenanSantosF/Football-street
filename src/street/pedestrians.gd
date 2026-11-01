@@ -5,7 +5,7 @@ extends Node3D
 ## Por enquanto usam a mesma skin dos jogadores; outras pessoas virão depois
 ## (basta registrar novos corpos em HumanoidCharacter.BASES).
 
-@export var count := 4
+@export var count := 2
 @export var ball_path: NodePath
 
 var _walkers: Array[Dictionary] = []

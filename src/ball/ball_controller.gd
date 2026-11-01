@@ -25,6 +25,8 @@ var possessor: Player = null
 var last_toucher: Player = null
 var in_play := true
 var restricted_team := -1
+## Reinício: só este jogador pode tocar na bola até ela ser passada.
+var restricted_player: Player = null
 var grounded := false
 
 var _restrict_timer := 0.0
@@ -114,6 +116,8 @@ func kick(velocity: Vector3, spin: Vector3, by: Player, ignore_time := 0.3) -> v
 		if restricted_team >= 0 and by.team == restricted_team:
 			restricted_team = -1
 			_restrict_timer = 0.0
+		if restricted_player == by:
+			restricted_player = null
 	_set_velocity(velocity, spin)
 
 
@@ -144,6 +148,7 @@ func release() -> void:
 ## Coloca a bola parada num ponto (reinícios de jogo).
 func place_at(pos: Vector3) -> void:
 	release()
+	restricted_player = null
 	_pending_velocity = false
 	_new_linear = Vector3.ZERO
 	_teleport_position = Vector3(pos.x, maxf(pos.y, RADIUS), pos.z)
@@ -177,6 +182,8 @@ func distance_to_possessor() -> float:
 
 func can_be_claimed_by(player: Player) -> bool:
 	if not in_play or is_ignoring(player):
+		return false
+	if restricted_player != null and player != restricted_player:
 		return false
 	if restricted_team >= 0 and player.team != restricted_team:
 		return false

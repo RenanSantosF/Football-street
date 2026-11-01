@@ -13,6 +13,8 @@ var _time := 0.0
 
 
 func _ready() -> void:
+	if OS.get_environment("SHOT_DIR") == "":
+		DevTools.add_back_button(self)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 2024
 	for i in SPEEDS.size():

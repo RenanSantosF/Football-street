@@ -26,6 +26,8 @@ var _shot_index := 0
 
 
 func _ready() -> void:
+	if OS.get_environment("SHOT_DIR") == "":
+		DevTools.add_back_button(self)
 	_build_world()
 	ball = BALL_SCENE.instantiate()
 	add_child(ball)

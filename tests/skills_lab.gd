@@ -18,6 +18,8 @@ var _captured := {}
 
 
 func _ready() -> void:
+	if OS.get_environment("SHOT_DIR") == "":
+		DevTools.add_back_button(self)
 	_build_world()
 	ball = BALL_SCENE.instantiate()
 	add_child(ball)
@@ -64,7 +66,7 @@ func fill_intent(p: Player, intent: PlayerIntent, _delta: float) -> void:
 	var mode: String = carrier.get_meta("force", "")
 	if p == carrier:
 		intent.move = Vector3(1, 0, 0) if _t < 3.2 else Vector3.ZERO
-		if mode == "spin" and _t > 0.9 and _t < 0.95:
+		if mode == "spin" and _t > 0.45 and _t < 0.5:
 			intent.set_action(PlayerIntent.Action.DRIBBLE, 1.0, Vector3(1, 0, 0))
 	else:
 		intent.move = Vector3.ZERO

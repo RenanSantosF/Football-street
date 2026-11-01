@@ -15,6 +15,8 @@ const KEYS := {
 	"shoot": [KEY_K],
 	"dribble": [KEY_L],
 	"switch_player": [KEY_Q],
+	"pass_lob": [KEY_U],      # passe por cima (no toque: arrastar o botão de passe)
+	"shoot_chip": [KEY_I],    # cavadinha (no toque: arrastar o botão de chute)
 }
 
 const JOY_BUTTONS := {

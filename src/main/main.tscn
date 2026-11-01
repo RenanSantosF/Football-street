@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="PackedScene" path="res://src/street/street.tscn" id="1_street"]
 [ext_resource type="PackedScene" path="res://src/goal/goal.tscn" id="2_goal"]
@@ -11,6 +11,7 @@
 [ext_resource type="PackedScene" path="res://src/ui/mobile_ui.tscn" id="9_ui"]
 [ext_resource type="Script" path="res://src/ui/aim_indicator.gd" id="10_aim"]
 [ext_resource type="Script" path="res://src/street/pedestrians.gd" id="11_ped"]
+[ext_resource type="Script" path="res://src/ui/dev_tools.gd" id="12_dev"]
 
 [node name="Main" type="Node3D"]
 
@@ -64,3 +65,11 @@ ball = NodePath("../Ball")
 [node name="Pedestrians" type="Node3D" parent="."]
 script = ExtResource("11_ped")
 ball_path = NodePath("../Ball")
+
+[node name="DevTools" type="CanvasLayer" parent="." node_paths=PackedStringArray("match_manager", "human_input", "camera", "sun", "pedestrians")]
+script = ExtResource("12_dev")
+match_manager = NodePath("../MatchManager")
+human_input = NodePath("../HumanInput")
+camera = NodePath("../MatchCamera")
+sun = NodePath("../Street/Sun")
+pedestrians = NodePath("../Pedestrians")

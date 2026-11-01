@@ -45,7 +45,8 @@ const REACTION_CLIPS := {
 	&"CelebrateIdle": [&"victory_idle", false],
 	&"Samba": [&"samba", false],
 	&"Defeated": [&"defeated", false],
-	&"GetUp": [&"getup", true],
+	&"GetUpFront": [&"getup", true],
+	&"GetUpBack": [&"getup_b", true],
 }
 
 
@@ -82,10 +83,11 @@ static func build(tree: AnimationTree) -> void:
 		if sm.has_node(down) and sm.has_node(&"Fallen"):
 			var t := _add_transition(sm, down, &"Fallen", 0.3, AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO)
 			t.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
-	if sm.has_node(&"GetUp"):
-		for from in [&"Fallen", &"Tackle", &"Trip"]:
-			if sm.has_node(from):
-				_add_transition(sm, from, &"GetUp", 0.3)
+	for gu in [&"GetUpFront", &"GetUpBack"]:
+		if sm.has_node(gu):
+			for from in [&"Fallen", &"Tackle", &"Trip"]:
+				if sm.has_node(from):
+					_add_transition(sm, from, gu, 0.35)
 	if sm.has_node(&"Celebrate") and sm.has_node(&"CelebrateIdle"):
 		var c := _add_transition(sm, &"Celebrate", &"CelebrateIdle", 0.3, AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO)
 		c.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
