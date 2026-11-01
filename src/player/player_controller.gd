@@ -112,6 +112,7 @@ var _turn_cooldown := 0.0
 var _kick_mirror := false
 ## Giro com a bola antes de um passe/chute para trás.
 var _pivot_dir := Vector3.ZERO
+var _kick_ik := false
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -547,6 +548,7 @@ func _setup_kick_root_motion() -> void:
 
 func _begin_action(kind: StringName, contact: float, length: float, power: float,
 		aim: Vector3, target: Node3D, move_factor: float) -> void:
+	ball_control.foot.cancel() # um toque de condução pendente não dispara mais
 	state = State.ACTION
 	_action_kind = kind
 	_action_time = 0.0
@@ -559,6 +561,7 @@ func _begin_action(kind: StringName, contact: float, length: float, power: float
 	_action_move_factor = move_factor
 	_action_face = Vector3.ZERO
 	_action_logical = &""
+	_kick_ik = false
 	_action_precise = false
 	_action_lofted = false
 	_kick_logical = &""
@@ -613,6 +616,12 @@ func _update_action(delta: float) -> void:
 		# Preparação do chute/passe: acompanhar a bola até o pé de apoio,
 		# para que no contato ela esteja ao alcance (sem "furar").
 		var remaining := maxf(_action_contact - _action_time, 0.05)
+		if not _kick_ik and remaining <= 0.12:
+			# O pé que chuta vai exatamente até a bola no instante do contato.
+			_kick_ik = true
+			var kf := anim_controller.kick_foot(_action_kind)
+			var kd := _action_face if _action_face != Vector3.ZERO else facing
+			ball_control.foot.begin(kf if kf != 0.0 else 1.0, kd, remaining, FootContact.Mode.KICK, Callable(), 0.06)
 		var plant := ball_control.ball_offset() + ball.flat_velocity() * remaining
 		var to_ball_dir := plant.normalized() if plant.length() > 0.01 else facing
 		# Pé de apoio ao lado da bola: quem chuta de direita deixa a bola à direita.
@@ -1000,6 +1009,7 @@ func teleport(pos: Vector3, face_dir: Vector3) -> void:
 	_buffer_timer = 0.0
 	_reaction = &""
 	_restart_lock = false
+	ball_control.foot.cancel()
 	if state != State.FROZEN:
 		state = State.MOVE
 

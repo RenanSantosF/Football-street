@@ -161,6 +161,71 @@ func _build(wanted: StringName) -> void:
 	# O deslocamento do corpo vem da física do jogador.
 	anim_tree.root_motion_track = NodePath("%GeneralSkeleton:Root")
 	anim_tree.active = true
+	_build_foot_ik()
+
+
+# --- Pé na bola (IK) -----------------------------------------------------------
+## Cada toque na bola leva o PÉ até ela de verdade: uma IK de perna (quadril →
+## tornozelo) é misturada por cima da animação só no instante do toque.
+
+var _ik := {}           # lado (+1 direito, -1 esquerdo) -> SkeletonIK3D
+var _foot_bones := {}   # lado -> índice do osso do tornozelo
+var _hip_bones := {}    # lado -> índice do osso da coxa
+
+
+func _build_foot_ik() -> void:
+	for side in [1.0, -1.0]:
+		var prefix := "Right" if side > 0.0 else "Left"
+		var foot := skeleton.find_bone(prefix + "Foot")
+		var hip := skeleton.find_bone(prefix + "UpperLeg")
+		if foot < 0 or hip < 0:
+			continue
+		var ik := SkeletonIK3D.new()
+		ik.name = prefix + "FootIK"
+		ik.root_bone = prefix + "UpperLeg"
+		ik.tip_bone = prefix + "Foot"
+		ik.use_magnet = true
+		ik.override_tip_basis = false
+		ik.max_iterations = 8
+		ik.influence = 0.0
+		skeleton.add_child(ik)
+		ik.start()
+		ik.active = false
+		_ik[side] = ik
+		_foot_bones[side] = foot
+		_hip_bones[side] = hip
+
+
+## Leva o tornozelo do pé [param side] até [param world_pos] com peso 0..1
+## (0 = só a animação). [param forward] orienta o joelho (para a frente).
+func set_foot_target(side: float, world_pos: Vector3, weight: float, forward: Vector3) -> void:
+	if not _ik.has(side):
+		return
+	var ik: SkeletonIK3D = _ik[side]
+	ik.influence = clampf(weight, 0.0, 1.0)
+	ik.active = weight > 0.001 # desligada não custa nada
+	if weight <= 0.001:
+		return
+	ik.target = Transform3D(Basis(), world_pos)
+	var hip := skeleton.global_transform * skeleton.get_bone_global_pose(_hip_bones[side]).origin
+	ik.magnet = hip + forward * 0.8 + Vector3.DOWN * 0.35
+
+
+## Posição (mundo) do tornozelo na ANIMAÇÃO (antes da IK).
+func get_ankle_position(side: float) -> Vector3:
+	if not _foot_bones.has(side):
+		return global_position
+	return skeleton.global_transform * skeleton.get_bone_global_pose(_foot_bones[side]).origin
+
+
+func get_hip_position(side: float) -> Vector3:
+	if not _hip_bones.has(side):
+		return global_position + Vector3.UP * 0.8
+	return skeleton.global_transform * skeleton.get_bone_global_pose(_hip_bones[side]).origin
+
+
+func has_foot_ik() -> bool:
+	return not _ik.is_empty()
 
 
 const RIVAL_SKIN := Color(0.93, 0.78, 0.66)

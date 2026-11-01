@@ -367,6 +367,13 @@ func _is_best_chaser() -> bool:
 			continue
 		if _chase_score(mate) < mine:
 			return false
+		# O jogador que VOCÊ controla tem prioridade na bola: a IA do meu time
+		# não vai "roubar" a bola dele; só vai se ele estiver bem mais longe.
+		if mate.is_human and _chase_score(mate) < mine + 3.5:
+			return false
+		if mate.is_human and player.ball.last_toucher == mate \
+				and mate.global_position.distance_to(player.ball.global_position) < 3.0:
+			return false
 	return true
 
 

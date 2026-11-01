@@ -216,12 +216,17 @@ func physics_update(delta: float) -> void:
 			playback.travel(wanted)
 		# Arrancada: parado → correndo forte.
 		elif current == &"Locomotion" and _prev_speed < 0.6 and player.intent.sprint \
-				and player.intent.move.length() > 0.7 and _has_state(&"Burst"):
+				and player.intent.move.length() > 0.7 and _has_state(&"Burst") \
+				and not player.ball_control.has_ball():
 			playback.travel(&"Burst")
 	elif _action_kind in DOWN_ACTIONS:
 		_update_down()
 	elif current == &"Burst":
-		if player.state != Player.State.MOVE or player.intent.move.length() < 0.3:
+		# Arrancada: sai no fim do clipe (antes congelava no último quadro e o
+		# jogador "desfilava" deslizando nessa pose), ao parar ou com a bola.
+		if player.state != Player.State.MOVE or player.intent.move.length() < 0.3 \
+				or player.ball_control.has_ball() \
+				or playback.get_current_play_position() >= playback.get_current_length() - 0.3:
 			playback.travel(wanted)
 	elif current in [&"Fallen", &"GetUpFront", &"GetUpBack"]:
 		if player.state == Player.State.MOVE:

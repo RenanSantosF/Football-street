@@ -78,6 +78,7 @@ func _test_turn() -> void:
 		t0 = 0
 
 
+var _aim_v := Vector3.ZERO
 func _test_aim() -> void:
 	if t0 == 0:
 		t0 = f
@@ -90,8 +91,10 @@ func _test_aim() -> void:
 	if t == 40:
 		Input.action_release("shoot")
 		Input.action_release("move_up")
+	if _aim_v == Vector3.ZERO and t > 10 and ball.possessor == null and ball.linear_velocity.length() > 3.0:
+		_aim_v = ball.linear_velocity # logo depois do chute (antes de bater no meio-fio)
 	if t == 80:
-		var v := ball.linear_velocity
+		var v := _aim_v
 		var dir := Vector3(v.x, 0, v.z).normalized()
 		results["chute_mirado_dir"] = dir
 		results["chute_segue_mira"] = dir.dot(Vector3(0, 0, -1)) > 0.9
