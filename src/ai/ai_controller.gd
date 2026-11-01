@@ -166,6 +166,12 @@ func _defend(carrier: Player) -> void:
 			_tackle_cooldown = _rng.randf_range(1.0, 2.0)
 			if _rng.randf() < 0.45:
 				_set_action(PlayerIntent.Action.SHOOT, 0.0, Vector3.ZERO, null)
+		elif d < Player.SLIDE_RANGE - 0.4 and d > 1.8 and _tackle_cooldown <= 0.0:
+			# Carrinho: mais provável quando o atacante se aproxima do gol.
+			_tackle_cooldown = _rng.randf_range(1.5, 3.0)
+			var danger := 1.0 - clampf(carrier.global_position.distance_to(own_goal) / 20.0, 0.0, 1.0)
+			if _rng.randf() < 0.12 + 0.25 * danger:
+				_set_action(PlayerIntent.Action.SHOOT, 0.0, Vector3.ZERO, null)
 	else:
 		# Marcar o outro atacante pelo lado do gol.
 		var mark: Player = null

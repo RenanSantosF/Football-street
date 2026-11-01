@@ -14,6 +14,8 @@ var _stats := {"goals": 0, "outs_side": 0, "outs_end": 0, "possessions": 0,
 var _max_ball_speed := 0.0
 var _last_touch := ""
 var _out_causes := {}
+var _actions := {}
+var _anim_states := {}
 var _ball_escaped := false
 var _stuck_time := 0.0
 var _max_stuck := 0.0
@@ -43,6 +45,7 @@ func _ready() -> void:
 	await get_tree().physics_frame
 	for p in _mm.players:
 		p.ball_touched.connect(func(kind): _last_touch = String(kind))
+		p.action_started.connect(func(kind): _actions[kind] = _actions.get(kind, 0) + 1)
 
 
 func _on_kick(_k: Node, kind: StringName, _p: float) -> void:
@@ -77,6 +80,11 @@ func _physics_process(delta: float) -> void:
 	else:
 		_hold_owner = _ball.possessor
 		_hold_time = 0.0
+	if int(_time * 60.0) % 6 == 0:
+		for p in _mm.players:
+			if p.anim_controller.is_active():
+				var st: StringName = p.anim_controller.playback.get_current_node()
+				_anim_states[st] = _anim_states.get(st, 0) + 1
 	if int(_time * 60.0) % 1800 == 0:
 		print("t=%5.1fs placar %d x %d estado=%d bola=(%.1f, %.2f, %.1f) posse=%s" % [
 			_time, _mm.score[0], _mm.score[1], _mm.state, bp.x, bp.y, bp.z,
@@ -84,6 +92,8 @@ func _physics_process(delta: float) -> void:
 	if _time >= SECONDS:
 		print("RESULTADO: ", _stats)
 		print("último toque antes das laterais: ", _out_causes)
+		print("ações: ", _actions)
+		print("estados de animação (amostras): ", _anim_states)
 		print("vel. máx bola: %.1f m/s | bola escapou do mundo: %s | maior tempo bola parada sem dono: %.1fs" % [
 			_max_ball_speed, _ball_escaped, _max_stuck])
 		print("maior posse contínua: %.1fs (%s)" % [_max_hold, _max_hold_name])

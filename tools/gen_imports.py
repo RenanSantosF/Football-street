@@ -60,22 +60,63 @@ def mixamo_names(prefix="mixamorig_"):
         m[f"{side}Foot"]=f"{side}Foot"; m[f"{side}Toes"]=f"{side}ToeBase"
     return {k: prefix + v for k, v in m.items()}
 
-## Arquivos do "Soccer Game Pack" do Mixamo (nomes exatos do download).
-SOCCER_PACK = [
-    "fallen idle", "goalkeeper body block (2)", "goalkeeper body block (3)", "goalkeeper body block",
-    "goalkeeper catch (2)", "goalkeeper catch (3)", "goalkeeper catch (4)", "goalkeeper catch",
-    "goalkeeper directing (2)", "goalkeeper directing", "goalkeeper diving save (2)",
-    "goalkeeper diving save", "goalkeeper drop kick", "goalkeeper idle (2)", "goalkeeper idle",
-    "goalkeeper miss", "goalkeeper overhand throw", "goalkeeper pass", "goalkeeper placing ball (2)",
-    "goalkeeper placing ball", "goalkeeper scoop", "goalkeeper sidestep (2)", "goalkeeper sidestep",
-    "header soccerball (2)", "header soccerball", "jog backward diagonal (2)", "jog backward diagonal",
-    "jog backward", "jog forward diagonal (2)", "jog forward diagonal", "jog forward",
-    "jog strafe left", "jog strafe right", "kick soccerball (2)", "kick soccerball",
-    "kick up soccerball", "kneeing soccerball (2)", "kneeing soccerball", "offensive idle",
-    "receive soccerball", "scissor kick", "soccer penalty kick", "soccer tackle (2)",
-    "soccer tackle (3)", "soccer tackle", "soccer trip", "stall soccerball (2)",
-    "stall soccerball (3)", "stall soccerball (4)", "stall soccerball", "standing up",
-    "strike foward jog", "throw in", "transition",
+## Animações do Mixamo enviadas pelo autor do projeto (nomes exatos dos arquivos).
+USER_PACK = [
+    # pedidos ao autor (ainda não enviados; a importação já fica pronta)
+    'Standing Up', 'Goalkeeper Diving Save',
+    'Change Direction',
+    'Defeated',
+    'Dribble',
+    'Fallen Idle caído depois da falta',
+    'Goalkeeper Catch',
+    'Goalkeeper Catch (1)',
+    'Goalkeeper Pass',
+    'Goalkeeper Placing Ball',
+    'Goalkeeper Placing Ball (1)',
+    'Header',
+    'Header Soccerball',
+    'Idle To Sprint',
+    'Jog Forward',
+    'Jog Forward Diagonal',
+    'Jog Forward Diagonal (1)',
+    'Jog Strafe Left',
+    'Jog Strafe Right',
+    'Kick Soccerball',
+    'Kick Up Soccerball',
+    'Kneeing Soccerball',
+    'Left Strafe',
+    'Left Strafe Walking',
+    'Offensive Idle',
+    'Offensive Idle aquecimento',
+    'Receive',
+    'Receive Soccerball',
+    'Right Strafe',
+    'Run Backward',
+    'Run Forward triste depois de errar correndo triste',
+    'Running Jump pulando fugindo do carrinho',
+    'Samba Dancing',
+    'Scissor Kick',
+    'Slow Jog',
+    'Soccer Header',
+    'Soccer Idle',
+    'Soccer Pass toque ',
+    'Soccer Penalty Kick',
+    'Soccer Spin',
+    'Soccer Tackle',
+    'Soccer Tackle (1)',
+    'Soccer Tackle (2)',
+    'Soccer Trip',
+    'Sprint',
+    'Sprint Turn',
+    'Stall Soccerball',
+    'Stall Soccerball (1)',
+    'Standard Run',
+    'Strafe',
+    'Strike Foward Jog',
+    'Transition',
+    'Victory',
+    'Victory Idle',
+    'Walk Strafe Left',
 ]
 
 
@@ -139,6 +180,8 @@ if __name__ == "__main__":
     for h in ("Hair_SimpleParted", "Hair_Buzzed", "Hair_Long"):
         write(f"assets/characters/hair/{h}.gltf", "Armature/Skeleton3D", ue, False)
     write("assets/animations/ual/AnimationLibrary_Godot_Standard.gltf", "Rig/Skeleton3D", rigify_names(), True)
-    os.makedirs("assets/animations/mixamo/soccer_pack", exist_ok=True)
-    for clip in SOCCER_PACK:
-        write(f"assets/animations/mixamo/soccer_pack/{clip}.fbx", "Skeleton3D", mixamo_names(), True)
+    os.makedirs("assets/animations/mixamo/pack", exist_ok=True)
+    for clip in USER_PACK:
+        write(f"assets/animations/mixamo/pack/{clip}.fbx", "Skeleton3D", mixamo_names(), True)
+    # Personagem adolescente (malha + textura), rigado no Mixamo.
+    write("assets/characters/teen_01/teen_01.fbx", "Skeleton3D", mixamo_names(), True)

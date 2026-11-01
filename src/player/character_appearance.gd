@@ -15,6 +15,14 @@ extends Resource
 @export var shoes_color := Color(0.9, 0.9, 0.9)
 @export_range(0.0, 1.0) var dirt := 0.3
 @export_range(0.9, 1.08) var height_scale := 1.0
+## Corpo base (HumanoidCharacter.BASES); vazio = padrão.
+@export var base_id: StringName = &""
+## -1 franzino … +1 mais forte (ombros/tronco).
+@export_range(-1.0, 1.0) var build := 0.0
+## Joga descalço (comum na rua).
+@export var barefoot := false
+## Mantém a bermuda original da textura do corpo base (ex.: jeans).
+@export var keep_original_shorts := false
 
 ## Tons de pele variados (brasileiros), do mais claro ao mais escuro.
 const SKIN_TONES: Array[Color] = [
@@ -52,4 +60,7 @@ static func random_for_team(team: int, rng: RandomNumberGenerator) -> CharacterA
 	a.shoes_color = SHOE_COLORS[rng.randi_range(0, SHOE_COLORS.size() - 1)]
 	a.dirt = rng.randf_range(0.15, 0.6)
 	a.height_scale = rng.randf_range(0.94, 1.05)
+	a.build = rng.randf_range(-1.0, 1.0)
+	a.barefoot = rng.randf() < 0.25
+	a.keep_original_shorts = rng.randf() < 0.3
 	return a

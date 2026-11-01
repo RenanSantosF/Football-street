@@ -41,6 +41,8 @@ var _touch_wait := 0.0
 ## O último toque saiu por tempo esgotado (nenhum pé chegou perto)?
 var last_touch_forced := false
 var _rng := RandomNumberGenerator.new()
+## Testes/laboratórios: força o resultado do carrinho (-1 = normal).
+var debug_slide_trip := -1.0
 
 
 func setup(p: Player, b: Ball) -> void:
@@ -101,11 +103,11 @@ func can_start_kick_on_run() -> bool:
 	return (ball.flat_velocity() - player.get_flat_velocity()).dot(dir) < 0.8
 
 
-func find_tackle_target() -> Player:
+func find_tackle_target(max_range := TACKLE_RANGE) -> Player:
 	var carrier := ball.possessor
 	if carrier == null or carrier.team == player.team:
 		return null
-	if _flat(carrier.global_position - player.global_position).length() > TACKLE_RANGE:
+	if _flat(carrier.global_position - player.global_position).length() > max_range:
 		return null
 	return carrier
 
@@ -156,7 +158,7 @@ func _try_gain_control() -> void:
 	var settle := pv + player.facing * (0.5 if pv.length() > 1.0 else 0.0)
 	ball.touch(settle, player)
 	_since_touch = 0.0
-	player.notify_touch(&"receive")
+	player.notify_touch(&"gk_catch" if gk and rel_speed > 7.0 else &"receive")
 
 
 func _deflect_save(bv: Vector3) -> void:
@@ -254,7 +256,7 @@ func _do_touch(dir: Vector3, speed: float, lateral: float) -> void:
 	# "lead" = quanto a bola se afasta à frente do ponto do toque.
 	var lead := lerpf(0.6, 1.1, clampf(speed / player.jog_speed, 0.0, 1.0))
 	if player.intent.sprint and speed > player.jog_speed * 0.8:
-		lead = lerpf(1.1, 1.6, clampf((speed - player.jog_speed) / (player.sprint_speed - player.jog_speed), 0.0, 1.0))
+		lead = lerpf(0.9, 1.25, clampf((speed - player.jog_speed) / (player.sprint_speed - player.jog_speed), 0.0, 1.0))
 	lead *= _rng.randf_range(0.85, 1.15)
 	# Perto da lateral ou do fundo: toque curto e sem empurrar a bola para fora.
 	var bp := ball.global_position
@@ -371,6 +373,59 @@ func execute_tackle() -> bool:
 	carrier.stumble(0.45)
 	GameEvents.ball_kicked.emit(player, &"tackle", 0.5)
 	return true
+
+
+## Carrinho: no instante em que o pé chega na bola. Se ela estiver ao alcance
+## do pé que desliza, é desviada; quem conduzia tropeça (ou já tinha pulado).
+func execute_slide_tackle() -> bool:
+	if ball == null or not ball.in_play:
+		return false
+	var off := ball_offset()
+	if off.length() > 1.25 or off.dot(player.facing) < -0.1 or ball.global_position.y > 0.6:
+		return false
+	var carrier := ball.possessor
+	if carrier != null and carrier.team != player.team and carrier.is_jumping():
+		return false # pulou o carrinho
+	if debug_slide_trip < 0.0 and _rng.randf() > 0.8:
+		return false
+	var side := player.facing.cross(Vector3.UP) * (1.0 if _rng.randf() > 0.5 else -1.0)
+	var dir := (player.facing * 0.6 + side).normalized()
+	ball.kick(dir * _rng.randf_range(3.5, 6.0) + Vector3.UP * 0.8, Vector3.ZERO, player, 0.4)
+	if carrier != null and carrier != player and carrier.team != player.team:
+		var trip_chance := 0.55 if debug_slide_trip < 0.0 else debug_slide_trip
+		if _rng.randf() < trip_chance:
+			carrier.trip()
+		else:
+			carrier.stumble(0.5)
+	player.notify_touch(&"slide")
+	GameEvents.ball_kicked.emit(player, &"tackle", 0.8)
+	return true
+
+
+## Durante um drible com o corpo (giro): a bola acompanha o pé de perto.
+## Não é presa: recebe uma velocidade que a puxa para junto do pé.
+func carry_during_skill(_delta: float) -> void:
+	if not has_ball():
+		return
+	var target := player.global_position + player.facing * 0.35
+	var to := _flat(target - ball.global_position)
+	if to.length() > 1.4:
+		return
+	ball.touch(_flat(player.velocity) + to * 6.0, player)
+
+
+func release_after_skill() -> void:
+	if has_ball():
+		ball.touch(_flat(player.velocity) + player.facing * 1.2, player)
+		_since_touch = 0.0
+
+
+## Empurra a bola à frente (ex.: ao pular um carrinho).
+func push_ahead(mult: float) -> void:
+	if has_ball():
+		var v := _flat(player.velocity)
+		ball.touch(player.facing * maxf(v.length(), 3.0) * mult, player)
+		_since_touch = 0.0
 
 
 func pick_pass_target(dir: Vector3) -> Player:

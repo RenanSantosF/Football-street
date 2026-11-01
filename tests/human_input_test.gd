@@ -38,10 +38,6 @@ func _physics_process(_delta: float) -> void:
 	if _frame == 2:
 		me.ball_touched.connect(func(kind): if kind == &"dribble_touch":
 			_touches += 1
-			var off := me.ball.global_position - me.global_position
-			var fs := []
-			for ft in me.get_foot_positions(): fs.append("%.2f/%.2f" % [(ft - me.global_position).dot(me.facing), ft.y])
-			print("toque f%d: bola along=%.2f lat=%.2f v=%.1f feet(along/y)=%s" % [_frame, off.dot(me.facing), off.dot(me.facing.cross(Vector3.UP)), me.get_horizontal_speed(), fs])
 			if me.ball_control.last_touch_forced: _timeout_touches += 1)
 	# 0-1,2s: saída (congelado). Depois: ir até a bola e conduzir para +X.
 	if _frame == 80:
@@ -50,8 +46,6 @@ func _physics_process(_delta: float) -> void:
 		if me.ball_control.has_ball():
 			_had_ball_frames += 1
 			_dist_samples.append(me.ball_control.ball_distance())
-	if _frame >= 140 and _frame <= 240 and _frame % 5 == 0:
-		print("  f%d st=%d has=%s dist=%.2f cankick=%s run=%s buf=%.2f/%d tc=%.2f x=%.1f" % [_frame, me.state, me.ball_control.has_ball(), me.ball_control.ball_distance(), me.ball_control.can_kick(), me.ball_control.can_start_kick_on_run(), me._buffer_timer, me._buffer_action, me.time_to_contact(), me.global_position.x])
 	if _frame == 120:
 		Input.action_press("sprint")
 	if _frame == 150:

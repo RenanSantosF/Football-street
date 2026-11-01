@@ -147,6 +147,14 @@ func _on_goal(team: int) -> void:
 	ball.release()
 	GameEvents.goal_scored.emit(team, ball.last_toucher)
 	GameEvents.score_changed.emit(score[0], score[1])
+	# Quem marcou comemora (samba ou vitória), os companheiros vibram e o
+	# time que sofreu lamenta.
+	var scorer := ball.last_toucher
+	for p in players:
+		if p.team == team:
+			p.play_reaction(&"samba" if p == scorer and _rng.randf() < 0.5 else &"celebrate")
+		else:
+			p.play_reaction(&"defeated")
 	GameEvents.match_message.emit("GOOOL!", 2.5)
 	_state_timer = 3.0
 	_set_state(MatchState.GOAL)

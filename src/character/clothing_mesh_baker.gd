@@ -1,32 +1,49 @@
 class_name ClothingMeshBaker
 extends RefCounted
 ## Gera, uma única vez por malha base, uma cópia com MÁSCARAS DE ROUPA nas
-## cores de vértice, calculadas na pose de repouso a partir das posições dos
-## ossos (independe de UV e funciona para qualquer corpo humanoide):
-##   R = camiseta   G = bermuda   B = tênis   A = meia
-## O shader character_skin usa essas máscaras para pintar e "inflar"
-## levemente o tecido (bermuda folgada, camiseta). Toda a variedade de roupas
-## sai de parâmetros de material: nenhum modelo novo por jogador.
+## cores de vértice:
+##   R = camiseta   G = bermuda   B = tênis (1,0) ou meia (0,5)   A = cabeça
+##
+## A classificação usa os PESOS DE SKIN de cada vértice (a que ossos ele
+## pertence) e, nos membros, a posição ao longo do osso. Assim funciona com
+## qualquer corpo humanoide e qualquer pose de descanso (T, A...).
+## Toda a variedade de roupas sai de parâmetros de material.
+
+## Osso -> categoria. Para membros: [categoria, início, fim] ao longo do osso
+## (0 = começo do osso, 1 = começo do osso filho).
+const TORSO := [&"Spine", &"Chest", &"UpperChest", &"LeftShoulder", &"RightShoulder"]
+const HEAD := [&"Head", &"LeftEye", &"RightEye", &"Jaw"]
+const SLEEVE_END := 0.45      # manga curta: até 45% do braço
+const SHORTS_END := 0.95      # bermuda: até a altura do joelho (cobre a barra do jeans)
+const SOCK_START := 0.72      # meia: último trecho da canela
+const SHOE_START := 0.93
 
 static var _cache := {}
 
 
-static func bake(mesh: ArrayMesh, skeleton: Skeleton3D) -> ArrayMesh:
+static func bake(mesh: ArrayMesh, skeleton: Skeleton3D, skin: Skin = null) -> ArrayMesh:
 	var key := mesh.get_instance_id()
 	if _cache.has(key):
 		return _cache[key]
-	var lm := _landmarks(skeleton)
 	var out := ArrayMesh.new()
+	var bind_names := _bind_names(skin, skeleton)
+	var seg := _segments(skeleton)
 	for s in mesh.get_surface_count():
 		var arrays := mesh.surface_get_arrays(s)
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var bones = arrays[Mesh.ARRAY_BONES]
+		var weights = arrays[Mesh.ARRAY_WEIGHTS]
+		var per := 4
+		if bones != null and verts.size() > 0 and bones.size() >= verts.size() * 8:
+			per = 8
 		var colors := PackedColorArray()
 		colors.resize(verts.size())
 		for i in verts.size():
-			colors[i] = _mask(verts[i], lm)
+			colors[i] = _mask(verts[i], i, per, bones, weights, bind_names, seg)
 		arrays[Mesh.ARRAY_COLOR] = colors
-		var blend_shapes := mesh.surface_get_blend_shape_arrays(s)
-		out.add_surface_from_arrays(mesh.surface_get_primitive_type(s), arrays, blend_shapes)
+		var flags := Mesh.ARRAY_FLAG_USE_8_BONE_WEIGHTS if per == 8 else 0
+		out.add_surface_from_arrays(mesh.surface_get_primitive_type(s), arrays,
+			mesh.surface_get_blend_shape_arrays(s), {}, flags)
 		out.surface_set_material(s, mesh.surface_get_material(s))
 		out.surface_set_name(s, mesh.surface_get_name(s))
 	out.blend_shape_mode = mesh.blend_shape_mode
@@ -34,52 +51,82 @@ static func bake(mesh: ArrayMesh, skeleton: Skeleton3D) -> ArrayMesh:
 	return out
 
 
-static func _landmarks(sk: Skeleton3D) -> Dictionary:
-	var p := func(bone: String) -> Vector3:
-		var idx := sk.find_bone(bone)
-		return sk.get_bone_global_rest(idx).origin if idx >= 0 else Vector3.ZERO
-	var hips: Vector3 = p.call("Hips")
-	var knee: Vector3 = p.call("LeftLowerLeg")
-	var ankle: Vector3 = p.call("LeftFoot")
-	var neck: Vector3 = p.call("Neck")
-	var shoulder: Vector3 = p.call("LeftUpperArm")
-	var elbow: Vector3 = p.call("LeftLowerArm")
-	return {
-		"hips_y": hips.y,
-		"knee_y": knee.y,
-		"ankle_y": ankle.y,
-		"neck_y": neck.y,
-		"shoulder_y": shoulder.y,
-		"shoulder_x": absf(shoulder.x),
-		"elbow_x": absf(elbow.x),
-		"torso_half": absf(shoulder.x) * 0.9,
-	}
+## Índice de bind (usado em ARRAY_BONES) -> nome do osso.
+static func _bind_names(skin: Skin, skeleton: Skeleton3D) -> Array[StringName]:
+	var names: Array[StringName] = []
+	if skin != null:
+		for i in skin.get_bind_count():
+			var n := skin.get_bind_name(i)
+			if n == &"" and skin.get_bind_bone(i) >= 0:
+				n = skeleton.get_bone_name(skin.get_bind_bone(i))
+			names.append(n)
+	else:
+		for i in skeleton.get_bone_count():
+			names.append(StringName(skeleton.get_bone_name(i)))
+	return names
 
 
-static func _mask(v: Vector3, lm: Dictionary) -> Color:
+## Segmentos dos membros (início/fim na pose de descanso) para medir a
+## posição de um vértice ao longo do osso.
+static func _segments(sk: Skeleton3D) -> Dictionary:
+	var pos := func(bone: String) -> Vector3:
+		var i := sk.find_bone(bone)
+		return sk.get_bone_global_rest(i).origin if i >= 0 else Vector3.ZERO
+	var d := {}
+	for side in ["Left", "Right"]:
+		d[StringName(side + "UpperArm")] = [pos.call(side + "UpperArm"), pos.call(side + "LowerArm")]
+		d[StringName(side + "UpperLeg")] = [pos.call(side + "UpperLeg"), pos.call(side + "LowerLeg")]
+		d[StringName(side + "LowerLeg")] = [pos.call(side + "LowerLeg"), pos.call(side + "Foot")]
+	d[&"Neck"] = [pos.call("Neck"), pos.call("Head")]
+	return d
+
+
+static func _along(v: Vector3, seg: Array) -> float:
+	var a: Vector3 = seg[0]
+	var b: Vector3 = seg[1]
+	var ab := b - a
+	var l2 := ab.length_squared()
+	return 0.0 if l2 < 1e-6 else clampf((v - a).dot(ab) / l2, -0.5, 1.5)
+
+
+static func _mask(v: Vector3, i: int, per: int, bones, weights, names: Array[StringName], seg: Dictionary) -> Color:
 	var shirt := 0.0
 	var shorts := 0.0
 	var shoes := 0.0
 	var socks := 0.0
-	var ax := absf(v.x)
-	var is_arm: bool = ax > lm.torso_half and v.y > lm.shoulder_y - 0.2
-	if is_arm:
-		# Manga curta: do ombro até ~40% do braço.
-		var sleeve_end: float = lm.shoulder_x + (lm.elbow_x - lm.shoulder_x) * 0.42
-		if ax < sleeve_end:
-			shirt = 1.0
-	else:
-		# Gola: cobre ombros/trapézio; na frente desce um pouco (gola careca).
-		var collar_y: float = lm.neck_y + 0.03 if ax > 0.08 else lm.neck_y - 0.03
-		if v.z > 0.0 and ax < 0.08:
-			collar_y = lm.neck_y - 0.06
-		if v.y > lm.hips_y - 0.02 and v.y < collar_y:
-			shirt = 1.0
-		# Bermuda: da cintura até um palmo acima do joelho... um pouco abaixo (bermuda de rua).
-		if v.y < lm.hips_y + 0.1 and v.y > lm.knee_y + 0.02:
-			shorts = 1.0
-		if v.y < lm.ankle_y + 0.035:
-			shoes = 1.0
-		elif v.y < lm.ankle_y + 0.13:
-			socks = 1.0
-	return Color(shirt, shorts, shoes, socks)
+	var head := 0.0
+	if bones == null or weights == null:
+		return Color(0, 0, 0, 0)
+	for k in per:
+		var w: float = weights[i * per + k]
+		if w <= 0.0:
+			continue
+		var bi: int = bones[i * per + k]
+		if bi < 0 or bi >= names.size():
+			continue
+		var n: StringName = names[bi]
+		if n in TORSO:
+			shirt += w
+		elif n in HEAD:
+			head += w
+		elif n == &"Neck":
+			if _along(v, seg[&"Neck"]) > 0.55:
+				head += w
+		elif n == &"LeftUpperArm" or n == &"RightUpperArm":
+			if _along(v, seg[n]) < SLEEVE_END:
+				shirt += w
+		elif n == &"Hips":
+			shorts += w
+		elif n == &"LeftUpperLeg" or n == &"RightUpperLeg":
+			if _along(v, seg[n]) < SHORTS_END:
+				shorts += w
+		elif n == &"LeftLowerLeg" or n == &"RightLowerLeg":
+			var t := _along(v, seg[n])
+			if t > SHOE_START:
+				shoes += w
+			elif t > SOCK_START:
+				socks += w
+		elif String(n).ends_with("Foot") or String(n).ends_with("Toes"):
+			shoes += w
+	var b := 1.0 if shoes > 0.5 else (0.5 if socks > 0.5 else 0.0)
+	return Color(1.0 if shirt > 0.5 else 0.0, 1.0 if shorts > 0.5 else 0.0, b, 1.0 if head > 0.5 else 0.0)

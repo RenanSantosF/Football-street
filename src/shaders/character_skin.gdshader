@@ -1,6 +1,6 @@
 // Pele + roupa do personagem humanoide.
 // As máscaras de roupa vêm das cores de vértice (ClothingMeshBaker):
-//   R camiseta, G bermuda, B tênis, A meia.
+//   R camiseta, G bermuda, B tênis (1,0) / meia (0,5), A cabeça.
 // A textura do modelo base vira só "detalhe" (luminância) multiplicado pela
 // cor de pele escolhida: um único conjunto de texturas serve para todos os
 // tons de pele. O relevo muscular do normal map é atenuado (corpo juvenil).
@@ -29,8 +29,9 @@ uniform float shoes_inflate = 0.02;
 
 
 void vertex() {
+	float shoes_v = smoothstep(0.7, 0.9, COLOR.b);
 	float inflate = max(max(COLOR.r * has_shirt * shirt_inflate, COLOR.g * shorts_inflate),
-		max(COLOR.b * shoes_inflate, COLOR.a * 0.002));
+		shoes_v * shoes_inflate);
 	VERTEX += NORMAL * inflate;
 }
 
@@ -41,8 +42,8 @@ void fragment() {
 
 	float shirt_m = smoothstep(0.35, 0.65, COLOR.r) * has_shirt;
 	float shorts_m = smoothstep(0.35, 0.65, COLOR.g);
-	float shoes_m = smoothstep(0.35, 0.65, COLOR.b);
-	float socks_m = smoothstep(0.35, 0.65, COLOR.a);
+	float shoes_m = smoothstep(0.7, 0.85, COLOR.b);
+	float socks_m = smoothstep(0.3, 0.45, COLOR.b) * (1.0 - shoes_m);
 	float cloth = max(max(shirt_m, shorts_m), max(shoes_m, socks_m));
 
 	// Trama do tecido e sujeira (mais nas partes de baixo e nos tênis).

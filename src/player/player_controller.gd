@@ -19,7 +19,17 @@ const BUFFER_TIME := 0.3
 const BUFFER_TIME_WITH_BALL := 1.1
 const LONG_PASS_POWER := 0.55
 ## Quanto a preparação do chute pode esperar a bola chegar ao pé.
-const MAX_CONTACT_WAIT := 0.3
+const MAX_CONTACT_WAIT := 0.45
+## Marcação: com o adversário conduzindo a até esta distância, o jogador
+## encara quem tem a bola e anda de lado/de costas.
+const MARK_RANGE := 5.5
+## Carrinho: alcance (m) e chance do conduzidor pular por cima.
+const SLIDE_RANGE := 3.2
+const POKE_RANGE := 1.3
+const DODGE_CHANCE_AI := 0.35
+const DODGE_CHANCE_HUMAN := 0.25
+## Tempo caído antes de levantar (quando não há clipe de levantar).
+const DOWN_TIME := 0.7
 
 @export var team: int = Team.SHIRTS
 @export var role: Role = Role.FIELD
@@ -64,6 +74,14 @@ var _buffer_aim := Vector3.ZERO
 var _buffer_target: Node3D = null
 var _buffer_timer := 0.0
 var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+var _marking := false
+var _action_logical: StringName = &""
+var _action_seek := 0.0
+var _jump_timer := 0.0
+var _reaction: StringName = &""
+var _rng := RandomNumberGenerator.new()
+## Testes/laboratórios: força a chance de pular carrinhos (-1 = normal).
+var debug_dodge_chance := -1.0
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -75,6 +93,7 @@ var _gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity", 
 func setup(mm: MatchManager, b: Ball) -> void:
 	match_manager = mm
 	ball = b
+	_rng.randomize()
 	ball_control.setup(self, b)
 	if appearance == null:
 		appearance = CharacterAppearance.new()
@@ -99,6 +118,8 @@ func _physics_process(delta: float) -> void:
 	if controller != null:
 		controller.fill_intent(self, intent, delta)
 	_burst_timer = maxf(_burst_timer - delta, 0.0)
+	_jump_timer = maxf(_jump_timer - delta, 0.0)
+	_marking = _compute_marking()
 
 	match state:
 		State.MOVE:
@@ -134,6 +155,8 @@ func _update_move(delta: float) -> void:
 		max_speed *= ball_speed_factor
 	if _burst_timer > 0.0:
 		max_speed *= 1.15
+	if _marking:
+		max_speed = minf(max_speed, jog_speed * 0.85)
 	var desired := input * max_speed
 	if has_ball and _has_pending_kick() and not ball_control.can_kick():
 		# Chute/passe pedido com a bola um pouco à frente: ir até ela para finalizar.
@@ -161,6 +184,8 @@ func _update_facing(delta: float) -> void:
 	var target_dir := facing
 	if state == State.ACTION and _action_face != Vector3.ZERO:
 		target_dir = _action_face
+	elif _marking and state == State.MOVE:
+		target_dir = _flat_dir_to(_mark_focus())
 	elif hv.length() > 0.4:
 		target_dir = hv.normalized()
 	elif intent.move.length() > 0.2:
@@ -213,16 +238,27 @@ func _update_actions(delta: float) -> void:
 			if ball_control.can_kick() or ball_control.can_start_kick_on_run():
 				_start_kick(_buffer_action, _buffer_power, _buffer_aim, _buffer_target)
 				done = true
-			elif _buffer_action == PlayerIntent.Action.SHOOT and ball_control.find_tackle_target() != null:
-				_begin_action(&"tackle", 0.15, 0.45, 0.0, _buffer_aim, null, 0.8)
-				var t := ball_control.find_tackle_target()
-				_action_face = _flat_dir_to(t.global_position)
-				done = true
+			elif _buffer_action == PlayerIntent.Action.SHOOT:
+				var t := ball_control.find_tackle_target(SLIDE_RANGE)
+				if t != null:
+					var d := _flat_dir_to(t.global_position)
+					if global_position.distance_to(t.global_position) <= POKE_RANGE \
+							or not AnimationCatalog.has_clip(&"tackle"):
+						_begin_action(&"tackle", 0.15, 0.45, 0.0, _buffer_aim, null, 0.8)
+						_action_face = d
+					else:
+						_start_slide(t, d)
+					done = true
 		PlayerIntent.Action.DRIBBLE:
 			if ball_control.has_ball() and ball_control.can_kick():
 				var aim := _buffer_aim if _buffer_aim.length() > 0.2 else facing
-				_begin_action(&"dribble", 0.06, 0.32, 1.0, aim, null, 1.0)
-				_action_face = Vector3(aim.x, 0.0, aim.z).normalized()
+				if AnimationCatalog.has_clip(&"spin") and Vector3(aim.x, 0.0, aim.z).normalized().dot(facing) > 0.3:
+					# Giro inteiro: a bola é solta no fim (contato do clipe).
+					_start_root_action(&"spin", &"spin",
+						AnimationCatalog.contact_time(&"spin") / PlayerAnimationController.ACTION_SPEED, facing)
+				else:
+					_begin_action(&"dribble", 0.06, 0.32, 1.0, aim, null, 1.0)
+					_action_face = Vector3(aim.x, 0.0, aim.z).normalized()
 			done = true
 	if done:
 		_buffer_timer = 0.0
@@ -270,13 +306,27 @@ func _begin_action(kind: StringName, contact: float, length: float, power: float
 	_action_target = target
 	_action_move_factor = move_factor
 	_action_face = Vector3.ZERO
+	_action_logical = &""
 	action_started.emit(kind)
 
 
 func _update_action(delta: float) -> void:
 	_action_time += delta
 	var hv := get_flat_velocity()
-	if _action_kind == &"dribble":
+	if _action_logical != &"":
+		# Root motion: o corpo segue a curva de deslocamento gravada no clipe.
+		var speed := PlayerAnimationController.ACTION_SPEED
+		var anim_t := _action_seek + _action_time * speed
+		var rv := AnimationCatalog.root_motion_velocity(_action_logical, anim_t)
+		var hips_h := 0.85
+		if visual != null and visual.has_method("get_hips_height"):
+			hips_h = visual.call("get_hips_height")
+		var left := Vector3.UP.cross(facing)
+		var target := (facing * rv.z + left * rv.x) * hips_h * speed
+		hv = hv.move_toward(target, acceleration * 3.0 * delta)
+		if _action_kind == &"spin":
+			ball_control.carry_during_skill(delta)
+	elif _action_kind == &"dribble":
 		var dir := Vector3(_action_aim.x, 0.0, _action_aim.z).normalized()
 		hv = hv.move_toward(dir * sprint_speed * 0.95, acceleration * 1.5 * delta)
 	elif not _action_contact_done and _is_kick_action():
@@ -289,7 +339,7 @@ func _update_action(delta: float) -> void:
 		var side := anim_controller.kick_foot(_action_kind)
 		plant -= to_ball_dir * minf(BallControl.FOOT_DISTANCE, plant.length())
 		plant -= to_ball_dir.cross(Vector3.UP) * side * BallControl.KICK_FOOT_OFFSET
-		hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.15), acceleration * 2.0 * delta)
+		hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.25), acceleration * 2.5 * delta)
 	else:
 		var cap := jog_speed * _action_move_factor
 		var target := hv.limit_length(cap)
@@ -306,6 +356,8 @@ func _update_action(delta: float) -> void:
 			_do_contact()
 	if state == State.ACTION and _action_time >= _action_length:
 		state = State.MOVE
+	if state != State.ACTION and collision_mask != 3:
+		collision_mask = 3
 
 
 ## Momento em que o pé encosta na bola. Na Etapa 3 a animação chama
@@ -323,6 +375,14 @@ func _do_contact() -> void:
 		&"tackle":
 			if not ball_control.execute_tackle():
 				stumble(0.6)
+		&"slide":
+			ball_control.execute_slide_tackle()
+		&"spin":
+			ball_control.release_after_skill()
+
+
+func action_time_left() -> float:
+	return maxf(_action_length - _action_time, 0.0) if state == State.ACTION else 0.0
 
 
 ## Tempo até o pé encostar na bola na ação atual (0 se não houver).
@@ -340,6 +400,89 @@ func get_foot_positions() -> Array[Vector3]:
 	return none
 
 
+func is_marking() -> bool:
+	return _marking
+
+
+func is_jumping() -> bool:
+	return _jump_timer > 0.0
+
+
+func current_reaction() -> StringName:
+	return _reaction
+
+
+func _compute_marking() -> bool:
+	if ball == null or not ball.in_play or state != State.MOVE or ball_control.has_ball():
+		return false
+	if is_goalkeeper():
+		return true
+	var carrier := ball.possessor
+	if carrier == null or carrier.team == team or intent.sprint:
+		return false
+	return global_position.distance_to(carrier.global_position) < MARK_RANGE
+
+
+## Para onde o jogador olha ao marcar: quem tem a bola (ou a bola, no goleiro).
+func _mark_focus() -> Vector3:
+	if ball.possessor != null and ball.possessor.team != team:
+		return ball.possessor.global_position
+	return ball.global_position
+
+
+## Ação com deslocamento vindo da animação (root motion).
+func _start_root_action(kind: StringName, logical: StringName, lead: float, face: Vector3) -> void:
+	var speed := PlayerAnimationController.ACTION_SPEED
+	var contact := AnimationCatalog.contact_time(logical)
+	var seek := maxf(contact - lead * speed, 0.0) if AnimationCatalog.CONTACTS.has(logical) else 0.0
+	var length := (AnimationCatalog.clip_length(logical) - seek) / speed
+	var contact_t := maxf(contact - seek, 0.0) / speed if AnimationCatalog.CONTACTS.has(logical) else length
+	_begin_action(kind, contact_t, length, 1.0, face, null, 1.0)
+	_action_logical = logical
+	_action_seek = seek
+	# Carrinho, queda e pulo passam por baixo/por cima de quem está perto.
+	collision_mask = 1
+	_action_face = Vector3(face.x, 0.0, face.z).normalized()
+
+
+## Carrinho: desliza em direção a quem conduz; o conduzidor pode pular.
+func _start_slide(target: Player, dir: Vector3) -> void:
+	_start_root_action(&"slide", &"tackle", 0.25, dir)
+	_action_length += DOWN_TIME + AnimationCatalog.clip_length(&"getup") / PlayerAnimationController.ACTION_SPEED
+	target.on_tackle_incoming(self)
+
+
+## Um adversário veio de carrinho: talvez pular por cima (com a bola).
+func on_tackle_incoming(_tackler: Player) -> void:
+	if state != State.MOVE or not ball_control.has_ball() or not AnimationCatalog.has_clip(&"jump"):
+		return
+	var chance := DODGE_CHANCE_HUMAN if is_human else DODGE_CHANCE_AI
+	if debug_dodge_chance >= 0.0:
+		chance = debug_dodge_chance
+	if _rng.randf() >= chance:
+		return
+	_start_root_action(&"jump", &"jump", 0.0, facing)
+	_jump_timer = _action_length
+	ball_control.push_ahead(1.6)
+
+
+## Levou um carrinho / foi derrubado: tropeça, cai, fica no chão e levanta.
+func trip() -> void:
+	if not AnimationCatalog.has_clip(&"trip"):
+		stumble(0.8)
+		return
+	_start_root_action(&"trip", &"trip", 0.0, facing)
+	_action_length += DOWN_TIME + AnimationCatalog.clip_length(&"getup") / PlayerAnimationController.ACTION_SPEED
+	_buffer_timer = 0.0
+
+
+## Comemoração/lamento (gol). O jogador fica parado até a próxima saída.
+func play_reaction(kind: StringName) -> void:
+	_reaction = kind
+	state = State.FROZEN
+	action_started.emit(kind)
+
+
 func on_animation_contact() -> void:
 	if state == State.ACTION and not _action_contact_done:
 		_do_contact()
@@ -347,6 +490,7 @@ func on_animation_contact() -> void:
 
 ## Desequilíbrio (desarme sofrido, bote errado). Animação: "Stumble".
 func stumble(time: float) -> void:
+	collision_mask = 3
 	state = State.STUNNED
 	_stun_timer = time
 	_buffer_timer = 0.0
@@ -360,6 +504,7 @@ func set_frozen(value: bool) -> void:
 		state = State.FROZEN
 	elif state == State.FROZEN:
 		state = State.MOVE
+		_reaction = &""
 
 
 func teleport(pos: Vector3, face_dir: Vector3) -> void:
@@ -370,6 +515,7 @@ func teleport(pos: Vector3, face_dir: Vector3) -> void:
 		facing = f.normalized()
 		rotation.y = atan2(-facing.x, -facing.z)
 	_buffer_timer = 0.0
+	_reaction = &""
 	if state != State.FROZEN:
 		state = State.MOVE
 
