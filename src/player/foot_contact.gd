@@ -98,7 +98,7 @@ func update(delta: float) -> void:
 			if _t >= _lead:
 				# Bola ainda fora do alcance da perna: espera um pouco mais
 				# (o corpo continua chegando) em vez de tocar "de longe".
-				if not _reachable and _t < _lead + 0.14:
+				if (not _reachable or (mode != Mode.KICK and _ik_cap() <= 0.35)) and _t < _lead + 0.16:
 					pass
 				else:
 					_contact()
@@ -117,18 +117,76 @@ func update(delta: float) -> void:
 	_apply()
 
 
+## Quanto a IK pode puxar a perna: só pequenas correções a partir da pose da
+## animação (como nos jogos). Longe disso a perna NÃO estica — o toque espera
+## a passada certa (o corpo é que se ajusta).
+const IK_FULL := 0.16
+const IK_MAX := 0.32
+## Pisar na bola à frente (sola) é uma pose natural de perna levantada para a
+## frente: aceita um pouco mais, mas só para a frente e pouco para o lado.
+const IK_FULL_SOLE := 0.3
+const IK_MAX_SOLE := 0.48
+
+
+func _ik_cap() -> float:
+	var v := player.visual
+	if v == null or not v.has_method("get_ankle_position"):
+		return 1.0
+	var a: Vector3 = v.call("get_ankle_position", side)
+	var disp := a.distance_to(_target)
+	var full := IK_FULL
+	var mx := IK_MAX
+	var rel := _target - player.global_position
+	var fwd := rel.dot(player.facing)
+	var lat_s := rel.dot(player.facing.cross(Vector3.UP)) * side # >0 = do lado do próprio pé
+	var crossing := lat_s < -0.08 # perna cruzando na frente do corpo: não
+	if (mode == Mode.SOLE or mode == Mode.CUSHION) and fwd > 0.05 and absf(lat_s) < 0.3 and not crossing:
+		full = IK_FULL_SOLE
+		mx = IK_MAX_SOLE
+	elif player.get_horizontal_speed() < 1.6 and fwd > -0.05 and not crossing:
+		# Devagar/parado: esticar a perna para tocar a bola do lado ou à frente
+		# é natural (passada curta). Correndo, só correções pequenas.
+		full = 0.26
+		mx = 0.44
+	return clampf(1.0 - (disp - full) / (mx - full), 0.0, 1.0)
+
+
+## Distância (no chão) entre o tornozelo da ANIMAÇÃO do pé [param foot] e o
+## ponto onde ele teria que estar para tocar a bola na direção [param d].
+func ideal_distance(foot: float, d: Vector3, m: Mode) -> float:
+	var v := player.visual
+	if v == null or not v.has_method("get_ankle_position"):
+		return 0.0
+	var keep_side := side
+	var keep_dir := dir
+	var keep_mode := mode
+	side = foot
+	dir = Vector3(d.x, 0.0, d.z).normalized() if Vector3(d.x, 0.0, d.z).length() > 0.01 else player.facing
+	mode = m
+	var t := _target_now(0.0)
+	side = keep_side
+	dir = keep_dir
+	mode = keep_mode
+	var a: Vector3 = v.call("get_ankle_position", foot)
+	return Vector2(a.x - t.x, a.z - t.z).length()
+
+
 func _contact() -> void:
 	_target = _target_now(0.0)
 	# Só toca se a bola continua comigo e de fato ao alcance do pé.
 	var d := Vector2(ball.global_position.x - player.global_position.x,
 		ball.global_position.z - player.global_position.z).length()
-	# O pé tem que alcançar de verdade (sem toque "de longe").
+	# O pé tem que alcançar de verdade, com a perna numa pose natural.
+	var natural := mode == Mode.KICK or _ik_cap() > 0.35
 	if _cb.is_valid() and ball.possessor == player and ball.in_play and d < 1.25 \
-			and ball.global_position.y < 0.5 and _reachable:
+			and ball.global_position.y < 0.5 and _reachable and natural:
 		_cb.call()
 		last_applied = true
 	else:
 		last_applied = false
+		if OS.get_environment("DBGF") != "" and _cb.is_valid():
+			var a: Vector3 = player.visual.call("get_ankle_position", side)
+			print("SKIP mode=", mode, " cap=", snappedf(_ik_cap(), 0.01), " reach=", _reachable, " poss=", ball.possessor == player, " d=", snappedf(d, 0.01), " spd=", snappedf(player.get_horizontal_speed(), 0.1), " disp=", snappedf(a.distance_to(_target), 0.01), " rel=", (_target - player.global_position).snapped(Vector3.ONE * 0.01), " side=", side)
 	_cb = Callable()
 	phase = Phase.HOLD
 	_t = 0.0
@@ -169,5 +227,6 @@ func _apply() -> void:
 	var v := player.visual
 	if v == null or not v.has_method("set_foot_target"):
 		return
-	v.call("set_foot_target", side, _target, _weight, player.facing)
+	var cap := _ik_cap() if phase == Phase.REACH or phase == Phase.HOLD else 1.0
+	v.call("set_foot_target", side, _target, _weight * cap, player.facing)
 	v.call("set_foot_target", -side, _target, 0.0, player.facing)

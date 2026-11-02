@@ -17,6 +17,7 @@ roupas sujas e dribles naturais.
 - 🎯 Etapa 10 (passe rasteiro com seta, condução assistida, animações suaves): [`docs/ETAPA_10.md`](docs/ETAPA_10.md)
 - 🦶 Etapa 11 (pé na bola com IK, arrancada corrigida, chute mais forte): [`docs/ETAPA_11.md`](docs/ETAPA_11.md)
 - ⚙️ Etapa 12 (arquitetura DribblePoint/KickPoint/PickupArea): [`docs/ETAPA_12.md`](docs/ETAPA_12.md)
+- ⚽ Etapa 13 (condução no padrão dos jogos: bola física, toque na passada, IK pequena): [`docs/ETAPA_13.md`](docs/ETAPA_13.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado

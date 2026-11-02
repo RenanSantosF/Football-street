@@ -38,7 +38,7 @@ shape = SubResource("CapsuleShape3D_body")
 script = ExtResource("2_body")
 
 [node name="DribblePoint" type="Marker3D" parent="Visual"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.55)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -0.3)
 
 [node name="KickPoint" type="Marker3D" parent="Visual"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.13, 0, -0.45)

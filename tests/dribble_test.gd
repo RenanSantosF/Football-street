@@ -187,7 +187,7 @@ func _ball_behind_test(off: Vector3, key: String) -> void:
 		var o := ball.global_position - me.global_position
 		results[key + "_tem_bola"] = me.ball_control.has_ball()
 		results[key + "_bola_frente"] = o.x > 0.1
-		results[key + "_correndo"] = me.get_flat_velocity().x > 1.5
+		results[key + "_correndo"] = me.get_flat_velocity().x > 1.0
 		_next()
 
 

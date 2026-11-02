@@ -43,13 +43,13 @@ const TURN_SPEED_UP := 1.35
 
 @export_group("Movimento")
 @export var jog_speed := 3.2
-## Velocidade máxima correndo (speed_normal da arquitetura).
+## Velocidade máxima correndo (CORRER).
 @export var sprint_speed := 5.5
-## Velocidade máxima conduzindo a bola (speed_dribbling).
+## Velocidade máxima conduzindo a bola em velocidade.
 @export var speed_dribbling := 4.3
 @export var ball_speed_factor := 0.92
-@export var acceleration := 10.0
-@export var deceleration := 10.0
+@export var acceleration := 7.0
+@export var deceleration := 9.0
 ## Velocidade de giro do corpo (rad/s).
 @export var turn_speed := 11.0
 ## Mais lento com a bola: dá peso ao girar (lerp_angle).
@@ -273,21 +273,45 @@ func _update_move(delta: float) -> void:
 		return
 	var max_speed := sprint_speed if (intent.sprint and stamina > 0.05) else jog_speed
 	if has_ball:
-		# Com a bola: mais lento (speed_dribbling no máximo).
 		max_speed = speed_dribbling if (intent.sprint and stamina > 0.05) else jog_speed * ball_speed_factor
 	if _burst_timer > 0.0:
 		max_speed *= 1.15
 	if _marking:
 		max_speed = minf(max_speed, jog_speed * 0.85)
 	var desired := input * max_speed
-	if has_ball and input.length() < 0.1 and ball_control.ball_distance() > 0.8:
-		# Soltou o analógico com a bola um pouco longe: vai até ela para pisar.
-		var to_b := ball_control.ball_offset()
-		desired = to_b.normalized() * clampf((to_b.length() - 0.45) * 4.0, 0.0, jog_speed)
-	elif has_ball and _has_pending_kick() and not ball_control.can_kick():
+	if has_ball and _has_pending_kick() and not ball_control.can_kick():
 		# Chute/passe pedido com a bola um pouco à frente: ir até ela para finalizar.
 		var to_ball := ball_control.ball_offset()
-		desired = to_ball.normalized() * sprint_speed if to_ball.length() > 0.05 else desired
+		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
+	elif has_ball and input.length() > 0.1:
+		var w := input.normalized()
+		var ap := ball_control.approach_point(w)
+		if ap != Vector3.INF:
+			# A bola não está à frente na nova direção (passada longa, virada):
+			# PRIMEIRO alcança a bola, por trás dela em relação à nova direção,
+			# e só então dá o toque. Nunca larga a bola para trás.
+			var to := ap - global_position
+			to.y = 0.0
+			var chase := clampf(to.length() / 0.28, jog_speed * 0.5, sprint_speed * 1.05)
+			desired = to.normalized() * chase if to.length() > 0.08 else w * jog_speed * 0.3
+		else:
+			desired += ball_control.catch_up_velocity(w)
+			# Não "atropela" a bola: com ela no pé e ainda sem o toque, o corpo
+			# ajusta a passada à velocidade da bola até o pé encostar nela.
+			var off_b := ball_control.ball_offset()
+			var along_b := off_b.dot(w)
+			var bspeed := ball.flat_velocity().dot(w)
+			if along_b < BallControl.FOOT_DISTANCE + 0.05 and desired.length() > bspeed + 1.0:
+				desired = desired.normalized() * maxf(bspeed + 1.0, 0.8)
+	elif has_ball:
+		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
+		var off := ball_control.ball_offset()
+		var bv := ball.flat_velocity()
+		if off.length() > 0.45 and not ball_control.is_trapping():
+			var stop_at := ball.predict_ground_position(0.3) - facing * 0.3
+			var to := stop_at - global_position
+			to.y = 0.0
+			desired = (to / 0.3).limit_length(maxf(bv.length() + 1.2, jog_speed * 0.8))
 	var hv := get_flat_velocity()
 	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
@@ -620,10 +644,13 @@ func _update_action(delta: float) -> void:
 			var kf := anim_controller.kick_foot(_action_kind)
 			var kd := _action_face if _action_face != Vector3.ZERO else facing
 			ball_control.foot.begin(kf if kf != 0.0 else 1.0, kd, remaining, FootContact.Mode.KICK, Callable(), 0.06)
-		# Firma o pé de apoio: o corpo desacelera (25% do analógico) e a BOLA é
-		# que vem para o KickPoint (BallControl._snap_to_kick_point).
-		var slow := Vector3(intent.move.x, 0.0, intent.move.z) * jog_speed * 0.25
-		hv = hv.move_toward(slow, deceleration * delta)
+		var plant := ball_control.ball_offset() + ball.flat_velocity() * remaining
+		var to_ball_dir := plant.normalized() if plant.length() > 0.01 else facing
+		# Pé de apoio ao lado da bola: quem chuta de direita deixa a bola à direita.
+		var side := anim_controller.kick_foot(_action_kind)
+		plant -= to_ball_dir * minf(BallControl.FOOT_DISTANCE, plant.length())
+		plant -= to_ball_dir.cross(Vector3.UP) * side * BallControl.KICK_FOOT_OFFSET
+		hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.25), acceleration * 2.5 * delta)
 	else:
 		var cap := jog_speed * _action_move_factor
 		var target := hv.limit_length(cap)
@@ -718,12 +745,14 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 		return false
 	# IA: viradas animadas com moderação (senão fica lenta e repetitiva).
 	var ai_turn_ok := is_human or _rng.randf() < 0.04
-	# Com a bola não há virada "de clipe": quem dá o peso é a rotação lenta
-	# (lerp_angle) e a bola segue o DribblePoint.
-	var fetching := ball_control.has_ball()
+	var fetching := ball_control.has_ball() and in_len > 0.1 \
+		and ball_control.approach_point(input.normalized()) != Vector3.INF
 	if in_len > 0.6 and speed > (2.6 if is_human else 3.6) and ai_turn_ok and not fetching \
 			and AnimationCatalog.has_clip(&"turn180"):
-		if hv.normalized().dot(input.normalized()) < -0.55:
+		# Com a bola, só vira "de clipe" se ela estiver no pé (a sola alcança);
+		# senão primeiro freia e chega na bola.
+		var ball_ok := not ball_control.has_ball() or ball_control.ball_distance() < 0.45
+		if hv.normalized().dot(input.normalized()) < -0.55 and ball_ok:
 			_start_turn(&"turn180", &"turn180", input.normalized())
 			return true
 	if in_len > 0.6 and speed < 0.5 and not ball_control.has_ball() and ai_turn_ok:
@@ -735,7 +764,12 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 	if released and speed > 3.2 and AnimationCatalog.has_clip(&"run_stop"):
 		var bc := ball_control
 		var ball_ok := bc.ball_distance() > 3.0
-		if ball_ok and not bc.has_ball():
+		if bc.has_ball():
+			# Com a bola: parada brusca pisando na bola (ela para junto).
+			# só com a bola NO PÉ (a sola alcança) e indo junto com o corpo
+			ball_ok = bc.ball_distance() < 0.45 and bc.ball_offset().dot(facing) > 0.0 \
+				and ball.flat_velocity().length() < hv.length() + 0.5
+		if ball_ok and (is_human or not bc.has_ball()):
 			_start_root_action(&"run_stop", &"run_stop", 0.0, facing)
 			return true
 	return false
