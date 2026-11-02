@@ -121,7 +121,16 @@ func body_correction() -> Vector3:
 	if err.length() < 0.03 or err.length() > 0.6:
 		return Vector3.ZERO
 	var rem := maxf(_lead - _t, 0.1)
-	return (err / rem).limit_length(BODY_ADJUST_SPEED)
+	var c := (err / rem).limit_length(BODY_ADJUST_SPEED)
+	var pv := Vector3(player.velocity.x, 0.0, player.velocity.z)
+	if pv.length() > 2.0 and dir.dot(pv.normalized()) > 0.9:
+		# correndo: o corpo ajusta o TEMPO da passada (para a frente/trás), não
+		# fica balançando de lado — a corrida segue reta
+		var fw := pv.normalized()
+		var along := fw * c.dot(fw)
+		var lat := (c - along).limit_length(0.3)
+		c = along + lat
+	return c
 
 
 func update(delta: float) -> void:

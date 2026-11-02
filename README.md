@@ -24,6 +24,7 @@ roupas sujas e dribles naturais.
 - ⚡ Etapa 17 (domínio sem atravessar, primeiro toque orientado, corpo se ajusta ao toque, regras): [`docs/ETAPA_17.md`](docs/ETAPA_17.md)
 - 🛡️ Etapa 18 (CORRER = buscar/cercar, desarme pelo corpo, proteção de bola, apoio e tabela): [`docs/ETAPA_18.md`](docs/ETAPA_18.md)
 - 🦶 Etapa 19 (pé sem torção, sem deslizar, sem teleporte de pose; medido com detectores): [`docs/ETAPA_19.md`](docs/ETAPA_19.md)
+- 🏃 Etapa 20 (corrida com domínio, recepção preparada, passe em corrida, inércia): [`docs/ETAPA_20.md`](docs/ETAPA_20.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado

@@ -141,6 +141,8 @@ func _turn_far_test() -> void:
 
 
 var _mate: Player
+var _kick_from := Vector3.ZERO
+var _mate_at_kick := Vector3.ZERO
 var _kick_v := Vector3.ZERO
 var _mirror_seen := false
 
@@ -168,10 +170,12 @@ func _back_pass_test() -> void:
 		_mirror_seen = _mirror_seen or me.kick_mirrored()
 	if _kick_v == Vector3.ZERO and ball.possessor == null and ball.flat_velocity().length() > 3.0:
 		_kick_v = ball.flat_velocity()
+		_kick_from = ball.global_position
+		_mate_at_kick = _mate.global_position
 	if t == 120:
 		results["tras_passe_saiu"] = _kick_v != Vector3.ZERO
 		results["tras_passe_dir_ok"] = _kick_v.x < -2.0
-		var to_mate := (_mate.global_position - Vector3(0, 0, 0)).normalized()
+		var to_mate := (_mate_at_kick - _kick_from).normalized()
 		results["tras_passe_desvio_graus"] = snappedf(rad_to_deg(Vector3(_kick_v.x, 0, _kick_v.z).normalized().angle_to(Vector3(to_mate.x, 0, to_mate.z))), 0.1) if _kick_v != Vector3.ZERO else -1.0
 		results["tras_sem_cair"] = me.state != Player.State.STUNNED
 		_next()

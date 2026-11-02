@@ -293,10 +293,18 @@ func _try_gain_control() -> void:
 	var slow := player.get_horizontal_speed() < 0.6 and incoming.length() < 2.0
 	var use_sole := slow and _rng.randf() < 0.5
 	var f := foot.nearest_foot()
+	var mode := FootContact.Mode.SOLE if use_sole else FootContact.Mode.CUSHION
+	var pv0 := _flat(player.velocity)
+	if pv0.length() > 1.5 and incoming.length() > 0.5 and incoming.normalized().dot(pv0.normalized()) > 0.3:
+		# bola indo no mesmo sentido da corrida (profundidade / bola de trás):
+		# parte de DENTRO do pé, empurrando para a frente (nada de calcanhar)
+		mode = FootContact.Mode.INSIDE
+		dir_in = pv0.normalized()
+		var lat := (ball.global_position - player.global_position).dot(pv0.normalized().cross(Vector3.UP))
+		f = signf(lat) if absf(lat) > 0.05 else f # o pé do lado da bola (sem cruzar as pernas)
 	# A posse só é tomada no contato do pé (se o pé não alcançar, a bola bate
 	# no corpo de verdade em vez de atravessar o jogador).
-	foot.begin(f, dir_in, lead, FootContact.Mode.SOLE if use_sole else FootContact.Mode.CUSHION,
-		_first_touch, 0.08, Callable(), true)
+	foot.begin(f, dir_in, lead, mode, _first_touch, 0.08, Callable(), true)
 	player.notify_touch(&"receive" if use_sole else &"receive_side")
 
 
@@ -354,7 +362,9 @@ func _body_contact() -> void:
 	var rel_in := (bv - player.velocity).length()
 	if player.state == Player.State.MOVE and h < 1.3 and ball.can_be_claimed_by(player) \
 			and not player.is_restart_locked() \
-			and ((ball.pass_target == player and rel_in < 16.0) or rel_in < 6.0):
+			and ((ball.pass_target == player and rel_in < 16.0) or rel_in < 6.0 \
+				or (ball.last_toucher != null and ball.last_toucher != player \
+					and ball.last_toucher.team == player.team and rel_in < 14.0)):
 		foot.cancel()
 		ball.claim(player)
 		_first_touch()
@@ -455,7 +465,10 @@ func _conduct(delta: float) -> void:
 		player.notify_touch(&"drag")
 		return
 	var braking_now := want.length() < 0.05 and pv.length() > 1.4
-	if d > (0.62 if braking_now else TOUCH_REACH):
+	# correndo, a passada alcança mais à frente: toca de novo antes de a bola
+	# se afastar (condução com mais toques, bola sempre no pé)
+	var reach_now := TOUCH_REACH + clampf((pv.length() - 2.0) * 0.12, 0.0, 0.22)
+	if d > (0.62 if braking_now else reach_now):
 		return # longe: o Player vai até a bola primeiro (approach_point)
 	var speed := pv.length()
 	# virando (direção pedida diferente do rumo da bola) o pé pode ir de novo
@@ -651,16 +664,19 @@ func _foot_near_ball(dir := Vector3.ZERO, turn_side := 0.0) -> bool:
 ## Resultado: bola sempre perto, rolando junto, toques curtos e frequentes.
 func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 	var sprinting := player.intent.sprint and speed > player.jog_speed * 0.8
-	var target_speed := player.intent.move.length() * player.ball_speed_factor \
-		* (player.sprint_speed if player.intent.sprint else player.jog_speed)
+	# mesma velocidade máxima que o corpo pode ter COM a bola (senão o toque
+	# manda a bola mais rápido do que ele corre e ela foge)
+	var top := player.speed_dribbling if (player.intent.sprint and player.stamina > 0.05) \
+		else player.jog_speed * player.ball_speed_factor
+	var target_speed := player.intent.move.length() * top
 	var v_p := maxf(minf(target_speed, speed + 0.8), speed * 0.9)
 	# Cadência: passo mais curto devagar, toque mais longo no sprint.
 	var T := clampf(0.55 - v_p * 0.035, 0.36, 0.55)
 	var extra := 0.0
 	if sprinting:
 		# correndo forte: toque um pouco mais longo, mas a bola continua perto
-		T = 0.56
-		extra = 0.18
+		T = 0.46
+		extra = 0.1
 	# Perto da linha: toque mais curto e sem empurrar a bola para fora.
 	var bp := ball.global_position
 	if Field.HALF_WIDTH - absf(bp.z) < 1.2 and signf(dir.z) == signf(bp.z):

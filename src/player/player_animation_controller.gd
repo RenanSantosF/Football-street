@@ -20,6 +20,7 @@ const BASE_STATES: Array[StringName] = [&"Locomotion", &"Mark"]
 const ACTION_STATES := {
 	&"pass": &"PassShort",
 	&"chip": &"PassShort",
+	&"run_pass": &"Shoot",
 	&"long_pass": &"PassLong",
 	&"shoot": &"Shoot",
 	&"shoot_power": &"ShootPower",
@@ -56,6 +57,7 @@ const ACTION_STATES := {
 const ACTION_LOGICAL := {
 	&"pass": &"pass_short",
 	&"chip": &"pass_short",
+	&"run_pass": &"shoot",
 	&"long_pass": &"pass_long",
 	&"shoot": &"shoot",
 	&"shoot_power": &"shoot_power",
@@ -376,7 +378,7 @@ func _on_action_started(kind: StringName) -> void:
 	if not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
-	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip"] \
+	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip", &"run_pass"] \
 		and _has_state(StringName(String(state_name) + "L"))
 	if mirrored:
 		state_name = StringName(String(state_name) + "L")

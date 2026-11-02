@@ -55,7 +55,7 @@ const TURN_SPEED_UP := 1.35
 ## Velocidade máxima conduzindo a bola em velocidade.
 @export var speed_dribbling := 4.3
 @export var ball_speed_factor := 0.92
-@export var acceleration := 7.0
+@export var acceleration := 11.0
 @export var deceleration := 9.0
 ## Velocidade de giro do corpo (rad/s).
 @export var turn_speed := 8.0
@@ -119,6 +119,8 @@ var _gesture_timer := 0.0
 var _turn_target := Vector3.ZERO
 var _turn_start_facing := Vector3.FORWARD
 var _turn_yaw_on := false
+## Recebendo um passe em profundidade (correndo junto com a bola)?
+var _receiving_through := false
 var _steady_input := Vector3.ZERO
 var _steady_time := 0.0
 var _prev_input_len := 0.0
@@ -273,7 +275,9 @@ func _update_move(delta: float) -> void:
 	if _try_aerial_reception():
 		return
 	if _pivot_dir != Vector3.ZERO:
-		_brake(delta, deceleration)
+		# Passe para trás correndo: o corpo ainda vai para a frente pela inércia
+		# enquanto gira (freia aos poucos), a bola vai junto no pé.
+		_brake(delta, deceleration if get_horizontal_speed() < 2.0 else 4.5)
 		ball_control.carry_during_skill(delta)
 		if facing.angle_to(_pivot_dir) < deg_to_rad(30.0) or not ball_control.has_ball() or _buffer_timer <= 0.0:
 			_pivot_dir = Vector3.ZERO
@@ -396,8 +400,10 @@ func _update_facing(delta: float) -> void:
 		target_dir = _action_face
 	elif _pivot_dir != Vector3.ZERO:
 		target_dir = _pivot_dir
-	elif ball != null and ball.pass_target == self and ball.possessor == null and hv.length() < 2.0:
-		target_dir = _flat_dir_to(ball.global_position) # recebendo: olha para a bola
+	elif ball != null and ball.pass_target == self and ball.possessor == null and _receiving_through and hv.length() > 0.5:
+		target_dir = hv.normalized() # profundidade: corre de frente para onde vai
+	elif ball != null and ball.pass_target == self and ball.possessor == null and hv.length() < 2.6:
+		target_dir = _flat_dir_to(ball.global_position) # recebendo: de frente para a bola
 	elif _restart_lock:
 		target_dir = _flat_dir_to(ball.global_position) # sempre de frente para a bola
 	elif _marking and state == State.MOVE:
@@ -554,7 +560,7 @@ func _update_actions(delta: float) -> void:
 
 
 func _is_kick_action() -> bool:
-	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip"]
+	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip", &"run_pass"]
 
 
 func _has_pending_kick() -> bool:
@@ -636,7 +642,15 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		var long := lofted or (not is_human and power >= LONG_PASS_POWER)
 		# Pequena preparação antes do toque, como no futebol de verdade.
 		var contact := 0.28 if long else 0.2
-		_begin_action(&"long_pass" if long else &"pass", contact, contact + 0.22, power, aim, target, 0.5)
+		var kind_p: StringName = &"long_pass" if long else &"pass"
+		var hv0 := get_flat_velocity()
+		if not long and hv0.length() > 2.6 and kdir != Vector3.ZERO and hv0.normalized().dot(kdir) > 0.35 \
+				and AnimationCatalog.has_clip(&"shoot"):
+			# CORRENDO: toque de passe na própria passada da corrida (clipe de
+			# chute em corrida) — o corpo segue com o embalo, sem frear seco.
+			kind_p = &"run_pass"
+			contact = 0.18
+		_begin_action(kind_p, contact, contact + 0.22, power, aim, target, 0.5)
 		if target != null:
 			_action_face = _flat_dir_to(target.global_position)
 		elif aim.length() > 0.2:
@@ -649,7 +663,7 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 ## Continuação do corpo depois do contato: segue o deslocamento do próprio
 ## clipe (antes o quadril ficava pregado e os pés deslizavam).
 func _setup_kick_root_motion() -> void:
-	var map := {&"pass": &"pass_short", &"long_pass": &"pass_long", &"shoot": &"shoot", &"shoot_power": &"shoot_power", &"chip": &"pass_short"}
+	var map := {&"pass": &"pass_short", &"long_pass": &"pass_long", &"shoot": &"shoot", &"shoot_power": &"shoot_power", &"chip": &"pass_short", &"run_pass": &"shoot"}
 	_kick_logical = map.get(_action_kind, &"")
 	if _kick_logical == &"" or not AnimationCatalog.has_clip(_kick_logical):
 		_kick_logical = &""
@@ -771,7 +785,16 @@ func _update_action(delta: float) -> void:
 			var clip_d := AnimationCatalog.root_offset_at(_kick_logical, t_hit) - AnimationCatalog.root_offset_at(_kick_logical, t_now)
 			var clip_disp := (facing * clip_d.z + left_k * clip_d.x) * hh
 			var corr := ((plant - clip_disp) / remaining).limit_length(KICK_ADJUST_SPEED)
-			hv = hv.move_toward(base + corr, acceleration * 2.5 * delta)
+			var want_v := base + corr
+			# inércia: o corpo não para seco (freia no máximo ~7 m/s²) e não
+			# deixa a bola fugir (acompanha a bola que vai à frente)
+			var bvel := ball.flat_velocity()
+			var bdir := ball_control.ball_offset().normalized() if ball_control.ball_distance() > 0.05 else facing
+			var b_along := bvel.dot(bdir)
+			if want_v.dot(bdir) < b_along:
+				want_v += bdir * (b_along - want_v.dot(bdir))
+			var rate_k := acceleration * 2.5 if want_v.length() > hv.length() else 7.0
+			hv = hv.move_toward(want_v, rate_k * delta)
 		else:
 			hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.25), acceleration * 2.5 * delta)
 	else:
@@ -820,7 +843,7 @@ func _update_action(delta: float) -> void:
 func _do_contact() -> void:
 	_action_contact_done = true
 	match _action_kind:
-		&"pass", &"long_pass":
+		&"pass", &"long_pass", &"run_pass":
 			if ball_control.execute_pass(_action_power, _action_aim, _action_target, _action_lofted):
 				_restart_lock = false
 		&"chip":
@@ -983,24 +1006,61 @@ func play_gesture(kind: StringName, duration: float) -> void:
 
 
 func _receive_pass(delta: float) -> void:
+	# O recebedor PREPARA o domínio:
+	#  - passe na direção dele: espera DE FRENTE, com a bola chegando na frente
+	#    do corpo (um passo ao encontro), nunca no calcanhar;
+	#  - passe em profundidade (a bola vai no mesmo sentido da corrida): corre
+	#    AO LADO da linha da bola, no ritmo dela, e domina com a parte de dentro
+	#    do pé já saindo.
 	var target := _pass_intercept_point()
-	# O sistema leva o recebedor até a bola (o analógico só escolhe para onde
-	# vai o primeiro toque — domínio orientado).
+	var bv := ball.flat_velocity()
+	var bdir := bv.normalized() if bv.length() > 0.5 else Vector3.ZERO
+	var to_me := global_position - ball.global_position
+	to_me.y = 0.0
+	var through := bdir != Vector3.ZERO and to_me.length() > 0.5 and bdir.dot(to_me.normalized()) < 0.75 \
+		and _receive_run_dir(bdir).dot(bdir) > 0.3
+	_receiving_through = through
+	if through:
+		# lado da linha da bola em que eu já estou (a bola passa pelo pé de dentro)
+		var right := bdir.cross(Vector3.UP)
+		var side := signf((global_position - target).dot(right))
+		if side == 0.0:
+			side = 1.0
+		target += right * side * 0.22 - bdir * 0.25
+	elif bdir != Vector3.ZERO:
+		target -= bdir * 0.42 # a bola chega na FRENTE do corpo
 	var to := target - global_position
 	to.y = 0.0
 	var d := to.length()
 	var desired := Vector3.ZERO
-	if d > 0.35:
-		var t_ball := _ball_time_to(target)
+	var t_ball := _ball_time_to(target)
+	if through:
+		# corre junto: chega ao ponto na hora e segue no ritmo da bola
+		var need := d / maxf(t_ball, 0.12)
+		desired = (to / maxf(d, 0.01)) * clampf(need, 0.0, sprint_speed) if d > 0.1 else Vector3.ZERO
+		if t_ball < 0.5:
+			desired = desired.lerp(bdir * minf(bv.length(), sprint_speed), clampf(1.0 - t_ball / 0.5, 0.0, 1.0))
+	elif d > 0.3:
 		var need := d / maxf(t_ball, 0.15)
 		var top := sprint_speed
 		if t_ball < 0.6:
-			top = 2.2 # a bola está chegando: chega controlado, sem atropelar a bola
+			top = 2.6 # chegando: passo ao encontro, controlado
 		desired = to / d * clampf(need, 0.8, top)
 	var hv := get_flat_velocity()
 	hv = hv.move_toward(desired, (acceleration if desired.length() > hv.length() else deceleration) * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
+
+
+## Para onde o recebedor vai correr (analógico do humano ou rumo da bola).
+func _receive_run_dir(bdir: Vector3) -> Vector3:
+	var m := Vector3(intent.move.x, 0.0, intent.move.z)
+	if m.length() > 0.3:
+		return m.normalized()
+	var hv := get_flat_velocity()
+	if hv.length() > 1.5:
+		return hv.normalized()
+	return bdir
 
 
 const AERIAL_KINDS: Array[StringName] = [&"recv_chest", &"recv_knee", &"header", &"head_control", &"header_jump"]

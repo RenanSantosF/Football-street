@@ -78,7 +78,9 @@ func _physics_process(delta: float) -> void:
 	# Sem a bola, CORRER = BUSCAR: corre na bola solta ou no adversário que a
 	# tem. Com um companheiro com a bola, CORRER é só correr (desmarque).
 	chasing = false
-	if not has_ball_context() and _sprint and current_player != null and current_player.ball != null:
+	var loose_mine := current_player != null and current_player.ball != null \
+		and current_player.ball.possessor == null and current_player.ball.pass_target != current_player
+	if (not has_ball_context() or loose_mine) and _sprint and current_player != null and current_player.ball != null:
 		var b := current_player.ball
 		var chase_ok := b.possessor == null or b.possessor.team != current_player.team
 		var auto := _chase_direction() if chase_ok else Vector3.ZERO
@@ -208,6 +210,9 @@ func has_ball_context() -> bool:
 	var b := current_player.ball
 	if b.possessor == null and b.pass_target == current_player and b.in_play:
 		return true # passe a caminho: PASSE/CHUTE de primeira, sem trocar
+	if b.possessor == null and b.in_play and b.last_toucher != null \
+			and b.last_toucher.team == current_player.team and b.flat_velocity().length() > 1.0:
+		return true # bola do MEU time rolando (passe ainda não chegou): botões de ataque
 	return bc.has_ball() or (bc.can_kick() and b.possessor == null)
 
 
