@@ -109,6 +109,11 @@ var _prev_facing := Vector3.FORWARD
 var _turn_rate := 0.0
 var _gesture_state: StringName = &""
 var _ball_blend := 0.0
+var _stride := 0.0
+var _blend_pos := 0.0
+var _time_scale := 1.0
+## Velocidade natural da caminhada (m/s, catálogo).
+const WALK_STRIDE := 1.64
 var _rng := RandomNumberGenerator.new()
 
 
@@ -162,12 +167,29 @@ func physics_update(delta: float) -> void:
 	var ang := absf(_prev_facing.signed_angle_to(player.facing, Vector3.UP)) / maxf(delta, 0.001)
 	_prev_facing = player.facing
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
-	var stride_speed := maxf(v.length(), minf(_turn_rate * 0.35, 1.2)) / k
-	var time_scale := stride_speed / AnimationCatalog.TOP_SPEED if stride_speed > AnimationCatalog.TOP_SPEED else 1.0
+	var raw := maxf(v.length(), minf(_turn_rate * 0.3, 1.0)) / k
+	# Passada suave: a velocidade que alimenta a animação muda devagar (sem
+	# pé "teleportando" quando o corpo freia/acelera um pouco).
+	_stride = lerpf(_stride, raw, 1.0 - exp(-7.0 * delta))
+	# Devagar NÃO mistura "parado" com "andando" (isso dava passo arrastado,
+	# "tentando andar"): usa a caminhada inteira, mais lenta (TimeScale).
+	var walk := WALK_STRIDE
+	var pos := _stride
+	var time_scale := 1.0
+	if _stride < 0.22:
+		pos = 0.0
+	elif _stride < walk:
+		pos = walk
+		time_scale = clampf(_stride / walk, 0.45, 1.0)
+	elif _stride > AnimationCatalog.TOP_SPEED:
+		time_scale = _stride / AnimationCatalog.TOP_SPEED
+	# troca parado ↔ andando com mistura de ~0,2 s
+	_blend_pos = move_toward(_blend_pos, pos, delta * 8.0)
+	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-8.0 * delta))
 	var ball_target := 1.0 if player.ball_control.has_ball() else 0.0
-	_ball_blend = move_toward(_ball_blend, ball_target, delta * 4.0)
-	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(stride_speed, _ball_blend))
-	anim_tree.set("parameters/Locomotion/Scale/scale", time_scale)
+	_ball_blend = move_toward(_ball_blend, ball_target, delta * 3.0)
+	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
+	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
 	# Marcação: velocidade no referencial do corpo (x = direita, y = frente).
 	var right := player.facing.cross(Vector3.UP)
 	anim_tree.set("parameters/Mark/Dir/blend_position", Vector2(v.dot(right), v.dot(player.facing)) / k)

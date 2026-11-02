@@ -49,7 +49,8 @@ func _physics_process(_d: float) -> void:
 		5: _ball_behind_test(Vector3(-0.55, 0, 0), "atras")
 		6: _ball_behind_test(Vector3(-0.6, 0, -0.55), "atras_lado")
 		7: _ball_behind_test(Vector3(-0.9, 0, 0.3), "atras_longe")
-		8:
+		8: _small_turn_test()
+		9:
 			print("RESULTADOS: ", results)
 			get_tree().quit()
 
@@ -89,7 +90,7 @@ func _stop_test() -> void:
 	var t := f - t0
 	if t == 90:
 		_release_all()
-	if t == 190:
+	if t == 220:
 		results["parar_tem_bola"] = me.ball_control.has_ball()
 		results["parar_dist"] = snappedf(me.ball_control.ball_distance(), 0.01)
 		results["parar_bola_vel"] = snappedf(ball.flat_velocity().length(), 0.01)
@@ -183,11 +184,37 @@ func _ball_behind_test(off: Vector3, key: String) -> void:
 	var t := f - t0
 	if t % 15 == 0 and OS.get_environment("DBG") != "":
 		print(key, " t=", t, " me=", me.global_position, " v=", me.get_flat_velocity(), " ball=", ball.global_position, " st=", me.state, " act=", me._action_kind)
-	if t == 110:
+	if t == 150:
 		var o := ball.global_position - me.global_position
 		results[key + "_tem_bola"] = me.ball_control.has_ball()
 		results[key + "_bola_frente"] = o.x > 0.1
 		results[key + "_correndo"] = me.get_flat_velocity().x > 1.0
+		_next()
+
+
+var _dragged := 0
+
+
+## Parado com a bola, analógico um pouco para o lado (~45°): vira puxando a
+## bola com a sola e sai na nova direção com ela na frente.
+func _small_turn_test() -> void:
+	if t0 == 0:
+		_setup(Vector3(-2, 0, 0), Vector3(1, 0, 0))
+		t0 = f
+		_dragged = 0
+		me.ball_touched.connect(func(k): if k == &"drag": _dragged += 1)
+	var t := f - t0
+	if t == 20:
+		Input.action_press("move_right", 0.7)
+		Input.action_press("move_up", 0.7)
+	if t == 110:
+		var want := Vector3(1, 0, -1).normalized()
+		var o := ball.global_position - me.global_position
+		o.y = 0.0
+		results["virada_leve_tem_bola"] = me.ball_control.has_ball()
+		results["virada_leve_puxou_com_sola"] = _dragged > 0
+		results["virada_leve_virou"] = me.facing.dot(want) > 0.85
+		results["virada_leve_bola_na_frente"] = o.normalized().dot(want) > 0.6
 		_next()
 
 

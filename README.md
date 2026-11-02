@@ -18,6 +18,7 @@ roupas sujas e dribles naturais.
 - 🦶 Etapa 11 (pé na bola com IK, arrancada corrigida, chute mais forte): [`docs/ETAPA_11.md`](docs/ETAPA_11.md)
 - ⚙️ Etapa 12 (arquitetura DribblePoint/KickPoint/PickupArea): [`docs/ETAPA_12.md`](docs/ETAPA_12.md)
 - ⚽ Etapa 13 (condução no padrão dos jogos: bola física, toque na passada, IK pequena): [`docs/ETAPA_13.md`](docs/ETAPA_13.md)
+- 👣 Etapa 14 (passos suaves, corrida e parada com bola, virada com a sola, domínio): [`docs/ETAPA_14.md`](docs/ETAPA_14.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado

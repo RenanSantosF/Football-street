@@ -27,9 +27,17 @@ var _cb := Callable()
 var _target := Vector3.ZERO
 var _weight := 0.0
 var _hold_while := Callable()
+## Domínio: a posse só é tomada quando o pé encosta na bola.
+var _claim := false
 var _reachable := true
 ## O último contato aplicou o toque (pé alcançou a bola)?
 var last_applied := false
+var _shown := {1.0: 0.0, -1.0: 0.0}
+var _last_target := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
+
+
+static func get_physics_delta() -> float:
+	return 1.0 / float(Engine.physics_ticks_per_second)
 
 
 func setup(p: Player, b: Ball) -> void:
@@ -45,7 +53,8 @@ func busy() -> bool:
 ## Agenda um toque: o pé [param foot] chega na bola em [param lead] s e então
 ## [param on_contact] é chamado (aplica a velocidade na bola).
 func begin(foot: float, d: Vector3, lead: float, m: Mode, on_contact: Callable, hold := 0.04,
-		hold_while := Callable()) -> void:
+		hold_while := Callable(), claim_on_contact := false) -> void:
+	_claim = claim_on_contact
 	side = foot
 	dir = Vector3(d.x, 0.0, d.z).normalized() if Vector3(d.x, 0.0, d.z).length() > 0.01 else player.facing
 	mode = m
@@ -57,6 +66,10 @@ func begin(foot: float, d: Vector3, lead: float, m: Mode, on_contact: Callable, 
 	phase = Phase.REACH
 	if _lead <= 0.0:
 		_contact()
+
+
+func claiming() -> bool:
+	return _claim
 
 
 func cancel() -> void:
@@ -88,6 +101,8 @@ func foot_distance(foot: float) -> float:
 
 func update(delta: float) -> void:
 	if phase == Phase.IDLE:
+		if _shown[1.0] > 0.0 or _shown[-1.0] > 0.0:
+			_apply()
 		return
 	_t += delta
 	match phase:
@@ -140,7 +155,11 @@ func _ik_cap() -> float:
 	var fwd := rel.dot(player.facing)
 	var lat_s := rel.dot(player.facing.cross(Vector3.UP)) * side # >0 = do lado do próprio pé
 	var crossing := lat_s < -0.08 # perna cruzando na frente do corpo: não
-	if (mode == Mode.SOLE or mode == Mode.CUSHION) and fwd > 0.05 and absf(lat_s) < 0.3 and not crossing:
+	if mode == Mode.CUSHION and fwd > -0.1 and absf(lat_s) < 0.4 and not crossing:
+		# domínio: esticar a perna para matar a bola é natural
+		full = 0.3
+		mx = 0.52
+	elif mode == Mode.SOLE and fwd > 0.05 and absf(lat_s) < 0.3 and not crossing:
 		full = IK_FULL_SOLE
 		mx = IK_MAX_SOLE
 	elif player.get_horizontal_speed() < 1.6 and fwd > -0.05 and not crossing:
@@ -178,8 +197,11 @@ func _contact() -> void:
 		ball.global_position.z - player.global_position.z).length()
 	# O pé tem que alcançar de verdade, com a perna numa pose natural.
 	var natural := mode == Mode.KICK or _ik_cap() > 0.35
-	if _cb.is_valid() and ball.possessor == player and ball.in_play and d < 1.25 \
+	var mine := ball.possessor == player or (_claim and ball.possessor == null and ball.can_be_claimed_by(player))
+	if _cb.is_valid() and mine and ball.in_play and d < 1.25 \
 			and ball.global_position.y < 0.5 and _reachable and natural:
+		if _claim and ball.possessor != player:
+			ball.claim(player)
 		_cb.call()
 		last_applied = true
 	else:
@@ -228,5 +250,10 @@ func _apply() -> void:
 	if v == null or not v.has_method("set_foot_target"):
 		return
 	var cap := _ik_cap() if phase == Phase.REACH or phase == Phase.HOLD else 1.0
-	v.call("set_foot_target", side, _target, _weight * cap, player.facing)
-	v.call("set_foot_target", -side, _target, 0.0, player.facing)
+	# peso de cada perna muda suave (a perna nunca "pula" de pose)
+	var dt := get_physics_delta()
+	_shown[side] = move_toward(_shown[side], _weight * cap, dt * 14.0)
+	_shown[-side] = move_toward(_shown[-side], 0.0, dt * 9.0)
+	v.call("set_foot_target", side, _target, _shown[side], player.facing)
+	v.call("set_foot_target", -side, _last_target[-side], _shown[-side], player.facing)
+	_last_target[side] = _target

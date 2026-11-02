@@ -51,9 +51,9 @@ const TURN_SPEED_UP := 1.35
 @export var acceleration := 7.0
 @export var deceleration := 9.0
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 11.0
+@export var turn_speed := 8.0
 ## Mais lento com a bola: dá peso ao girar (lerp_angle).
-@export var turn_speed_with_ball := 6.5
+@export var turn_speed_with_ball := 5.0
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -283,6 +283,9 @@ func _update_move(delta: float) -> void:
 		# Chute/passe pedido com a bola um pouco à frente: ir até ela para finalizar.
 		var to_ball := ball_control.ball_offset()
 		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
+	elif has_ball and ball_control.is_dragging():
+		# girando com a bola na sola: passos curtos enquanto o corpo vira
+		desired = input.normalized() * minf(max_speed, 0.9) * clampf(facing.dot(input.normalized()) + 0.3, 0.0, 1.0)
 	elif has_ball and input.length() > 0.1:
 		var w := input.normalized()
 		var ap := ball_control.approach_point(w)
@@ -301,8 +304,8 @@ func _update_move(delta: float) -> void:
 			var off_b := ball_control.ball_offset()
 			var along_b := off_b.dot(w)
 			var bspeed := ball.flat_velocity().dot(w)
-			if along_b < BallControl.FOOT_DISTANCE + 0.05 and desired.length() > bspeed + 1.0:
-				desired = desired.normalized() * maxf(bspeed + 1.0, 0.8)
+			if along_b < 0.22 and desired.length() > bspeed + 1.2:
+				desired = desired.normalized() * maxf(bspeed + 1.2, 1.0)
 	elif has_ball:
 		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
 		var off := ball_control.ball_offset()
@@ -311,11 +314,22 @@ func _update_move(delta: float) -> void:
 			var stop_at := ball.predict_ground_position(0.3) - facing * 0.3
 			var to := stop_at - global_position
 			to.y = 0.0
-			desired = (to / 0.3).limit_length(maxf(bv.length() + 1.2, jog_speed * 0.8))
+			# acompanha a velocidade da bola e ainda diminui a distância (alcança)
+			desired = (bv + to / 0.35).limit_length(sprint_speed)
 	var hv := get_flat_velocity()
 	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
+	if has_ball and input.length() < 0.1 and hv.length() > 1.4 and ball_control.ball_distance() < 0.9:
+		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
+		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
+		var offb := ball_control.ball_offset()
+		var along := offb.dot(facing)
+		var lat := offb.dot(facing.cross(Vector3.UP))
+		var bsp := ball.flat_velocity().dot(facing)
+		desired = facing * clampf(bsp + (along - 0.32) * 3.0, 0.0, hv.length()) \
+			+ facing.cross(Vector3.UP) * clampf(lat * 2.5, -1.2, 1.2)
+		rate = 6.0
 	hv = hv.move_toward(desired, rate * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
