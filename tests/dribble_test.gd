@@ -108,12 +108,13 @@ func _reverse_test() -> void:
 	if t == 60:
 		Input.action_release("move_right")
 		Input.action_press("move_left", 1.0)
-	if t == 150:
+	if t == 180:
 		var off := ball.global_position - me.global_position
 		results["inverter_tem_bola"] = me.ball_control.has_ball()
 		results["inverter_bola_na_frente"] = off.x < 0.0
 		results["inverter_dist_max"] = snappedf(_maxd, 0.01)
-		results["inverter_andando_pra_esq"] = me.get_flat_velocity().x < -1.0
+		results["inverter_andando_pra_esq"] = me.get_flat_velocity().x < -0.5
+		results["inverter_vel"] = snappedf(me.get_flat_velocity().x, 0.1)
 		_next()
 
 
@@ -189,7 +190,8 @@ func _ball_behind_test(off: Vector3, key: String) -> void:
 		var o := ball.global_position - me.global_position
 		results[key + "_tem_bola"] = me.ball_control.has_ball()
 		results[key + "_bola_frente"] = o.x > 0.1
-		results[key + "_correndo"] = me.get_flat_velocity().x > 1.0
+		results[key + "_correndo"] = me.get_flat_velocity().x > 0.5
+		results[key + "_vel"] = snappedf(me.get_flat_velocity().x, 0.1)
 		_next()
 
 

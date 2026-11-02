@@ -3,7 +3,7 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://cnw0d8d38iqmv"
+uid="uid://dxw164tg0g7y4"
 path="res://.godot/imported/08_Side_Foot_Kick_ue5.fbx-37284de4644ab4607395c959cfe270af.scn"
 
 [deps]
@@ -39,6 +39,15 @@ _subresources={
 ,
 "retarget/remove_tracks/unmapped_bones": true,
 "retarget/rest_fixer/fix_silhouette/enable": true
+},
+"PATH:Skeleton3D/Body": {
+"import/skip_import": true
+},
+"PATH:Skeleton3D/HeadFace": {
+"import/skip_import": true
+},
+"PATH:Skeleton3D/HeadFaceless": {
+"import/skip_import": true
 }
 }
 }

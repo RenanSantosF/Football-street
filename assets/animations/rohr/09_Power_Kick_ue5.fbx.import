@@ -3,7 +3,7 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://ddif8quflcyf7"
+uid="uid://cjhrenx7edywr"
 path="res://.godot/imported/09_Power_Kick_ue5.fbx-a2e8f24f7e677065c0d344d6882036d3.scn"
 
 [deps]
@@ -39,6 +39,15 @@ _subresources={
 ,
 "retarget/remove_tracks/unmapped_bones": true,
 "retarget/rest_fixer/fix_silhouette/enable": true
+},
+"PATH:Skeleton3D/Body": {
+"import/skip_import": true
+},
+"PATH:Skeleton3D/HeadFace": {
+"import/skip_import": true
+},
+"PATH:Skeleton3D/HeadFaceless": {
+"import/skip_import": true
 }
 }
 }

@@ -185,7 +185,7 @@ func _build_foot_ik() -> void:
 		ik.root_bone = prefix + "UpperLeg"
 		ik.tip_bone = prefix + "Foot"
 		ik.use_magnet = true
-		ik.override_tip_basis = false
+		ik.override_tip_basis = true
 		ik.max_iterations = 8
 		ik.influence = 0.0
 		skeleton.add_child(ik)
@@ -206,7 +206,10 @@ func set_foot_target(side: float, world_pos: Vector3, weight: float, forward: Ve
 	ik.active = weight > 0.001 # desligada não custa nada
 	if weight <= 0.001:
 		return
-	ik.target = Transform3D(Basis(), world_pos)
+	# O pé mantém a MESMA rotação da animação (só a posição é corrigida):
+	# sem isso a IK torcia o tornozelo ("pé contorcido").
+	var foot_basis := skeleton.global_transform.basis * skeleton.get_bone_global_pose(_foot_bones[side]).basis
+	ik.target = Transform3D(foot_basis, world_pos)
 	var hip := skeleton.global_transform * skeleton.get_bone_global_pose(_hip_bones[side]).origin
 	ik.magnet = hip + forward * 0.8 + Vector3.DOWN * 0.35
 

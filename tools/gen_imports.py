@@ -140,8 +140,10 @@ def bone_map(names):
         parts.append(f'"bone_map/{b}":&"{names.get(b, "")}"')
     return ",".join(parts) + ',"script":null)'
 
-def write(path, skeleton_path, names, animations, extra_node="", fix_silhouette=False):
+def write(path, skeleton_path, names, animations, extra_node="", fix_silhouette=False, skip_nodes=()):
     src = path
+    # nós que não precisam vir (ex.: malha do boneco do autor num pack de animação)
+    skip_nodes_txt = "".join(f',\n"PATH:{n}": {{\n"import/skip_import": true\n}}' for n in skip_nodes)
     txt = f'''[remap]
 
 importer="scene"
@@ -177,7 +179,7 @@ _subresources={{
 {bone_map(names)},
 "retarget/remove_tracks/unmapped_bones": true,
 "retarget/rest_fixer/fix_silhouette/enable": {"true" if fix_silhouette else "false"}{extra_node}
-}}
+}}{skip_nodes_txt}
 }}
 }}
 {"gltf/naming_version=1" + chr(10) + "gltf/embedded_image_handling=1" if path.endswith(".gltf") else "fbx/importer=0" + chr(10) + "fbx/allow_geometry_helper_nodes=false" + chr(10) + "fbx/embedded_image_handling=1"}
@@ -201,4 +203,5 @@ if __name__ == "__main__":
     if os.path.isdir(rohr):
         for fn in sorted(os.listdir(rohr)):
             if fn.endswith(".fbx"):
-                write(f"{rohr}/{fn}", "Skeleton3D", ue5_names(), True, fix_silhouette=True)
+                write(f"{rohr}/{fn}", "Skeleton3D", ue5_names(), True, fix_silhouette=True,
+                      skip_nodes=("Skeleton3D/Body", "Skeleton3D/HeadFace", "Skeleton3D/HeadFaceless"))

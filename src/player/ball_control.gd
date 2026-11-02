@@ -276,8 +276,10 @@ func _try_gain_control() -> void:
 	var incoming := _flat(bv)
 	var dir_in := incoming.normalized() if incoming.length() > 0.3 else -player.facing
 	var lead := clampf((d - 0.3) / maxf(rel_speed, 1.0), 0.03, 0.12)
-	var slow := player.get_horizontal_speed() < 0.8 and incoming.length() < 4.0
-	var use_sole := slow and _rng.randf() < 0.4
+	# Pisar na bola só com ela chegando bem mansa (a animação levanta o pé
+	# alto); no resto, parte de dentro do pé amortecendo.
+	var slow := player.get_horizontal_speed() < 0.6 and incoming.length() < 2.0
+	var use_sole := slow and _rng.randf() < 0.5
 	var f := foot.nearest_foot()
 	# A posse só é tomada no contato do pé (se o pé não alcançar, a bola bate
 	# no corpo de verdade em vez de atravessar o jogador).
@@ -370,14 +372,20 @@ func _conduct(delta: float) -> void:
 		# Mudou de ideia (direção bem diferente) antes do pé chegar: cancela o
 		# toque antigo em vez de empurrar a bola para o lado errado.
 		if foot.phase == FootContact.Phase.REACH and foot.mode == FootContact.Mode.INSIDE \
-				and want.length() >= 0.15 and want.normalized().dot(foot.dir) < 0.5:
+				and want.length() >= 0.15 and want.normalized().dot(foot.dir) < 0.8:
 			foot.cancel()
 		return # o pé está indo até a bola: o toque acontece no contato
 	var pv := _flat(player.velocity)
 	var bv := _flat(ball.velocity_now())
+	# Pediu o lado OPOSTO correndo com a bola um pouco à frente: primeiro freia
+	# conduzindo (como soltar o analógico) e só depois vira com a bola no pé.
+	var reversing := want.length() >= 0.15 and pv.length() > 2.2 and pv.normalized().dot(want.normalized()) < -0.5 \
+		and d > 0.36
+	if reversing:
+		want = Vector3.ZERO
 	if want.length() < 0.15:
 		_dragging = false
-		if pv.length() <= 1.4:
+		if pv.length() <= 1.4 and not reversing:
 			_trap(delta, off, d, pv, bv)
 			return
 		# Soltou o analógico correndo: vai FREANDO com a bola, com toques
@@ -412,7 +420,10 @@ func _conduct(delta: float) -> void:
 	if d > TOUCH_REACH:
 		return # longe: o Player vai até a bola primeiro (approach_point)
 	var speed := pv.length()
-	if _since_touch < 0.2:
+	# virando (direção pedida diferente do rumo da bola) o pé pode ir de novo
+	# logo; reto, respeita a cadência da passada
+	var turning_now := bv.length() > 0.4 and bv.normalized().dot(want.normalized()) < 0.85
+	if _since_touch < (0.1 if turning_now else 0.2):
 		return
 	var right := w.cross(Vector3.UP)
 	var along := off.dot(w)
@@ -424,6 +435,15 @@ func _conduct(delta: float) -> void:
 	# freando (soltou o analógico): a bola mais rápida que o corpo pede um toque
 	# curto que a segura
 	var braking_touch := want.length() < 0.05 and (rel_along > 0.3 or bv.length() > 1.4) and _since_touch > 0.3
+	if braking_touch and along > 0.15:
+		# FREIO COM A SOLA: a perna estica à frente, pisa na bola e a segura
+		# (fica ~55% da velocidade do corpo); repete até parar.
+		_since_touch = 0.0
+		foot.begin(foot.nearest_foot(), player.facing, TOUCH_LEAD, FootContact.Mode.SOLE, func():
+			var pvn := _flat(player.velocity)
+			ball.touch(pvn * 0.55, player)
+			player.notify_touch(&"brake"), 0.08)
+		return
 	if not (behind or drifting or mismatch or braking_touch):
 		_touch_wait = 0.0
 		return
@@ -594,8 +614,8 @@ func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 	var pv_now := _flat(player.velocity)
 	var travel := (pv_now * 0.45 + dir * v_p * 0.55) * T
 	if player.intent.move.length() < 0.1:
-		# freando: cada toque curto tira ~1,8 m/s da bola (o corpo freia junto)
-		travel = dir * maxf(speed - 1.8, 0.0) * T
+		# freando: cada toque curto tira ~2,2 m/s da bola (o corpo freia junto)
+		travel = dir * maxf(speed - 2.2, 0.0) * T
 	var p_next := player.global_position + travel + dir * lead + right * (_foot_side * 0.07)
 	var to := _flat(p_next - bp)
 	var a := ball.rolling_resistance
@@ -916,7 +936,7 @@ func drag_ball_around(new_dir: Vector3, time: float) -> void:
 	if not has_ball():
 		return
 	foot.begin(foot.nearest_foot(), new_dir, 0.07, FootContact.Mode.SOLE, func():
-		var tgt := player.global_position + new_dir * 0.34
+		var tgt := player.global_position + new_dir * 0.46
 		var v := _flat(tgt - ball.global_position) / maxf(time, 0.2) + new_dir * (0.5 * ball.rolling_resistance * time)
 		ball.touch(v.limit_length(2.5), player), 0.15)
 	_since_touch = 0.0

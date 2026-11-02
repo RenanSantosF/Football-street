@@ -135,8 +135,8 @@ func update(delta: float) -> void:
 ## Quanto a IK pode puxar a perna: só pequenas correções a partir da pose da
 ## animação (como nos jogos). Longe disso a perna NÃO estica — o toque espera
 ## a passada certa (o corpo é que se ajusta).
-const IK_FULL := 0.16
-const IK_MAX := 0.32
+const IK_FULL := 0.13
+const IK_MAX := 0.28
 ## Pisar na bola à frente (sola) é uma pose natural de perna levantada para a
 ## frente: aceita um pouco mais, mas só para a frente e pouco para o lado.
 const IK_FULL_SOLE := 0.3
@@ -162,6 +162,11 @@ func _ik_cap() -> float:
 	elif mode == Mode.SOLE and fwd > 0.05 and absf(lat_s) < 0.3 and not crossing:
 		full = IK_FULL_SOLE
 		mx = IK_MAX_SOLE
+	elif mode == Mode.INSIDE and dir.dot(player.facing) < 0.94 and fwd > 0.0 and not crossing:
+		# Toque de lado numa virada: esticar o pé para o lado da bola é o
+		# movimento natural (não precisa esperar a próxima passada).
+		full = 0.22
+		mx = 0.4
 	elif player.get_horizontal_speed() < 1.6 and fwd > -0.05 and not crossing:
 		# Devagar/parado: esticar a perna para tocar a bola do lado ou à frente
 		# é natural (passada curta). Correndo, só correções pequenas.

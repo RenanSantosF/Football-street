@@ -322,7 +322,9 @@ func _update_move(delta: float) -> void:
 	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
-	if has_ball and input.length() < 0.1 and hv.length() > 1.4 and ball_control.ball_distance() < 0.9:
+	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.2 \
+		and hv.normalized().dot(input.normalized()) < -0.5 and ball_control.ball_distance() > 0.36
+	if has_ball and (input.length() < 0.1 or reversing_ball) and hv.length() > 1.4 and ball_control.ball_distance() < 0.9:
 		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
 		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
 		var offb := ball_control.ball_offset()
@@ -331,7 +333,7 @@ func _update_move(delta: float) -> void:
 		var bsp := ball.flat_velocity().dot(facing)
 		desired = facing * clampf(bsp + (along - 0.32) * 3.0, 0.0, hv.length()) \
 			+ facing.cross(Vector3.UP) * clampf(lat * 2.5, -1.2, 1.2)
-		rate = 6.0
+		rate = 8.0 if reversing_ball else 6.0
 	hv = hv.move_toward(desired, rate * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
@@ -767,7 +769,10 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 			and AnimationCatalog.has_clip(&"turn180"):
 		# Com a bola, só vira "de clipe" se ela estiver no pé (a sola alcança);
 		# senão primeiro freia e chega na bola.
-		var ball_ok := not ball_control.has_ball() or ball_control.ball_distance() < 0.45
+		# (bola colada e não fugindo: senão a sola não alcança e a bola segue
+		#  sozinha; nesse caso o jogador primeiro freia conduzindo)
+		var ball_ok := not ball_control.has_ball() or (ball_control.ball_distance() < 0.36 \
+			and (ball.flat_velocity() - hv).dot(facing) < 0.4)
 		if hv.normalized().dot(input.normalized()) < -0.55 and ball_ok:
 			_start_turn(&"turn180", &"turn180", input.normalized())
 			return true
@@ -799,7 +804,7 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 				and AnimationCatalog.has_clip(&"walk_turn180") and _steady_time > 0.04:
 			var left2 := ang_v > 0.0
 			_start_turn(&"walk_turn180_l" if left2 else &"walk_turn180_r",
-				&"walk_turn180_m" if left2 else &"walk_turn180", w, 1.15, false)
+				&"walk_turn180_m" if left2 else &"walk_turn180", w, 1.45, false)
 			if has_b:
 				bc0.drag_ball_to(w, 1.0)
 			return true

@@ -3,7 +3,7 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://rjmdd5dhg2m3"
+uid="uid://h3q3qcgkf5rx"
 path="res://.godot/imported/04_Juggling_01_ue5.fbx-661835f6063f89b930c26a489b856a97.scn"
 
 [deps]
@@ -39,6 +39,15 @@ _subresources={
 ,
 "retarget/remove_tracks/unmapped_bones": true,
 "retarget/rest_fixer/fix_silhouette/enable": true
+},
+"PATH:Skeleton3D/Body": {
+"import/skip_import": true
+},
+"PATH:Skeleton3D/HeadFace": {
+"import/skip_import": true
+},
+"PATH:Skeleton3D/HeadFaceless": {
+"import/skip_import": true
 }
 }
 }

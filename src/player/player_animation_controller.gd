@@ -96,7 +96,7 @@ const AERIAL_STATES: Array[StringName] = [&"RecvChest", &"RecvKnee", &"Header", 
 const KIND_SPEED := {
 	&"turn180": Player.TURN_SPEED_UP, &"turn_l": Player.TURN_SPEED_UP,
 	&"turn_r": Player.TURN_SPEED_UP, &"run_stop": 1.0,
-	&"cut_r": 1.0, &"cut_l": 1.0, &"walk_turn180_r": 1.15, &"walk_turn180_l": 1.15,
+	&"cut_r": 1.0, &"cut_l": 1.0, &"walk_turn180_r": 1.45, &"walk_turn180_l": 1.45,
 	&"stand_turn_r": 1.2, &"stand_turn_l": 1.2, &"walk_stop": 1.0,
 }
 ## Gesto de espera -> estado.
@@ -360,7 +360,7 @@ func _on_ball_touched(kind: StringName) -> void:
 		_time_since_contact = 0.0
 		return
 	# Domínio: o pé pisa na bola — só quase parado (correndo, a passada segue).
-	if not (kind == &"receive" or kind == &"trap") or not _has_state(&"Receive"):
+	if kind != &"receive" or not _has_state(&"Receive"):
 		return
 	if playback.get_current_node() in BASE_STATES and player.get_horizontal_speed() < 1.0:
 		_action_kind = kind
