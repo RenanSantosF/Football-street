@@ -32,7 +32,7 @@ const POKE_RANGE := 1.3
 const DODGE_CHANCE_AI := 0.35
 const DODGE_CHANCE_HUMAN := 0.25
 ## Tempo caído antes de levantar (quando não há clipe de levantar).
-const DOWN_TIME := 0.7
+const DOWN_TIME := 0.35
 ## Viradas tocadas um pouco mais rápidas (responsivo sem perder o movimento).
 const TURN_SPEED_UP := 1.35
 
@@ -331,7 +331,7 @@ func _update_move(delta: float) -> void:
 		var along := offb.dot(facing)
 		var lat := offb.dot(facing.cross(Vector3.UP))
 		var bsp := ball.flat_velocity().dot(facing)
-		desired = facing * clampf(bsp + (along - 0.32) * 3.0, 0.0, hv.length()) \
+		desired = facing * clampf(bsp + (along - 0.3) * 4.0, 0.0, hv.length()) \
 			+ facing.cross(Vector3.UP) * clampf(lat * 2.5, -1.2, 1.2)
 		rate = 8.0 if reversing_ball else 6.0
 	hv = hv.move_toward(desired, rate * delta)
@@ -436,6 +436,9 @@ func _record_buffer() -> void:
 		_buffer_timer = BUFFER_TIME_WITH_BALL if (ball_control.has_ball() or incoming) else BUFFER_TIME
 		if incoming:
 			_buffer_timer = 3.0 # de primeira: espera a bola chegar
+		elif ball != null and ball.possessor == null and ball.in_play \
+				and global_position.distance_to(ball.global_position) < 3.5:
+			_buffer_timer = 1.4 # bola chegando/solta perto: toca assim que ela chegar no pé
 
 
 func _update_actions(delta: float) -> void:
@@ -458,7 +461,7 @@ func _update_actions(delta: float) -> void:
 					return
 			if _pivot_dir != Vector3.ZERO:
 				return # ainda girando
-			if ball_control.can_kick() or ball_control.can_start_kick_on_run():
+			if ball_control.can_kick() or ball_control.can_start_kick_on_run() or _first_time_ready():
 				_start_kick(_buffer_action, _buffer_power, _buffer_aim, _buffer_target, _buffer_lofted)
 				_action_precise = _buffer_precise
 				_action_lofted = _buffer_lofted
@@ -502,12 +505,29 @@ func _update_actions(delta: float) -> void:
 
 
 func _is_kick_action() -> bool:
-	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_power"]
+	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip"]
 
 
 func _has_pending_kick() -> bool:
 	return _buffer_timer > 0.0 and (_buffer_action == PlayerIntent.Action.PASS \
 		or _buffer_action == PlayerIntent.Action.SHOOT)
+
+
+## De primeira: a bola (sem dono) está chegando e vai estar no pé no
+## instante do contato do passe/chute.
+func _first_time_ready() -> bool:
+	if ball == null or ball.possessor != null or not ball.in_play or not ball.can_be_kicked_by(self):
+		return false
+	if ball.global_position.y > 0.5:
+		return false
+	var rel := ball.global_position - global_position
+	rel.y = 0.0
+	var v := ball.flat_velocity() - get_flat_velocity()
+	var closing := -rel.dot(v) / maxf(rel.length(), 0.01)
+	if closing < 0.5:
+		return rel.length() <= BallControl.KICK_REACH
+	var t_arrive := (rel.length() - 0.4) / closing
+	return t_arrive <= 0.24
 
 
 ## Para onde a bola vai sair (para escolher o pé e saber se precisa girar).
@@ -552,7 +572,12 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		power = maxf(power, LONG_PASS_POWER) # passe por cima
 	var kdir := _kick_direction(a, aim, target)
 	_kick_mirror = _choose_kick_foot(kdir)
-	if a == PlayerIntent.Action.SHOOT:
+	if a == PlayerIntent.Action.SHOOT and lofted:
+		# CAVADINHA: só um toque leve por baixo da bola (animação do passe curto,
+		# não o chute forte inteiro).
+		_begin_action(&"chip", 0.2, 0.42, power, aim, null, 0.45)
+		_action_face = facing if aim.length() < 0.2 else Vector3(aim.x, 0.0, aim.z).normalized()
+	elif a == PlayerIntent.Action.SHOOT:
 		var kind: StringName = &"shoot_power" if power > 0.7 else &"shoot"
 		var contact := 0.16 + 0.12 * power
 		_begin_action(kind, contact, contact + 0.3, power, aim, null, 0.35)
@@ -575,7 +600,7 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 ## Continuação do corpo depois do contato: segue o deslocamento do próprio
 ## clipe (antes o quadril ficava pregado e os pés deslizavam).
 func _setup_kick_root_motion() -> void:
-	var map := {&"pass": &"pass_short", &"long_pass": &"pass_long", &"shoot": &"shoot", &"shoot_power": &"shoot_power"}
+	var map := {&"pass": &"pass_short", &"long_pass": &"pass_long", &"shoot": &"shoot", &"shoot_power": &"shoot_power", &"chip": &"pass_short"}
 	_kick_logical = map.get(_action_kind, &"")
 	if _kick_logical == &"" or not AnimationCatalog.has_clip(_kick_logical):
 		_kick_logical = &""
@@ -689,6 +714,16 @@ func _update_action(delta: float) -> void:
 			facing = _turn_target
 			rotation.y = atan2(-facing.x, -facing.z)
 			_turn_target = Vector3.ZERO
+	# Passe chegando no meio de uma virada/parada sem bola: interrompe para dominar.
+	if state == State.ACTION and _action_kind in [&"turn_l", &"turn_r", &"walk_stop", &"run_stop"] \
+			and ball != null and ball.pass_target == self and ball.possessor == null and ball.in_play \
+			and ball.global_position.distance_to(global_position) < 3.5:
+		state = State.MOVE
+		if _turn_target != Vector3.ZERO:
+			var k := clampf(_action_time / maxf(_action_length, 0.01), 0.0, 1.0)
+			facing = facing.rotated(Vector3.UP, facing.signed_angle_to(_turn_target, Vector3.UP) * k).normalized()
+			rotation.y = atan2(-facing.x, -facing.z)
+			_turn_target = Vector3.ZERO
 	# Parada brusca: se voltar a mexer o analógico (ou pedir passe/chute), sai da parada.
 	if state == State.ACTION and (_action_kind == &"run_stop" or _action_kind == &"walk_stop") and \
 			((_action_time > 0.25 and intent.move.length() > 0.5) or (_action_time > 0.1 and _has_pending_kick())):
@@ -705,6 +740,8 @@ func _do_contact() -> void:
 		&"pass", &"long_pass":
 			if ball_control.execute_pass(_action_power, _action_aim, _action_target, _action_lofted):
 				_restart_lock = false
+		&"chip":
+			ball_control.execute_shot(_action_power, _action_aim, _action_precise, true)
 		&"shoot", &"shoot_power":
 			ball_control.execute_shot(_action_power, _action_aim, _action_precise, _action_lofted)
 		&"dribble":
@@ -761,6 +798,8 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 	_turn_cooldown -= delta
 	if _marking or _restart_lock or _turn_cooldown > 0.0:
 		return false
+	if ball != null and ball.pass_target == self and ball.possessor == null and ball.in_play:
+		return false # passe chegando: nada de virada de clipe (o domínio vem primeiro)
 	# IA: viradas animadas com moderação (senão fica lenta e repetitiva).
 	var ai_turn_ok := is_human or _rng.randf() < 0.04
 	var fetching := ball_control.has_ball() and in_len > 0.1 \
@@ -784,7 +823,9 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 			return true
 	var bc0 := ball_control
 	var has_b := bc0.has_ball()
-	var ball_at_foot := not has_b or (bc0.ball_distance() < 0.5 and bc0.ball_offset().dot(facing) > -0.05)
+	var ball_at_foot := not has_b or (bc0.ball_distance() < 0.5 and bc0.ball_offset().dot(facing) > 0.05 \
+		and absf(bc0.ball_offset().dot(facing.cross(Vector3.UP))) < 0.24 \
+		and (ball.flat_velocity() - hv).length() < 1.2) # bola indo embora (1º toque longo): não para pra girar
 	if in_len > 0.6 and ai_turn_ok and not fetching and ball_at_foot:
 		var w := input.normalized()
 		var vdir := hv.normalized() if speed > 0.3 else facing
@@ -806,7 +847,7 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 			_start_turn(&"walk_turn180_l" if left2 else &"walk_turn180_r",
 				&"walk_turn180_m" if left2 else &"walk_turn180", w, 1.45, false)
 			if has_b:
-				bc0.drag_ball_to(w, 1.0)
+				bc0.drag_ball_to(w, 1.6)
 			return true
 		# GIRO PARADO com a bola (~55°): "Standing Cover Turn" com a sola na bola.
 		if has_b and speed < 0.6:
@@ -1035,7 +1076,8 @@ func _start_root_action(kind: StringName, logical: StringName, lead: float, face
 ## Carrinho: desliza em direção a quem conduz; o conduzidor pode pular.
 func _start_slide(target: Player, dir: Vector3) -> void:
 	_start_root_action(&"slide", &"tackle", 0.25, dir)
-	_action_length += DOWN_TIME * 0.5 + AnimationCatalog.getup_duration(&"getup_b")
+	# quem deu o carrinho levanta logo (não fica deitado)
+	_action_length += AnimationCatalog.getup_duration(&"getup_b") * 0.8
 	target.on_tackle_incoming(self)
 
 

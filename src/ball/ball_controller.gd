@@ -14,7 +14,8 @@ const LOSE_TEAMMATE_DIST := 2.4
 
 @export_group("Física")
 ## Desaceleração ao rolar nos bloquinhos (m/s²): piso irregular segura a bola.
-@export var rolling_resistance := 1.45
+## Bola de rua meio murcha + bloquinhos com atrito: rola menos.
+@export var rolling_resistance := 2.0
 ## Arrasto do ar (quadrático): a = k * v².
 @export var air_drag := 0.012
 ## Efeito Magnus (curva por rotação).

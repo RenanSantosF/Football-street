@@ -240,6 +240,16 @@ func _try_gain_control() -> void:
 	var d := ball_distance()
 	# Domínio pela PickupArea (área em volta dos pés); goleiro alcança mais.
 	var inside := d <= GK_CONTROL_RADIUS if gk else _ball_in_pickup_area()
+	# Bola rápida: agenda o pé pela PREVISÃO de chegada (senão, a 9 m/s ela
+	# atravessa a área dos pés entre um quadro e outro e o pé chega tarde).
+	var rel_p := _flat(ball.global_position - player.global_position)
+	var rel_v := _flat(ball.velocity_now() - player.velocity)
+	var t_close := -1.0
+	if rel_v.length_squared() > 1.0:
+		t_close = -rel_p.dot(rel_v) / rel_v.length_squared()
+		if not inside and not gk and t_close > 0.0 and t_close < 0.13 \
+				and (rel_p + rel_v * t_close).length() < 0.55:
+			inside = true
 	if not inside:
 		_save_rolled = false
 		return
@@ -276,6 +286,8 @@ func _try_gain_control() -> void:
 	var incoming := _flat(bv)
 	var dir_in := incoming.normalized() if incoming.length() > 0.3 else -player.facing
 	var lead := clampf((d - 0.3) / maxf(rel_speed, 1.0), 0.03, 0.12)
+	if t_close > 0.0 and rel_speed > 4.0:
+		lead = clampf(t_close, 0.03, 0.13) # o pé encontra a bola no ponto mais perto
 	# Pisar na bola só com ela chegando bem mansa (a animação levanta o pé
 	# alto); no resto, parte de dentro do pé amortecendo.
 	var slow := player.get_horizontal_speed() < 0.6 and incoming.length() < 2.0
@@ -300,7 +312,11 @@ func _first_touch() -> void:
 	var want := _flat(player.intent.move)
 	var settle: Vector3
 	if want.length() > 0.3:
-		settle = pv * 0.9 + want.normalized() * 1.1 # domínio orientado
+		# domínio ORIENTADO: o primeiro toque já leva a bola para onde você quer
+		# ir, na velocidade de quem sai correndo com ela
+		var wn := want.normalized()
+		var push := 2.6 + (0.9 if player.intent.sprint else 0.0) # correndo: toque mais longo
+		settle = wn * clampf(maxf(pv.dot(wn), 0.0) + push, 2.6, 5.2) + (pv - wn * pv.dot(wn)) * 0.5
 	else:
 		var keep := player.global_position + player.facing * 0.38
 		settle = pv * 0.8 + _flat(keep - ball.global_position) * 3.0
@@ -372,7 +388,7 @@ func _conduct(delta: float) -> void:
 		# Mudou de ideia (direção bem diferente) antes do pé chegar: cancela o
 		# toque antigo em vez de empurrar a bola para o lado errado.
 		if foot.phase == FootContact.Phase.REACH and foot.mode == FootContact.Mode.INSIDE \
-				and want.length() >= 0.15 and want.normalized().dot(foot.dir) < 0.8:
+				and want.length() >= 0.15 and want.normalized().dot(foot.dir) < 0.3:
 			foot.cancel()
 		return # o pé está indo até a bola: o toque acontece no contato
 	var pv := _flat(player.velocity)
@@ -417,7 +433,8 @@ func _conduct(delta: float) -> void:
 		_since_touch = 0.0
 		player.notify_touch(&"drag")
 		return
-	if d > TOUCH_REACH:
+	var braking_now := want.length() < 0.05 and pv.length() > 1.4
+	if d > (0.62 if braking_now else TOUCH_REACH):
 		return # longe: o Player vai até a bola primeiro (approach_point)
 	var speed := pv.length()
 	# virando (direção pedida diferente do rumo da bola) o pé pode ir de novo
@@ -434,7 +451,7 @@ func _conduct(delta: float) -> void:
 	var mismatch := bv.length() > 0.4 and bv.normalized().dot(w) < 0.8
 	# freando (soltou o analógico): a bola mais rápida que o corpo pede um toque
 	# curto que a segura
-	var braking_touch := want.length() < 0.05 and (rel_along > 0.3 or bv.length() > 1.4) and _since_touch > 0.3
+	var braking_touch := want.length() < 0.05 and (rel_along > 0.3 or bv.length() > 1.4) and _since_touch > 0.22
 	if braking_touch and along > 0.15:
 		# FREIO COM A SOLA: a perna estica à frente, pisa na bola e a segura
 		# (fica ~55% da velocidade do corpo); repete até parar.
@@ -475,7 +492,11 @@ func _conduct(delta: float) -> void:
 	_since_touch = 0.0
 	var ts := turn_side
 	foot.begin(f, w, TOUCH_LEAD, FootContact.Mode.INSIDE, func():
-		_do_touch(w, _flat(player.velocity).length(), 0.0)
+		# direção ATUAL do analógico no contato (ele pode ter girado mais um
+		# pouco enquanto o pé ia até a bola) — o toque não fica "atrasado"
+		var cur := _flat(player.intent.move)
+		var wd := cur.normalized() if cur.length() > 0.15 and cur.normalized().dot(w) > 0.3 else w
+		_do_touch(wd, _flat(player.velocity).length(), 0.0)
 		if ts != 0.0:
 			player.notify_touch(&"side_touch"))
 
@@ -536,10 +557,14 @@ func approach_point(w: Vector3) -> Vector3:
 	var ahead := off.normalized().dot(w)
 	var bv := ball.flat_velocity()
 	var ball_with_me := bv.length() < 0.5 or bv.normalized().dot(w) > 0.7
-	if ahead > 0.75 and ball_with_me:
+	var lat_w := absf(off.dot(w.cross(Vector3.UP)))
+	if ahead > 0.75 and ball_with_me and (lat_w < 0.17 or bv.length() > 1.0):
 		return Vector3.INF # bola à frente indo junto: condução normal
+	# (bola parada à frente mas fora da linha: o corpo se alinha atrás dela,
+	#  senão passa do lado sem o pé alcançar)
 	var in_front_of_body := off.dot(player.facing) > 0.12
-	if d <= 0.48 and ahead > -0.3 and off.dot(player.facing) > -0.05:
+	var lat_b := absf(off.dot(player.facing.cross(Vector3.UP)))
+	if d <= 0.48 and ahead > -0.3 and off.dot(player.facing) > 0.02 and lat_b < 0.4:
 		return Vector3.INF # no pé (à frente ou do lado): o toque de lado resolve NA HORA
 	if d <= 0.45 and in_front_of_body and ahead < -0.35:
 		return Vector3.INF # bola no pé e pediu o contrário: puxada de sola
@@ -759,7 +784,12 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
 	# Imprecisão: maior com força alta, bola longe do pé ou corpo desalinhado.
+	var back := player.facing.dot(dir) < -0.2 # de costas para o gol
+	if back:
+		speed *= 0.55
 	var spread := deg_to_rad(lerpf(0.8, 3.5, power))
+	if back:
+		spread *= 3.0
 	if ball_distance() > 0.7:
 		spread *= 1.3
 	if player.facing.dot(dir) < 0.3:
@@ -783,7 +813,11 @@ func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
 	var speed := lerpf(12.0, 23.0, power)
 	var spread := deg_to_rad(lerpf(0.4, 1.8, power))
 	if player.facing.dot(dir) < 0.3:
-		spread *= 1.6 # chutar de lado para onde o corpo não está virado
+		spread *= 1.6
+	if player.facing.dot(dir) < -0.2:
+		# de costas para onde quer chutar: sem força e sem precisão
+		spread *= 3.0
+		speed *= 0.55 # chutar de lado para onde o corpo não está virado
 	dir = dir.rotated(Vector3.UP, _rng.randf_range(-spread, spread))
 	# Altura: até o gol (se estiver mirando para ele) ou ~10 m.
 	var goal_x := Field.goal_line_x(Team.other(player.team))
@@ -842,6 +876,13 @@ func execute_tackle() -> bool:
 		chance -= 0.2 # vindo por trás
 	elif carrier.facing.dot(from_carrier) > 0.5:
 		chance += 0.12 # de frente: fecha o caminho da bola
+	# PROTEÇÃO: a bola do outro lado do corpo de quem conduz (protegendo de
+	# costas/de lado) — o bote quase nunca alcança; e o pé tem que chegar nela.
+	var ball_side := _flat(ball.global_position - carrier.global_position)
+	if ball_side.dot(_flat(player.global_position - carrier.global_position)) < 0.0:
+		chance -= 0.4
+	if ball_distance() > 1.15:
+		chance -= 0.3
 	if _rng.randf() > chance:
 		# Errou a bola: se pegou o adversário, é FALTA.
 		if player.global_position.distance_to(carrier.global_position) < 0.95 and _rng.randf() < 0.55:
@@ -868,9 +909,17 @@ func execute_slide_tackle() -> bool:
 	if ball == null or not ball.in_play:
 		return false
 	var off := ball_offset()
-	if off.length() > 1.25 or off.dot(player.facing) < -0.1 or ball.global_position.y > 0.6:
-		return false
 	var carrier := ball.possessor
+	var ball_hit := not (off.length() > 1.25 or off.dot(player.facing) < -0.1 or ball.global_position.y > 0.6)
+	if not ball_hit:
+		# Não pegou a bola: se o carrinho pegou o ADVERSÁRIO, é falta.
+		if carrier != null and carrier.team != player.team and not carrier.is_jumping():
+			var to_c := _flat(carrier.global_position - player.global_position)
+			if to_c.length() < 1.1 and to_c.dot(player.facing) > -0.1:
+				carrier.trip()
+				if player.match_manager != null:
+					player.match_manager.award_free_kick(carrier.team, carrier.global_position)
+		return false
 	if carrier != null and carrier.team != player.team and carrier.is_jumping():
 		return false # pulou o carrinho
 	if debug_slide_trip < 0.0 and _rng.randf() > 0.8:
@@ -987,7 +1036,7 @@ static func ground_pass_velocity(from: Vector3, to: Vector3, end_speed: float) -
 	var d := flat.length()
 	if d < 0.01:
 		return Vector3.ZERO
-	var a := 1.9 # desaceleração média: rolamento nos bloquinhos (1,45) + arrasto do ar
+	var a := 2.45 # desaceleração média: rolamento nos bloquinhos (2,0) + arrasto do ar
 	var v0 := clampf(sqrt(end_speed * end_speed + 2.0 * a * d), 3.0, 16.0)
 	return flat / d * v0
 

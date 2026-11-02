@@ -200,9 +200,9 @@ const SEGMENTS := {
 ## getup_b = de costas (depois do carrinho).
 const GETUP_SEGMENTS := {
 	&"getup": [3.8, 8.6],
-	&"getup_b": [1.6, 7.0],
+	&"getup_b": [3.4, 7.0],
 }
-const GETUP_SPEED := 1.7
+const GETUP_SPEED := 2.4
 
 
 static func getup_duration(logical: StringName) -> float:
@@ -420,6 +420,8 @@ static func root_motion_velocity(logical: StringName, t: float) -> Vector3:
 	var curve: PackedVector3Array = root_curves.get(String(clip(logical)), PackedVector3Array())
 	if curve.size() < 2:
 		return Vector3.ZERO
+	if t >= float(curve.size() - 1) / ROOT_MOTION_FPS:
+		return Vector3.ZERO # clipe acabou (ex.: caído no chão): não desliza
 	var i := clampi(int(t * ROOT_MOTION_FPS), 0, curve.size() - 2)
 	return (curve[i + 1] - curve[i]) * ROOT_MOTION_FPS
 

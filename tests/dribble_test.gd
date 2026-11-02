@@ -108,6 +108,8 @@ func _reverse_test() -> void:
 	if t == 60:
 		Input.action_release("move_right")
 		Input.action_press("move_left", 1.0)
+	if t % 10 == 0 and t >= 50 and OS.get_environment("DBG") != "":
+		print("inv t=", t, " me=", me.global_position.snapped(Vector3.ONE*0.01), " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.01), " ball=", ball.global_position.snapped(Vector3.ONE*0.01), " bv=", ball.flat_velocity().snapped(Vector3.ONE*0.01), " act=", me._action_kind, " st=", me.state, " fac=", me.facing.snapped(Vector3.ONE*0.01), " drag=", me.ball_control.is_dragging(), " trap=", me.ball_control.is_trapping())
 	if t == 180:
 		var off := ball.global_position - me.global_position
 		results["inverter_tem_bola"] = me.ball_control.has_ball()
@@ -185,7 +187,7 @@ func _ball_behind_test(off: Vector3, key: String) -> void:
 		Input.action_press("move_right", 1.0)
 	var t := f - t0
 	if t % 15 == 0 and OS.get_environment("DBG") != "":
-		print(key, " t=", t, " me=", me.global_position, " v=", me.get_flat_velocity(), " ball=", ball.global_position, " st=", me.state, " act=", me._action_kind)
+		print(key, " t=", t, " me=", me.global_position, " v=", me.get_flat_velocity(), " ball=", ball.global_position, " st=", me.state, " act=", me._action_kind, " fac=", me.facing.snapped(Vector3.ONE*0.01), " ap=", me.ball_control.approach_point(Vector3.RIGHT), " drag=", me.ball_control.is_dragging(), " trap=", me.ball_control.is_trapping())
 	if t == 150:
 		var o := ball.global_position - me.global_position
 		results[key + "_tem_bola"] = me.ball_control.has_ball()

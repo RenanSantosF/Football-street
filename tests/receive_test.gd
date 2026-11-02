@@ -68,6 +68,8 @@ func _physics_process(_d: float) -> void:
 		v.y = 0.0
 		ball.kick(v.normalized() * float(c[1]), Vector3.ZERO, null)
 		ball.pass_target = me
+	if OS.get_environment("DBGR") == str(c[0]) and t % 6 == 0 and t <= 150:
+		print("R t=", t, " me=", me.global_position.snapped(Vector3.ONE*0.01), " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.01), " fac=", me.facing.snapped(Vector3.ONE*0.01), " ball=", ball.global_position.snapped(Vector3.ONE*0.01), " bv=", ball.flat_velocity().snapped(Vector3.ONE*0.01), " pos=", ball.possessor.name if ball.possessor else "-", " act=", me._action_kind, " st=", me.state)
 	if t == 150:
 		for a in ["sprint", "move_left", "move_right", "move_up", "move_down"]:
 			Input.action_release(a)

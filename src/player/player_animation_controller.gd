@@ -19,6 +19,7 @@ const BASE_STATES: Array[StringName] = [&"Locomotion", &"Mark"]
 ## tipo de ação/reação do Player -> estado do AnimationTree
 const ACTION_STATES := {
 	&"pass": &"PassShort",
+	&"chip": &"PassShort",
 	&"long_pass": &"PassLong",
 	&"shoot": &"Shoot",
 	&"shoot_power": &"ShootPower",
@@ -54,6 +55,7 @@ const ACTION_STATES := {
 ## tipo de ação -> nome lógico do clipe (tempo de contato e pé)
 const ACTION_LOGICAL := {
 	&"pass": &"pass_short",
+	&"chip": &"pass_short",
 	&"long_pass": &"pass_long",
 	&"shoot": &"shoot",
 	&"shoot_power": &"shoot_power",
@@ -330,7 +332,7 @@ func _on_action_started(kind: StringName) -> void:
 	if not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
-	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power"] \
+	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip"] \
 		and _has_state(StringName(String(state_name) + "L"))
 	if mirrored:
 		state_name = StringName(String(state_name) + "L")

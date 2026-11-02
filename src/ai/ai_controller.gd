@@ -235,7 +235,17 @@ func _support_or_mark(carrier: Player) -> void:
 
 func _defend(carrier: Player) -> void:
 	var own_goal := Field.goal_center(player.team)
-	if _is_closest_field_player_to(carrier.global_position):
+	# O jogador que VOCÊ controla é quem pressiona quando está perto (ou
+	# segurando BUSCAR): a IA do seu time fica marcando, não vai junto.
+	var human_presses := false
+	for mate in player.get_teammates():
+		if mate.is_human:
+			var hi := player.match_manager.human_input
+			var chasing: bool = hi != null and hi.chasing
+			if chasing or mate.global_position.distance_to(carrier.global_position) < \
+					player.global_position.distance_to(carrier.global_position) + 2.0:
+				human_presses = true
+	if not human_presses and _is_closest_field_player_to(carrier.global_position):
 		# Pressionar: ficar entre o atacante e o gol, e dar o bote.
 		var to_goal := (own_goal - carrier.global_position)
 		to_goal.y = 0.0
