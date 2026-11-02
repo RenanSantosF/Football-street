@@ -46,6 +46,8 @@ var skeleton: Skeleton3D
 var body_mesh: MeshInstance3D
 var anim_tree: AnimationTree
 var placeholder: PlaceholderBody
+## Postura na corrida (tronco/cabeça levemente para trás).
+var lean: LeanModifier
 
 var _material: ShaderMaterial
 var _hair: MeshInstance3D
@@ -74,6 +76,11 @@ func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
 
 ## Fator para casar a passada da animação com a velocidade real: altura do
 ## quadril deste personagem (no mundo) / altura de referência do catálogo.
+func set_run_lean(value: float) -> void:
+	if lean != null:
+		lean.amount = clampf(value, 0.0, 1.0)
+
+
 func get_locomotion_scale() -> float:
 	return _hips_rest_height * _model_scale * scale.x / REF_HIPS_HEIGHT
 
@@ -162,6 +169,9 @@ func _build(wanted: StringName) -> void:
 	anim_tree.root_motion_track = NodePath("%GeneralSkeleton:Root")
 	anim_tree.active = true
 	_build_foot_ik()
+	lean = LeanModifier.new()
+	lean.name = "Lean"
+	skeleton.add_child(lean)
 
 
 # --- Pé na bola (IK) -----------------------------------------------------------

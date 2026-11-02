@@ -223,6 +223,9 @@ func physics_update(delta: float) -> void:
 	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
 	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
+	if player.visual.has_method("set_run_lean"):
+		# correndo: tronco e cabeça um pouco menos inclinados para a frente
+		player.visual.call("set_run_lean", clampf((v.length() - 1.6) / 2.6, 0.0, 1.0))
 	# Marcação: velocidade no referencial do corpo (x = direita, y = frente).
 	var right := player.facing.cross(Vector3.UP)
 	# (suave: trocar de passo lateral para trás/frente sem "estalar" o quadril)

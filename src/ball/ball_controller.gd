@@ -16,6 +16,13 @@ const LOSE_TEAMMATE_DIST := 2.4
 ## Desaceleração ao rolar nos bloquinhos (m/s²): piso irregular segura a bola.
 ## Bola de rua meio murcha + bloquinhos com atrito: rola menos.
 @export var rolling_resistance := 2.0
+## Bola no pé de alguém (conduzindo): rola menos, como na grama — o jogador
+## tem mais domínio e a bola não "foge" entre os toques.
+@export var possessed_rolling_factor := 1.6
+
+
+func current_rolling() -> float:
+	return rolling_resistance * (possessed_rolling_factor if possessor != null else 1.0)
 ## Arrasto do ar (quadrático): a = k * v².
 @export var air_drag := 0.012
 ## Efeito Magnus (curva por rotação).
@@ -101,7 +108,7 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		# Resistência ao rolamento.
 		var h := Vector3(v.x, 0.0, v.z)
 		var hs := h.length()
-		var dec := rolling_resistance * dt
+		var dec := current_rolling() * dt
 		h = Vector3.ZERO if hs <= dec else h - h / hs * dec
 		v.x = h.x
 		v.z = h.z
@@ -245,8 +252,9 @@ func predict_ground_position(t: float) -> Vector3:
 	var base := Vector3(p.x, 0.0, p.z)
 	if s < 0.01:
 		return base
-	var tt := minf(t, s / rolling_resistance)
-	return base + h / s * (s * tt - 0.5 * rolling_resistance * tt * tt)
+	var rr := current_rolling()
+	var tt := minf(t, s / rr)
+	return base + h / s * (s * tt - 0.5 * rr * tt * tt)
 
 
 func _set_velocity(linear: Vector3, angular: Vector3) -> void:

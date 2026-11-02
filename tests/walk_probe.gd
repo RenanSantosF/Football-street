@@ -11,6 +11,7 @@ var slide := 0.0
 var n := 0.0
 var prev := {}
 var fwd_sum := 0.0
+var _t_fast := -1
 func _ready() -> void:
 	var main := MAIN.instantiate()
 	mm = main.get_node("MatchManager")
@@ -61,11 +62,15 @@ func _physics_process(delta: float) -> void:
 				slide += (a.x - a0.x)  # deslize ao longo do movimento (+ = pé indo pra frente)
 				n += delta
 	prev = ank
+	if _t_fast < 0 and me.get_flat_velocity().length() > 0.9 * levels[li] * (4.3 if OS.get_environment("BALL") != "" and OS.get_environment("SPR") != "" else (2.94 if OS.get_environment("BALL") != "" else (5.5 if OS.get_environment("SPR") != "" else 3.2))):
+		_t_fast = t
 	if OS.get_environment("DBG") != "" and t % 10 == 0 and li == levels.size() - 1:
 		print("t=", t, " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.01), " off=", me.ball_control.ball_offset().snapped(Vector3.ONE*0.01), " bv=", main_ball().flat_velocity().snapped(Vector3.ONE*0.01), " foot=", me.ball_control.foot.phase, "/", me.ball_control.foot.mode, " ap=", me.ball_control.approach_point(Vector3.RIGHT), " st=", me.state, " ", me._action_kind)
 	if t == 230:
 		var ac = me.anim_controller
 		Input.action_release("sprint")
+		print("  -> 90%% da velocidade em %.2f s" % (_t_fast / 60.0))
+		_t_fast = -1
 		print("in=%.2f v=%.2f  pé apoiado anda %.1f cm/s (+frente)  blend=%.2f ts=%.2f" % [levels[li], me.get_flat_velocity().length(), slide / maxf(n, 0.01) * 100.0, ac._blend_pos, ac._time_scale])
 		Input.action_release("move_right")
 		li += 1

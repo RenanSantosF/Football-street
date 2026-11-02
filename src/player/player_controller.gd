@@ -305,6 +305,8 @@ func _update_move(delta: float) -> void:
 		# Chute/passe pedido com a bola um pouco à frente: ir até ela para finalizar.
 		var to_ball := ball_control.ball_offset()
 		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
+	elif has_ball and ball_control.is_reverse_pulling():
+		desired = Vector3.ZERO # pé de apoio cravado: freia firme girando por cima da bola
 	elif has_ball and ball_control.is_dragging():
 		# girando com a bola na sola: passos curtos enquanto o corpo vira
 		desired = input.normalized() * minf(max_speed, 0.9) * clampf(facing.dot(input.normalized()) + 0.3, 0.0, 1.0)
@@ -320,6 +322,12 @@ func _update_move(delta: float) -> void:
 			# acompanha a velocidade da bola (feed-forward) e ainda fecha a distância
 			var bvf := ball.flat_velocity()
 			desired = (bvf + to / 0.22).limit_length(sprint_speed * 1.05) if to.length() > 0.08 else bvf + w * jog_speed * 0.3
+		elif get_flat_velocity().length() > 1.5 and ball_control.foot.busy() and ball_control.foot.mode == FootContact.Mode.INSIDE \
+				and ball_control.foot.phase == FootContact.Phase.REACH and get_flat_velocity().normalized().dot(w) < 0.95:
+			# TOQUE DE LADO: primeiro o pé (o de fora: para ir à esquerda, a parte
+			# de dentro do pé direito no lado direito da bola), depois o corpo.
+			# Até o contato o corpo segue reto, sem girar antes da bola.
+			desired = get_flat_velocity()
 		else:
 			desired += ball_control.catch_up_velocity(w)
 			# Não "atropela" a bola: com ela no pé e ainda sem o toque, o corpo
@@ -327,9 +335,11 @@ func _update_move(delta: float) -> void:
 			var off_b := ball_control.ball_offset()
 			var along_b := off_b.dot(w)
 			var bspeed := ball.flat_velocity().dot(w)
-			if along_b < 0.22 and desired.length() > bspeed + 0.5:
-				# bola entre os pés esperando o toque: o corpo não passa dela
-				desired = desired.normalized() * maxf(bspeed + 0.5, 0.9)
+			# o corpo mantém a bola ~0,3 m à frente (a passada chega nela); não
+			# encosta nem passa por cima esperando o toque
+			var cap_v := bspeed + clampf((along_b - 0.3) * 4.0, -0.5, 0.6)
+			if along_b < 0.42 and desired.length() > cap_v:
+				desired = desired.normalized() * maxf(cap_v, 0.6)
 	elif has_ball:
 		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
 		var off := ball_control.ball_offset()
@@ -348,10 +358,13 @@ func _update_move(delta: float) -> void:
 	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
+	if has_ball and ball_control.is_reverse_pulling():
+		rate = 15.0
 	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.2 \
 		and hv.normalized().dot(input.normalized()) < -0.5 \
 		and (ball_control.ball_distance() > 0.36 or ball.flat_velocity().length() > 1.5)
-	if has_ball and (input.length() < 0.1 or reversing_ball) and hv.length() > 1.4 and ball_control.ball_distance() < 0.9:
+	if has_ball and (input.length() < 0.1 or reversing_ball) and hv.length() > 1.4 and ball_control.ball_distance() < 0.9 \
+			and not ball_control.is_reverse_pulling():
 		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
 		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
 		var offb := ball_control.ball_offset()
@@ -400,6 +413,8 @@ func _update_facing(delta: float) -> void:
 		target_dir = _action_face
 	elif _pivot_dir != Vector3.ZERO:
 		target_dir = _pivot_dir
+	elif state == State.MOVE and ball_control.is_reverse_pulling() and intent.move.length() > 0.15:
+		target_dir = Vector3(intent.move.x, 0.0, intent.move.z).normalized()
 	elif ball != null and ball.pass_target == self and ball.possessor == null and _receiving_through and hv.length() > 0.5:
 		target_dir = hv.normalized() # profundidade: corre de frente para onde vai
 	elif ball != null and ball.pass_target == self and ball.possessor == null and hv.length() < 2.6:
@@ -431,7 +446,7 @@ func _update_facing(delta: float) -> void:
 	var rate := turn_speed_with_ball if ball_control.has_ball() else turn_speed
 	if state == State.ACTION:
 		rate *= 1.6
-	if _pivot_dir != Vector3.ZERO:
+	if _pivot_dir != Vector3.ZERO or ball_control.is_reverse_pulling():
 		rate = 11.0
 	if target_dir.length_squared() > 0.0001:
 		# Frente do jogador = -Z (o modelo Mixamo, que olha para +Z, está girado
@@ -448,8 +463,8 @@ func _update_facing(delta: float) -> void:
 			a = cur + clampf(da, -IDLE_TURN_RATE * delta, IDLE_TURN_RATE * delta)
 		# nunca gira mais rápido que um corpo de verdade (sem "estalo" de pose)
 		var max_rate := MAX_TURN_RATE_BALL if ball_control.has_ball() else MAX_TURN_RATE
-		if _pivot_dir != Vector3.ZERO or state == State.ACTION:
-			max_rate *= 1.4
+		if _pivot_dir != Vector3.ZERO or state == State.ACTION or ball_control.is_reverse_pulling():
+			max_rate *= 1.5
 		var step := wrapf(a - cur, -PI, PI)
 		a = cur + clampf(step, -max_rate * delta, max_rate * delta)
 		facing = Vector3(-sin(a), 0.0, -cos(a))
@@ -915,8 +930,8 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 		# senão primeiro freia e chega na bola.
 		# (bola colada e não fugindo: senão a sola não alcança e a bola segue
 		#  sozinha; nesse caso o jogador primeiro freia conduzindo)
-		var ball_ok := not ball_control.has_ball() or (ball_control.ball_distance() < 0.36 \
-			and (ball.flat_velocity() - hv).dot(facing) < 0.4 and ball.flat_velocity().length() < 1.5)
+		# Com a bola, a inversão é a PUXADA DE SOLA (BallControl), não o clipe.
+		var ball_ok := not ball_control.has_ball()
 		if hv.normalized().dot(input.normalized()) < -0.55 and ball_ok:
 			_start_turn(&"turn180", &"turn180", input.normalized())
 			return true
@@ -936,7 +951,9 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 		var vdir := hv.normalized() if speed > 0.3 else facing
 		var ang_v := vdir.signed_angle_to(w, Vector3.UP) # + = esquerda
 		# CORTE correndo (~40°): "Running Right Turn" (espelhado p/ esquerda).
-		if speed > 3.0 and absf(ang_v) > deg_to_rad(28.0) and absf(ang_v) < deg_to_rad(75.0) \
+		# (com a bola não: o toque de lado vem primeiro, com o pé certo, e o corpo
+		#  acompanha a bola — sem girar o corpo antes do toque)
+		if speed > 3.0 and absf(ang_v) > deg_to_rad(28.0) and absf(ang_v) < deg_to_rad(75.0) and not has_b \
 				and AnimationCatalog.has_clip(&"cut_r") and _steady_time > 0.04:
 			var left := ang_v > 0.0
 			var lg: StringName = &"cut_r_m" if left else &"cut_r"
@@ -946,7 +963,7 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 				bc0.touch_towards(nd) # toque de lado com o pé certo no início do corte
 			return true
 		# VIRADA de 180° ANDANDO (devagar): "Walking Turn 180".
-		if speed > 0.35 and speed < 2.4 and absf(ang_v) > deg_to_rad(140.0) \
+		if speed > 0.35 and speed < 2.4 and absf(ang_v) > deg_to_rad(140.0) and not has_b \
 				and AnimationCatalog.has_clip(&"walk_turn180") and _steady_time > 0.04:
 			var left2 := ang_v > 0.0
 			_start_turn(&"walk_turn180_l" if left2 else &"walk_turn180_r",

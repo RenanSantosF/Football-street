@@ -149,6 +149,7 @@ func _physics_process(delta: float) -> void:
 				_set_state(MatchState.PLAYING)
 		MatchState.PLAYING:
 			_check_ball()
+			_auto_switch_loose(delta)
 		MatchState.GOAL:
 			if _state_timer <= 0.0:
 				_start_kickoff(Team.other(_last_goal_team))
@@ -359,6 +360,38 @@ func _on_ball_kicked(kicker: Node, kind: StringName, _power: float) -> void:
 	var k := kicker as Player
 	if k != null and k.team == human_team and ball.pass_target != null and ball.pass_target.team == human_team:
 		set_controlled(ball.pass_target)
+
+
+var _switch_cooldown := 0.0
+
+
+## Bola solta (passe errado, rebote): o controle vai para o jogador do meu time
+## que chega primeiro nela — o mesmo que já está indo buscar — em vez de deixar
+## você com quem está longe.
+func _auto_switch_loose(delta: float) -> void:
+	_switch_cooldown -= delta
+	if autoplay or controlled == null or ball.possessor != null or not ball.in_play or _switch_cooldown > 0.0:
+		return
+	if ball.pass_target != null and ball.pass_target.team == human_team:
+		return
+	if human_input != null and human_input.chasing:
+		return # você está buscando com quem controla: não troca
+	var bp := ball.predict_ground_position(0.5)
+	var best: Player = null
+	var best_t := INF
+	for p in get_team(human_team):
+		if p.is_goalkeeper() or not p.active:
+			continue
+		var t := p.global_position.distance_to(bp) / maxf(p.sprint_speed, 0.1)
+		if t < best_t:
+			best_t = t
+			best = p
+	if best == null or best == controlled:
+		return
+	var my_t := controlled.global_position.distance_to(bp) / maxf(controlled.sprint_speed, 0.1)
+	if my_t - best_t > 0.5:
+		set_controlled(best)
+		_switch_cooldown = 1.2
 
 
 func _closest_field_player(team: int, point: Vector3) -> Player:

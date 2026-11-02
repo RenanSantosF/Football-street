@@ -60,6 +60,8 @@ var _trapping := false
 var _sole_on := false
 var _carry_on := false
 var _dragging := false
+## Puxada de sola na inversão de direção (o corpo gira por cima da bola).
+var _reverse_pull := false
 var _carry_frame := 0
 ## O pé que vai até a bola em cada toque (IK). Nenhum toque sem o pé encostar.
 var foot := FootContact.new()
@@ -398,16 +400,30 @@ func _conduct(delta: float) -> void:
 		# sola em cima da bola: ela gira junto com o corpo
 		var pv0 := _flat(player.velocity)
 		var w0 := want.normalized() if want.length() > 0.15 else player.facing
-		if want.length() < 0.15 or player.facing.angle_to(w0) < deg_to_rad(12.0) or d > 0.55 or pv0.length() > 2.2:
+		var end_pull := _reverse_pull and (player.facing.angle_to(w0) < deg_to_rad(20.0) or d > 0.7 or want.length() < 0.15)
+		if end_pull or (not _reverse_pull and (want.length() < 0.15 or player.facing.angle_to(w0) < deg_to_rad(12.0) \
+				or d > 0.55 or pv0.length() > 2.2)):
+			var was_pull := _reverse_pull
 			_dragging = false
-			if d <= 0.55:
+			_reverse_pull = false
+			if was_pull and d <= 0.7 and want.length() >= 0.15:
+				# fim da puxada: a sola solta a bola na FRENTE da nova direção,
+				# já saindo (o corpo arranca atrás dela)
+				var tgt2 := player.global_position + w0 * 0.42
+				var v2 := _flat(tgt2 - ball.global_position) / 0.2 + w0 * 1.2
+				ball.touch(Vector3(v2.x, 0.0, v2.z).limit_length(3.5), player)
+				_since_touch = 0.0
+			elif d <= 0.55:
 				# a sola sai de cima: a bola fica no pé (vai junto com o corpo,
 				# não sai rolando com o embalo do giro)
 				ball.touch(Vector3(pv0.x, 0.0, pv0.z), player)
 		else:
+			# a sola leva a bola junto com o giro (na puxada, firme: o corpo gira
+			# rápido por cima dela)
 			var tgt := player.global_position + player.facing * 0.3
-			var dv := pv0 + _flat(tgt - ball.global_position) * 6.0
-			ball.touch(Vector3(dv.x, 0.0, dv.z).limit_length(3.0), player)
+			var gain := 11.0 if _reverse_pull else 6.0
+			var dv := pv0 + _flat(tgt - ball.global_position) * gain
+			ball.touch(Vector3(dv.x, 0.0, dv.z).limit_length(4.0 if _reverse_pull else 3.0), player)
 			_since_touch = 0.0
 			return
 	if foot.busy() and _trapping and _sole_on and foot.mode == FootContact.Mode.SOLE \
@@ -426,12 +442,26 @@ func _conduct(delta: float) -> void:
 	var bv := _flat(ball.velocity_now())
 	# Pediu o lado OPOSTO correndo com a bola um pouco à frente: primeiro freia
 	# conduzindo (como soltar o analógico) e só depois vira com a bola no pé.
+	# PUXADA DE SOLA: andando/correndo e pediu o lado oposto (ou bem para
+	# trás) com a bola no pé → pisa na bola, o corpo freia firme e gira por cima
+	# dela, e a sola traz a bola para a frente da nova direção. ~0,5 s.
+	if want.length() >= 0.15 and pv.length() > 0.8 and pv.normalized().dot(want.normalized()) < -0.35 \
+			and d <= 0.68 and off.dot(player.facing) > -0.05 and _since_touch > 0.12:
+		_since_touch = 0.0
+		foot.begin(foot.nearest_foot(), player.facing, TOUCH_LEAD, FootContact.Mode.SOLE, func():
+			_dragging = true
+			_reverse_pull = true
+			var pvn := _flat(player.velocity)
+			ball.touch(pvn * 0.35, player)
+			player.notify_touch(&"pull"), 0.1, func(): return _dragging)
+		return
 	var reversing := want.length() >= 0.15 and pv.length() > 2.2 and pv.normalized().dot(want.normalized()) < -0.5 \
 		and (d > 0.36 or bv.length() > 1.5)
 	if reversing:
 		want = Vector3.ZERO
 	if want.length() < 0.15:
 		_dragging = false
+		_reverse_pull = false
 		if pv.length() <= 1.4 and not reversing:
 			_trap(delta, off, d, pv, bv)
 			return
@@ -586,6 +616,10 @@ func is_dragging() -> bool:
 	return _dragging and has_ball()
 
 
+func is_reverse_pulling() -> bool:
+	return _reverse_pull and _dragging and has_ball()
+
+
 ## Bola parada/presa na sola (soltou o analógico)?
 func is_trapping() -> bool:
 	return _trapping
@@ -669,7 +703,9 @@ func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 	var top := player.speed_dribbling if (player.intent.sprint and player.stamina > 0.05) \
 		else player.jog_speed * player.ball_speed_factor
 	var target_speed := player.intent.move.length() * top
-	var v_p := maxf(minf(target_speed, speed + 0.8), speed * 0.9)
+	# arrancando: o toque já leva a bola no ritmo da arrancada (o corpo acelera
+	# rápido atrás dela), não 0,8 m/s por vez
+	var v_p := maxf(minf(target_speed, speed + 2.4), speed * 0.9)
 	# Cadência: passo mais curto devagar, toque mais longo no sprint.
 	var T := clampf(0.55 - v_p * 0.035, 0.36, 0.55)
 	var extra := 0.0
@@ -693,9 +729,9 @@ func _do_touch(dir: Vector3, speed: float, _lateral: float) -> void:
 	if player.intent.move.length() < 0.1:
 		# freando: cada toque curto tira ~2,2 m/s da bola (o corpo freia junto)
 		travel = dir * maxf(speed - 2.2, 0.0) * T
-	var p_next := player.global_position + travel + dir * lead + right * (_foot_side * 0.07)
+	var p_next := player.global_position + travel + dir * lead + right * (_foot_side * 0.025)
 	var to := _flat(p_next - bp)
-	var a := ball.rolling_resistance
+	var a := ball.current_rolling()
 	var v0 := to.length() / T + 0.5 * a * T
 	ball.touch(to.normalized() * v0 if to.length() > 0.01 else dir * v_p, player)
 	_since_touch = 0.0
@@ -1046,7 +1082,7 @@ func drag_ball_around(new_dir: Vector3, time: float) -> void:
 		return
 	foot.begin(foot.nearest_foot(), new_dir, 0.07, FootContact.Mode.SOLE, func():
 		var tgt := player.global_position + new_dir * 0.46
-		var v := _flat(tgt - ball.global_position) / maxf(time, 0.2) + new_dir * (0.5 * ball.rolling_resistance * time)
+		var v := _flat(tgt - ball.global_position) / maxf(time, 0.2) + new_dir * (0.5 * ball.current_rolling() * time)
 		ball.touch(v.limit_length(2.5), player), 0.15)
 	_since_touch = 0.0
 	player.notify_touch(&"drag")

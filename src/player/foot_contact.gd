@@ -127,7 +127,9 @@ func body_correction() -> Vector3:
 		# correndo: o corpo ajusta o TEMPO da passada (para a frente/trás), não
 		# fica balançando de lado — a corrida segue reta
 		var fw := pv.normalized()
-		var along := fw * c.dot(fw)
+		# para a frente só um pouco (senão o corpo atropela a bola); para trás
+		# (segurar a passada) pode mais
+		var along := fw * clampf(c.dot(fw), -BODY_ADJUST_SPEED, 0.35)
 		var lat := (c - along).limit_length(0.3)
 		c = along + lat
 	return c
@@ -190,7 +192,7 @@ const USE_LEG_IK := false
 ## Sem IK: distância máxima (tornozelo da animação → ponto de toque) para
 ## o pé contar como "na bola", por tipo de toque.
 const TOL_INSIDE := 0.15
-const TOL_SOLE := 0.17
+const TOL_SOLE := 0.22
 const TOL_CUSHION := 0.19
 ## Quanto o toque pode esperar a passada trazer o pé até a bola (s).
 const WAIT_WINDOW := 0.3
@@ -216,6 +218,8 @@ func _ik_cap() -> float:
 			tol = TOL_SOLE
 		elif mode == Mode.CUSHION:
 			tol = TOL_CUSHION
+		if _ball_flat_dist() < 0.3:
+			tol += 0.06 # bola entre os pés: qualquer passada encosta nela
 		return clampf(1.0 - (dd - tol) / 0.06, 0.0, 1.0)
 	var a: Vector3 = v.call("get_ankle_position", side) - _shift
 	# o que o corpo não consegue cobrir fica para a perna

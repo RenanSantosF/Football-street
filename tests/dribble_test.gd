@@ -110,7 +110,12 @@ func _reverse_test() -> void:
 		Input.action_press("move_left", 1.0)
 	if t % 10 == 0 and t >= 50 and OS.get_environment("DBG") != "":
 		print("inv t=", t, " me=", me.global_position.snapped(Vector3.ONE*0.01), " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.01), " ball=", ball.global_position.snapped(Vector3.ONE*0.01), " bv=", ball.flat_velocity().snapped(Vector3.ONE*0.01), " act=", me._action_kind, " st=", me.state, " fac=", me.facing.snapped(Vector3.ONE*0.01), " drag=", me.ball_control.is_dragging(), " trap=", me.ball_control.is_trapping())
+	if t > 60 and _inv_t < 0 and me.ball_control.has_ball() and me.get_flat_velocity().x < -1.5 \
+			and ball.global_position.x < me.global_position.x - 0.1:
+		_inv_t = t - 60
 	if t == 180:
+		results["inverter_tempo_s"] = snappedf(_inv_t / 60.0, 0.01) if _inv_t >= 0 else -1.0
+		_inv_t = -1
 		var off := ball.global_position - me.global_position
 		results["inverter_tem_bola"] = me.ball_control.has_ball()
 		results["inverter_bola_na_frente"] = off.x < 0.0
@@ -141,6 +146,7 @@ func _turn_far_test() -> void:
 
 
 var _mate: Player
+var _inv_t := -1
 var _kick_from := Vector3.ZERO
 var _mate_at_kick := Vector3.ZERO
 var _kick_v := Vector3.ZERO
