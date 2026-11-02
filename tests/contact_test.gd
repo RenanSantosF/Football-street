@@ -11,6 +11,7 @@ var ball: Ball
 var me: Player
 var f := 0
 var samples: Array[float] = []
+var skipped := 0
 var _pending := false
 var _last_phase := 0
 
@@ -56,14 +57,17 @@ func _physics_process(_d: float) -> void:
 		Input.action_release("move_down"); Input.action_release("sprint")
 	var ph := me.ball_control.foot.phase
 	if ph == FootContact.Phase.HOLD and _last_phase == FootContact.Phase.REACH:
-		_pending = true
+		if me.ball_control.foot.last_applied:
+			_pending = true
+		else:
+			skipped += 1
 	_last_phase = ph
 	if t == 520:
 		samples.sort()
 		var n := samples.size()
 		var avg := 0.0
 		for x in samples: avg += x
-		print("toques medidos: ", n)
+		print("toques medidos: ", n, " | toques cancelados (pé não alcançou, bola não foi tocada): ", skipped)
 		if n > 0:
 			print("tornozelo→bola no contato: min %.2f  mediana %.2f  máx %.2f  média %.2f" % [samples[0], samples[n / 2], samples[n - 1], avg / n])
 			var ok := 0

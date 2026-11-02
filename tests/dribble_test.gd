@@ -48,7 +48,7 @@ func _physics_process(_d: float) -> void:
 		4: _back_pass_test()
 		5: _ball_behind_test(Vector3(-0.55, 0, 0), "atras")
 		6: _ball_behind_test(Vector3(-0.6, 0, -0.55), "atras_lado")
-		7: _ball_behind_test(Vector3(-1.1, 0, 0.3), "atras_longe")
+		7: _ball_behind_test(Vector3(-0.9, 0, 0.3), "atras_longe")
 		8:
 			print("RESULTADOS: ", results)
 			get_tree().quit()

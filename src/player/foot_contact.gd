@@ -28,6 +28,8 @@ var _target := Vector3.ZERO
 var _weight := 0.0
 var _hold_while := Callable()
 var _reachable := true
+## O último contato aplicou o toque (pé alcançou a bola)?
+var last_applied := false
 
 
 func setup(p: Player, b: Ball) -> void:
@@ -120,9 +122,13 @@ func _contact() -> void:
 	# Só toca se a bola continua comigo e de fato ao alcance do pé.
 	var d := Vector2(ball.global_position.x - player.global_position.x,
 		ball.global_position.z - player.global_position.z).length()
+	# O pé tem que alcançar de verdade (sem toque "de longe").
 	if _cb.is_valid() and ball.possessor == player and ball.in_play and d < 1.25 \
-			and ball.global_position.y < 0.5:
+			and ball.global_position.y < 0.5 and _reachable:
 		_cb.call()
+		last_applied = true
+	else:
+		last_applied = false
 	_cb = Callable()
 	phase = Phase.HOLD
 	_t = 0.0

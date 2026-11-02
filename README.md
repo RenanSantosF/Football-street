@@ -16,6 +16,7 @@ roupas sujas e dribles naturais.
 - 🦶 Etapa 9 (condução reescrita, domínio por altura, pé esquerdo, cabeceio): [`docs/ETAPA_09.md`](docs/ETAPA_09.md)
 - 🎯 Etapa 10 (passe rasteiro com seta, condução assistida, animações suaves): [`docs/ETAPA_10.md`](docs/ETAPA_10.md)
 - 🦶 Etapa 11 (pé na bola com IK, arrancada corrigida, chute mais forte): [`docs/ETAPA_11.md`](docs/ETAPA_11.md)
+- ⚙️ Etapa 12 (arquitetura DribblePoint/KickPoint/PickupArea): [`docs/ETAPA_12.md`](docs/ETAPA_12.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado
