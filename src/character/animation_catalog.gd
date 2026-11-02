@@ -13,6 +13,9 @@ extends RefCounted
 const UAL := "res://assets/animations/ual/AnimationLibrary_Godot_Standard.gltf"
 const MIXAMO_PACK := "res://assets/animations/mixamo/pack/%s.fbx"
 const TEEN_01 := "res://assets/characters/teen_01/teen_01.fbx"
+## Pack de mocap de futebol (Anderson Rohr, esqueleto UE5 convertido). Livre
+## para uso comercial; não redistribuir o pack sozinho (os FBX não vão para o git).
+const ROHR := "res://assets/animations/rohr/%s.fbx"
 
 ## prefixo -> arquivo (nome do pack do Mixamo ou caminho res://)
 const LIBRARY_SOURCES := {
@@ -81,6 +84,9 @@ const LIBRARY_SOURCES := {
 	&"m_gk_place": "Goalkeeper Placing Ball (1)",
 	# adolescentes esperando (Etapa 6): embaixadinhas e aquecimento
 	&"m_kick_up": "Kick Up Soccerball",
+	&"r_side_kick": ROHR % "08_Side_Foot_Kick_ue5",
+	&"r_power_kick": ROHR % "09_Power_Kick_ue5",
+	&"r_juggling": ROHR % "04_Juggling_01_ue5",
 	&"m_kneeing": "Kneeing Soccerball",
 	&"m_warmup": "Offensive Idle aquecimento",
 }
@@ -115,10 +121,10 @@ const CLIPS := {
 	&"strafe_r_fast": &"m_strafe_r_fast/mixamo_com",
 	&"diag_l": &"m_diag_l/mixamo_com",
 	&"diag_r": &"m_diag_r/mixamo_com",
-	&"pass_short": &"m_pass_short/mixamo_com",
+	&"pass_short": &"r_side_kick/seg_pass",
 	&"pass_long": &"m_pass_long/mixamo_com",
 	&"shoot": &"m_shoot/mixamo_com",
-	&"shoot_power": &"m_shoot_power/mixamo_com",
+	&"shoot_power": &"r_power_kick/seg_kick",
 	&"receive": &"m_receive/mixamo_com",
 	&"spin": &"m_spin/mixamo_com",
 	&"cut": &"m_cut/mixamo_com",
@@ -142,7 +148,7 @@ const CLIPS := {
 	&"gk_catch": &"m_gk_catch/mixamo_com",
 	&"gk_pass": &"m_gk_pass/mixamo_com",
 	&"gk_place": &"m_gk_place/mixamo_com",
-	&"kick_up": &"m_kick_up/mixamo_com",
+	&"kick_up": &"r_juggling/seg_juggle",
 	&"kneeing": &"m_kneeing/mixamo_com",
 	&"warmup": &"m_warmup/mixamo_com",
 	# reserva (biblioteca UAL)
@@ -165,10 +171,10 @@ const LOOPING: Array[StringName] = [
 ## Instante (s) em que o pé encosta na bola e qual pé (+1 direito, -1 esquerdo).
 ## Conferido quadro a quadro (docs/ETAPA_04.md).
 const CONTACTS := {
-	&"pass_short": [0.50, 1.0],
+	&"pass_short": [0.55, 1.0],   # passe de chapa (mocap): contato ~1,45 s no take
 	&"pass_long": [0.15, -1.0],
 	&"shoot": [0.45, 1.0],
-	&"shoot_power": [0.75, 1.0],
+	&"shoot_power": [0.70, -1.0], # chute forte (mocap, pé esquerdo): contato 2,60 s
 	&"receive": [0.29, 1.0],
 	&"tackle": [0.36, -1.0],
 	&"spin": [1.0, 1.0],
@@ -180,6 +186,14 @@ const CONTACTS := {
 	&"head_control": [0.75, 0.0],
 	&"header_jump": [1.2, 0.0],
 }
+
+## Trechos recortados das tomadas longas de mocap: prefixo -> {nome: [início, fim]} (s).
+const SEGMENTS := {
+	&"r_side_kick": {&"seg_pass": [0.90, 2.40]},
+	&"r_power_kick": {&"seg_kick": [1.90, 3.60]},
+	&"r_juggling": {&"seg_juggle": [1.0, 21.0]},
+}
+
 
 ## Levantar do chão: trecho útil de cada clipe (o resto é deitado ou em pé
 ## parado) e velocidade de reprodução. getup = de bruços (depois do tropeço),
@@ -268,6 +282,8 @@ static func get_libraries() -> Dictionary:
 			var lib := _extract_library(path)
 			if lib == null:
 				continue
+			if SEGMENTS.has(prefix):
+				lib = _with_segments(lib, SEGMENTS[prefix])
 			if prefix != &"ual":
 				lib = _make_in_place(prefix, lib)
 			_libraries[prefix] = lib
@@ -457,6 +473,45 @@ static func _position_scale_fix(sk: Skeleton3D) -> float:
 	if true_height < 0.1 or sk.motion_scale <= 0.0:
 		return 1.0
 	return sk.motion_scale / true_height
+
+
+## Recorta trechos [início, fim] da primeira animação da biblioteca
+## (reamostra a 30 qps) e devolve uma biblioteca só com os trechos.
+static func _with_segments(source: AnimationLibrary, segs: Dictionary) -> AnimationLibrary:
+	var src := source.get_animation(source.get_animation_list()[0])
+	var lib := AnimationLibrary.new()
+	for seg_name: StringName in segs:
+		var r: Array = segs[seg_name]
+		lib.add_animation(seg_name, _trim(src, r[0], minf(r[1], src.length)))
+	return lib
+
+
+static func _trim(a: Animation, t0: float, t1: float) -> Animation:
+	var out := Animation.new()
+	out.length = t1 - t0
+	var fps := 30.0
+	var n := int((t1 - t0) * fps)
+	for i in a.get_track_count():
+		var ty := a.track_get_type(i)
+		if ty != Animation.TYPE_POSITION_3D and ty != Animation.TYPE_ROTATION_3D and ty != Animation.TYPE_SCALE_3D:
+			continue
+		# O osso "Root" do UE5 carrega a conversão de eixos e o deslocamento da
+		# tomada: no nosso personagem ele fica parado (quem anda é a física).
+		if String(a.track_get_path(i)).ends_with(":Root"):
+			continue
+		var j := out.add_track(ty)
+		out.track_set_path(j, a.track_get_path(i))
+		for k in n + 1:
+			var t := t0 + k / fps
+			var lt := k / fps
+			match ty:
+				Animation.TYPE_POSITION_3D:
+					out.position_track_insert_key(j, lt, a.position_track_interpolate(i, t))
+				Animation.TYPE_ROTATION_3D:
+					out.rotation_track_insert_key(j, lt, a.rotation_track_interpolate(i, t))
+				Animation.TYPE_SCALE_3D:
+					out.scale_track_insert_key(j, lt, a.scale_track_interpolate(i, t))
+	return out
 
 
 static func _rescale_hips(source: AnimationLibrary, factor: float) -> AnimationLibrary:

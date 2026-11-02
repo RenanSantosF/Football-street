@@ -19,3 +19,10 @@ redistribuídos aqui; ver `docs/ETAPA_03.md` para baixá-los.
 
 Skin única do jogo: personagem adolescente criado pelo autor do projeto e rigado
 no Mixamo (`assets/characters/teen_01/`, fora do repositório público).
+
+## Animações de mocap de futebol — Anderson Rohr ("Free mocap pack 05: Soccer")
+- https://andersonrohr.gumroad.com/l/mocap_pack5 — uso livre em projetos pessoais e
+  comerciais; não pode ser redistribuído/revendido como produto avulso. Por isso os
+  FBX NÃO estão neste repositório (só os .import); entram embutidos no jogo.
+- Usadas: Side Foot Kick (passe de chapa), Power Kick (chute forte), Juggling 01
+  (embaixadinha de espera). Créditos: https://linktr.ee/andersonrohr

@@ -23,5 +23,14 @@
 - **Cavadinha / passe por cima**: barra cheia arrastando = bem mais alto.
 
 ## Pacote de mocap de futebol (Anderson Rohr, esqueleto UE5)
+- Licença confirmada: uso comercial livre, sem redistribuir o pack avulso
+  (FBX fora do git; embutidos no APK).
 - 21 tomadas convertidas para o esqueleto humanoide (BoneMap UE5 → humanoide).
-- Ficam FORA do repositório e do APK até a licença ser confirmada.
+- Recorte de trechos (AnimationCatalog.SEGMENTS) e remoção da trilha do osso
+  Root do UE5 (girava o personagem inteiro).
+- No jogo: **passe de chapa** (Side Foot Kick, contato 1,45 s), **chute forte**
+  (Power Kick, pé esquerdo — espelhado para o direito) e **embaixadinha** de
+  espera (Juggling 01).
+- As 3 "Dribble" são dribles de habilidade quase parados (pedaladas/rolinhos),
+  não corridas: próximos recortes para o botão DRIBLE. As outras tomadas ficam
+  em `assets/animations/rohr_extra/` (ignorada pela Godot) até serem usadas.
