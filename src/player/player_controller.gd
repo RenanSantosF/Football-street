@@ -29,6 +29,13 @@ const MARK_MIN_TIME := 0.5
 ## Carrinho: alcance (m) e chance do conduzidor pular por cima.
 const SLIDE_RANGE := 3.2
 const POKE_RANGE := 1.3
+## Giro máximo parado (rad/s) fora dos clipes de virada.
+const IDLE_TURN_RATE := 1.6
+## Correção máxima do corpo na aproximação do chute/passe (m/s).
+const KICK_ADJUST_SPEED := 1.6
+## Giro máximo do corpo (rad/s) andando/correndo.
+const MAX_TURN_RATE := 9.0
+const MAX_TURN_RATE_BALL := 7.0
 const DODGE_CHANCE_AI := 0.35
 const DODGE_CHANCE_HUMAN := 0.25
 ## Tempo caído antes de levantar (quando não há clipe de levantar).
@@ -61,6 +68,8 @@ var match_manager: MatchManager = null
 var ball: Ball = null
 var state: State = State.MOVE
 var facing := Vector3.FORWARD
+## Ajuste do corpo até a bola neste quadro (a passada da animação conta com ele).
+var body_adjust := Vector3.ZERO
 var stamina := 1.0
 var is_human := false
 var formation_index := 0
@@ -108,6 +117,8 @@ var gesture: StringName = &""
 var _gesture_timer := 0.0
 ## Virada animada: direção final aplicada ao terminar o clipe.
 var _turn_target := Vector3.ZERO
+var _turn_start_facing := Vector3.FORWARD
+var _turn_yaw_on := false
 var _steady_input := Vector3.ZERO
 var _steady_time := 0.0
 var _prev_input_len := 0.0
@@ -238,7 +249,13 @@ func _physics_process(delta: float) -> void:
 
 	ball_control.physics_update(delta)
 	velocity.y -= _gravity * delta
+	# O CORPO se ajusta para o pé da passada chegar na bola (sem esticar a
+	# perna): um deslocamento pequeno e temporário, a passada acompanha.
+	var adj := ball_control.foot.body_correction() if state == State.MOVE else Vector3.ZERO
+	velocity += adj
+	body_adjust = adj
 	move_and_slide()
+	velocity -= adj
 	_update_facing(delta)
 	_update_stamina(delta)
 	anim_controller.physics_update(delta)
@@ -306,8 +323,9 @@ func _update_move(delta: float) -> void:
 			var off_b := ball_control.ball_offset()
 			var along_b := off_b.dot(w)
 			var bspeed := ball.flat_velocity().dot(w)
-			if along_b < 0.22 and desired.length() > bspeed + 1.2:
-				desired = desired.normalized() * maxf(bspeed + 1.2, 1.0)
+			if along_b < 0.22 and desired.length() > bspeed + 0.5:
+				# bola entre os pés esperando o toque: o corpo não passa dela
+				desired = desired.normalized() * maxf(bspeed + 0.5, 0.9)
 	elif has_ball:
 		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
 		var off := ball_control.ball_offset()
@@ -327,7 +345,8 @@ func _update_move(delta: float) -> void:
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
 	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.2 \
-		and hv.normalized().dot(input.normalized()) < -0.5 and ball_control.ball_distance() > 0.36
+		and hv.normalized().dot(input.normalized()) < -0.5 \
+		and (ball_control.ball_distance() > 0.36 or ball.flat_velocity().length() > 1.5)
 	if has_ball and (input.length() < 0.1 or reversing_ball) and hv.length() > 1.4 and ball_control.ball_distance() < 0.9:
 		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
 		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
@@ -414,6 +433,19 @@ func _update_facing(delta: float) -> void:
 		var cur := atan2(-facing.x, -facing.z)
 		var tgt := atan2(-target_dir.x, -target_dir.z)
 		var a := lerp_angle(cur, tgt, clampf(rate * delta, 0.0, 1.0))
+		if state == State.MOVE and hv.length() < 0.5 and _pivot_dir == Vector3.ZERO and not _marking \
+				and not ball_control.is_dragging():
+			# PARADO: o corpo não "gira no eixo" com os pés colados no chão
+			# (deslizando). Giro grande é feito pelos clipes de virada; aqui só
+			# um ajuste lento, que a passada acompanha.
+			var da := wrapf(a - cur, -PI, PI)
+			a = cur + clampf(da, -IDLE_TURN_RATE * delta, IDLE_TURN_RATE * delta)
+		# nunca gira mais rápido que um corpo de verdade (sem "estalo" de pose)
+		var max_rate := MAX_TURN_RATE_BALL if ball_control.has_ball() else MAX_TURN_RATE
+		if _pivot_dir != Vector3.ZERO or state == State.ACTION:
+			max_rate *= 1.4
+		var step := wrapf(a - cur, -PI, PI)
+		a = cur + clampf(step, -max_rate * delta, max_rate * delta)
 		facing = Vector3(-sin(a), 0.0, -cos(a))
 	rotation.y = atan2(-facing.x, -facing.z)
 
@@ -631,6 +663,7 @@ func _setup_kick_root_motion() -> void:
 func _begin_action(kind: StringName, contact: float, length: float, power: float,
 		aim: Vector3, target: Node3D, move_factor: float) -> void:
 	ball_control.foot.cancel() # um toque de condução pendente não dispara mais
+	_turn_yaw_on = false
 	state = State.ACTION
 	_action_kind = kind
 	_action_time = 0.0
@@ -663,8 +696,15 @@ func _update_action(delta: float) -> void:
 		var hips_h := 0.85
 		if visual != null and visual.has_method("get_hips_height"):
 			hips_h = visual.call("get_hips_height")
-		var left := Vector3.UP.cross(facing)
-		var target := (facing * rv.z + left * rv.x) * hips_h * speed
+		var fr := facing
+		if _turn_yaw_on:
+			# o corpo gira JUNTO com o clipe (sem pulo no fim da virada)
+			fr = _turn_start_facing
+			facing = _turn_start_facing.rotated(Vector3.UP, AnimationCatalog.root_yaw_at(_action_logical, anim_t)).normalized()
+			_action_face = facing
+			rotation.y = atan2(-facing.x, -facing.z)
+		var left := Vector3.UP.cross(fr)
+		var target := (fr * rv.z + left * rv.x) * hips_h * speed
 		hv = hv.move_toward(target, acceleration * 3.0 * delta)
 		if _action_kind == &"spin" or _action_kind == &"run_stop":
 			ball_control.carry_during_skill(delta)
@@ -716,7 +756,24 @@ func _update_action(delta: float) -> void:
 		var side := anim_controller.kick_foot(_action_kind)
 		plant -= to_ball_dir * minf(BallControl.FOOT_DISTANCE, plant.length())
 		plant -= to_ball_dir.cross(Vector3.UP) * side * BallControl.KICK_FOOT_OFFSET
-		hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.25), acceleration * 2.5 * delta)
+		if _kick_logical != &"":
+			# Os passos de aproximação são os DA ANIMAÇÃO (o pé apoiado não
+			# desliza); só a diferença até o ponto certo é corrigida, de leve.
+			var sp := PlayerAnimationController.ACTION_SPEED
+			var t_now := _kick_seek + _action_time * sp
+			var t_hit := _kick_seek + _action_contact * sp
+			var hh := 0.85
+			if visual != null and visual.has_method("get_hips_height"):
+				hh = visual.call("get_hips_height")
+			var left_k := Vector3.UP.cross(facing)
+			var rvk := AnimationCatalog.root_motion_velocity(_kick_logical, t_now)
+			var base := (facing * rvk.z + left_k * rvk.x) * hh * sp
+			var clip_d := AnimationCatalog.root_offset_at(_kick_logical, t_hit) - AnimationCatalog.root_offset_at(_kick_logical, t_now)
+			var clip_disp := (facing * clip_d.z + left_k * clip_d.x) * hh
+			var corr := ((plant - clip_disp) / remaining).limit_length(KICK_ADJUST_SPEED)
+			hv = hv.move_toward(base + corr, acceleration * 2.5 * delta)
+		else:
+			hv = hv.move_toward((plant / remaining).limit_length(sprint_speed * 1.25), acceleration * 2.5 * delta)
 	else:
 		var cap := jog_speed * _action_move_factor
 		var target := hv.limit_length(cap)
@@ -734,19 +791,22 @@ func _update_action(delta: float) -> void:
 	if state == State.ACTION and _action_time >= _action_length:
 		state = State.MOVE
 		if _turn_target != Vector3.ZERO:
-			facing = _turn_target
-			rotation.y = atan2(-facing.x, -facing.z)
+			if not _turn_yaw_on:
+				facing = _turn_target
+				rotation.y = atan2(-facing.x, -facing.z)
 			_turn_target = Vector3.ZERO
+		_turn_yaw_on = false
 	# Passe chegando no meio de uma virada/parada sem bola: interrompe para dominar.
 	if state == State.ACTION and _action_kind in [&"turn_l", &"turn_r", &"walk_stop", &"run_stop"] \
 			and ball != null and ball.pass_target == self and ball.possessor == null and ball.in_play \
 			and ball.global_position.distance_to(global_position) < 3.5:
 		state = State.MOVE
-		if _turn_target != Vector3.ZERO:
+		if _turn_target != Vector3.ZERO and not _turn_yaw_on:
 			var k := clampf(_action_time / maxf(_action_length, 0.01), 0.0, 1.0)
 			facing = facing.rotated(Vector3.UP, facing.signed_angle_to(_turn_target, Vector3.UP) * k).normalized()
 			rotation.y = atan2(-facing.x, -facing.z)
-			_turn_target = Vector3.ZERO
+		_turn_target = Vector3.ZERO
+		_turn_yaw_on = false
 	# Parada brusca: se voltar a mexer o analógico (ou pedir passe/chute), sai da parada.
 	if state == State.ACTION and (_action_kind == &"run_stop" or _action_kind == &"walk_stop") and \
 			((_action_time > 0.25 and intent.move.length() > 0.5) or (_action_time > 0.1 and _has_pending_kick())):
@@ -833,13 +893,13 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 		# (bola colada e não fugindo: senão a sola não alcança e a bola segue
 		#  sozinha; nesse caso o jogador primeiro freia conduzindo)
 		var ball_ok := not ball_control.has_ball() or (ball_control.ball_distance() < 0.36 \
-			and (ball.flat_velocity() - hv).dot(facing) < 0.4)
+			and (ball.flat_velocity() - hv).dot(facing) < 0.4 and ball.flat_velocity().length() < 1.5)
 		if hv.normalized().dot(input.normalized()) < -0.55 and ball_ok:
 			_start_turn(&"turn180", &"turn180", input.normalized())
 			return true
 	if in_len > 0.6 and speed < 0.5 and not ball_control.has_ball() and ai_turn_ok:
 		var ang := facing.signed_angle_to(input.normalized(), Vector3.UP)
-		if absf(ang) > deg_to_rad(60.0) and absf(ang) < deg_to_rad(135.0) and AnimationCatalog.has_clip(&"turn_l"):
+		if absf(ang) > deg_to_rad(45.0) and absf(ang) < deg_to_rad(160.0) and AnimationCatalog.has_clip(&"turn_l"):
 			var turned := facing.rotated(Vector3.UP, signf(ang) * PI * 0.5)
 			_start_turn(&"turn_l" if ang > 0.0 else &"turn_r", &"turn_l" if ang > 0.0 else &"turn_r", turned)
 			return true
@@ -909,6 +969,8 @@ func _start_turn(kind: StringName, logical: StringName, new_dir: Vector3, play_s
 	_turn_speed_k = play_speed
 	_action_length /= play_speed
 	_turn_target = Vector3(new_dir.x, 0.0, new_dir.z).normalized()
+	_turn_start_facing = facing
+	_turn_yaw_on = AnimationCatalog.has_root_yaw(logical)
 	if drag and ball_control.has_ball():
 		ball_control.drag_ball_to(_turn_target) # puxa a bola junto na virada
 
@@ -1065,6 +1127,8 @@ func _compute_marking() -> bool:
 	if carrier == null or carrier.team == team or intent.sprint:
 		return false
 	var d := global_position.distance_to(carrier.global_position)
+	if get_flat_velocity().dot(facing) < -1.3:
+		return false # recuando rápido: vira e corre (sem passo de marcação para trás)
 	return d < (MARK_RANGE_EXIT if _marking else MARK_RANGE)
 
 

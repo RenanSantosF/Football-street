@@ -216,16 +216,18 @@ static func getup_duration(logical: StringName) -> float:
 ## quadril de 0,93 m (HumanoidCharacter.REF_HIPS_HEIGHT). Medida pelo
 ## deslocamento do quadril no clipe original (os clipes do Mixamo andam).
 const LOCOMOTION_POINTS: Array = [
-	[&"idle", 0.0], [&"walk", 1.64], [&"slow_jog", 1.96], [&"run", 4.04], [&"sprint", 5.65],
+	# (trote = "Jog Forward": o "Slow Jog" vinha com o quadril torto ~40°)
+	[&"idle", 0.0], [&"walk", 1.64], [&"jog", 2.37], [&"run", 4.04], [&"sprint", 5.65],
 ]
 const LOCOMOTION_BALL_POINTS: Array = [
-	[&"idle_ball", 0.0], [&"walk", 1.64], [&"dribble", 2.56], [&"run", 4.04], [&"sprint", 5.65],
+	[&"idle_ball", 0.0], [&"walk", 1.64], [&"dribble", 2.1], [&"run", 4.04], [&"sprint", 5.65],
 ]
 ## Marcação: velocidade local (x = para a direita, y = para a frente), m/s.
 const MARK_POINTS: Array = [
 	[&"mark_idle", Vector2(0.0, 0.0)],
 	[&"jog", Vector2(0.0, 2.37)],
-	[&"back", Vector2(0.0, -2.91)],
+	# ("Run Backward" vem com o corpo virado 180°: misturado aos outros, o quadril
+	#  "estalava". Recuar rápido = virar e correr; ver Player._compute_marking)
 	[&"strafe_l_walk", Vector2(-1.59, 0.0)],
 	[&"strafe_l_jog", Vector2(-2.75, 0.0)],
 	[&"strafe_r_jog", Vector2(2.21, 0.0)],
@@ -261,6 +263,8 @@ static var root_motion := {}
 ## clipe "prefixo/nome" -> curva do deslocamento horizontal do quadril
 ## (PackedVector3Array, ROOT_MOTION_FPS amostras/s, em alturas de quadril).
 static var root_curves := {}
+## clipe -> giro acumulado do quadril (rad), ROOT_MOTION_FPS amostras/s.
+static var root_yaw := {}
 
 
 ## Bibliotecas carregadas (cache compartilhado por todos os personagens).
@@ -320,6 +324,12 @@ static func _add_mirrored() -> void:
 			for v in c:
 				mc.append(Vector3(-v.x, v.y, v.z))
 			root_curves[mkey] = mc
+		if root_yaw.has(key):
+			var yc: PackedFloat32Array = root_yaw[key]
+			var my := PackedFloat32Array()
+			for y in yc:
+				my.append(-y)
+			root_yaw[mkey] = my
 		_mirror_clips[mirrored_name(logical)] = StringName(mkey)
 
 
@@ -426,6 +436,18 @@ static func root_motion_velocity(logical: StringName, t: float) -> Vector3:
 	return (curve[i + 1] - curve[i]) * ROOT_MOTION_FPS
 
 
+## Deslocamento do quadril (alturas de quadril, espaço do modelo) no instante t.
+static func root_offset_at(logical: StringName, t: float) -> Vector3:
+	var curve: PackedVector3Array = root_curves.get(String(clip(logical)), PackedVector3Array())
+	if curve.is_empty():
+		return Vector3.ZERO
+	var x := clampf(t * ROOT_MOTION_FPS, 0.0, float(curve.size() - 1))
+	var i := int(x)
+	if i >= curve.size() - 1:
+		return curve[curve.size() - 1]
+	return curve[i].lerp(curve[i + 1], x - i)
+
+
 ## Tempo de contato do clipe lógico que usa este prefixo (-1 se não houver).
 static func _contact_for_prefix(prefix: StringName) -> float:
 	for logical: StringName in CLIPS:
@@ -528,6 +550,64 @@ static func _rescale_hips(source: AnimationLibrary, factor: float) -> AnimationL
 	return lib
 
 
+static func _is_turn_prefix(prefix: StringName) -> bool:
+	for logical in TURN_ANGLES:
+		if String(CLIPS.get(logical, "")).begins_with(String(prefix) + "/"):
+			return true
+	return false
+
+
+## Viradas: o giro do corpo sai do quadril do clipe e vira GIRO DO JOGADOR
+## ao longo da animação (root motion de rotação). Sem isso o jogo aplicava o
+## giro inteiro no último quadro e o corpo "pulava" 90–180°.
+static func _strip_yaw(anim: Animation, key: String) -> void:
+	var tr := anim.find_track(NodePath(HIPS_POSITION_TRACK), Animation.TYPE_ROTATION_3D)
+	if tr < 0 or anim.track_get_key_count(tr) == 0:
+		return
+	var q0: Quaternion = anim.track_get_key_value(tr, 0)
+	var ref := q0.inverse() * Vector3(0, 0, 1) # direção do quadril que começa em +Z
+	var yaw_at := func(q: Quaternion) -> float:
+		var d: Vector3 = q * ref
+		return atan2(d.x, d.z)
+	var curve := PackedFloat32Array()
+	var n := int(anim.length * ROOT_MOTION_FPS) + 1
+	var prev := 0.0
+	var acc := 0.0
+	for i in n:
+		var q := anim.rotation_track_interpolate(tr, minf(i / ROOT_MOTION_FPS, anim.length))
+		var y: float = yaw_at.call(q)
+		if i > 0:
+			acc += wrapf(y - prev, -PI, PI) # contínuo (passa de 180°)
+		prev = y
+		curve.append(acc)
+	root_yaw[key] = curve
+	prev = 0.0
+	acc = 0.0
+	for k in anim.track_get_key_count(tr):
+		var q: Quaternion = anim.track_get_key_value(tr, k)
+		var y: float = yaw_at.call(q)
+		if k > 0:
+			acc += wrapf(y - prev, -PI, PI)
+		prev = y
+		anim.track_set_key_value(tr, k, Quaternion(Vector3.UP, -acc) * q)
+
+
+## Giro do corpo (rad, + = esquerda) acumulado no instante t de uma virada.
+static func root_yaw_at(logical: StringName, t: float) -> float:
+	var curve: PackedFloat32Array = root_yaw.get(String(clip(logical)), PackedFloat32Array())
+	if curve.is_empty():
+		return 0.0
+	var x := clampf(t * ROOT_MOTION_FPS, 0.0, float(curve.size() - 1))
+	var i := int(x)
+	if i >= curve.size() - 1:
+		return curve[curve.size() - 1]
+	return lerpf(curve[i], curve[i + 1], x - i)
+
+
+static func has_root_yaw(logical: StringName) -> bool:
+	return root_yaw.has(String(clip(logical)))
+
+
 ## Clipes do Mixamo deslocam o quadril pelo chão (até 4 m). O deslocamento do
 ## corpo no jogo vem da física, então retiramos o movimento horizontal do
 ## quadril (o clipe passa a ser "no lugar") e guardamos o total para uso como
@@ -563,5 +643,7 @@ static func _make_in_place(prefix: StringName, source: AnimationLibrary) -> Anim
 					var f := anim.track_get_key_time(track, k) / maxf(anim.length, 0.001)
 					anim.track_set_key_value(track, k, v - drift * f)
 			root_motion[String(prefix) + "/" + String(anim_name)] = Vector3(last.x - first.x, 0.0, last.z - first.z)
+		if _is_turn_prefix(prefix):
+			_strip_yaw(anim, String(prefix) + "/" + String(anim_name))
 		lib.add_animation(anim_name, anim)
 	return lib

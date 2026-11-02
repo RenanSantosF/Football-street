@@ -68,6 +68,8 @@ func _test_turn() -> void:
 	if t == 60:
 		Input.action_release("move_right")
 		Input.action_press("move_left", 1.0) # vira para o lado oposto
+	if OS.get_environment("DBG") != "" and t % 8 == 0 and t >= 56:
+		print("TT t=", t, " me=", me.global_position.snapped(Vector3.ONE*0.01), " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.01), " fac=", me.facing.snapped(Vector3.ONE*0.01), " ball=", ball.global_position.snapped(Vector3.ONE*0.01), " bv=", ball.flat_velocity().snapped(Vector3.ONE*0.01), " act=", me._action_kind if me.state == 1 else "")
 	if t == 160:
 		Input.action_release("move_left")
 		var off := ball.global_position.x - me.global_position.x

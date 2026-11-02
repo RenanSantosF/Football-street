@@ -261,6 +261,8 @@ func _shake_test() -> void:
 		Input.action_press("move_left" if (t / 6) % 2 == 0 else "move_right", 1.0)
 	if t == 120:
 		_release_all()
+	if OS.get_environment("DBG") != "" and t % 6 == 3:
+		print("SH t=", t, " me=", me.global_position.snapped(Vector3.ONE*0.01), " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.01), " fac=", me.facing.snapped(Vector3.ONE*0.01), " off=", me.ball_control.ball_offset().snapped(Vector3.ONE*0.01), " bv=", ball.flat_velocity().snapped(Vector3.ONE*0.01), " in=", me.intent.move.snapped(Vector3.ONE*0.01), " drag=", me.ball_control.is_dragging(), " act=", me._action_kind if me.state == 1 else "")
 	if t == 200:
 		results["chacoalhar_tem_bola"] = me.ball_control.has_ball()
 		results["chacoalhar_dist_max"] = snappedf(_maxd, 0.01)

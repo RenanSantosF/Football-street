@@ -417,7 +417,7 @@ func _conduct(delta: float) -> void:
 	# Pediu o lado OPOSTO correndo com a bola um pouco à frente: primeiro freia
 	# conduzindo (como soltar o analógico) e só depois vira com a bola no pé.
 	var reversing := want.length() >= 0.15 and pv.length() > 2.2 and pv.normalized().dot(want.normalized()) < -0.5 \
-		and d > 0.36
+		and (d > 0.36 or bv.length() > 1.5)
 	if reversing:
 		want = Vector3.ZERO
 	if want.length() < 0.15:
@@ -598,7 +598,8 @@ func approach_point(w: Vector3) -> Vector3:
 	#  senão passa do lado sem o pé alcançar)
 	var in_front_of_body := off.dot(player.facing) > 0.12
 	var lat_b := absf(off.dot(player.facing.cross(Vector3.UP)))
-	if d <= 0.48 and ahead > -0.3 and off.dot(player.facing) > 0.02 and lat_b < 0.4:
+	# (sem esticar a perna, "no pé" é só a bola na frente, perto da linha dos pés)
+	if d <= 0.48 and ahead > -0.3 and off.dot(player.facing) > 0.1 and lat_b < 0.22:
 		return Vector3.INF # no pé (à frente ou do lado): o toque de lado resolve NA HORA
 	if d <= 0.45 and in_front_of_body and ahead < -0.35:
 		return Vector3.INF # bola no pé e pediu o contrário: puxada de sola

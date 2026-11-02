@@ -110,6 +110,20 @@ func _ball_flat_dist() -> float:
 		ball.global_position.z - player.global_position.z).length()
 
 
+## Velocidade extra do corpo para levar o pé (da animação) até o ponto de
+## toque no tempo do contato. ZERO fora do alcance do pé.
+func body_correction() -> Vector3:
+	if USE_LEG_IK or phase != Phase.REACH or mode == Mode.KICK or player.visual == null \
+			or not player.visual.has_method("get_ankle_position"):
+		return Vector3.ZERO
+	var an: Vector3 = player.visual.call("get_ankle_position", side)
+	var err := Vector3(_target.x - an.x, 0.0, _target.z - an.z)
+	if err.length() < 0.03 or err.length() > 0.6:
+		return Vector3.ZERO
+	var rem := maxf(_lead - _t, 0.1)
+	return (err / rem).limit_length(BODY_ADJUST_SPEED)
+
+
 func update(delta: float) -> void:
 	if phase == Phase.IDLE:
 		if _shown[1.0] > 0.0 or _shown[-1.0] > 0.0 or _shift.length() > 0.001:
@@ -121,14 +135,23 @@ func update(delta: float) -> void:
 			_target = _target_now(maxf(_lead - _t, 0.0))
 			var k := clampf(_t / maxf(_lead, 0.001), 0.0, 1.0)
 			_weight = maxf(_weight, k * k * (3.0 - 2.0 * k))
-			if _t >= _lead:
-				# Bola ainda fora do alcance da perna: espera um pouco mais
-				# (o corpo continua chegando) em vez de tocar "de longe".
-				# (domínio com a bola passando debaixo do corpo: mata já)
-				if (not _reachable or (mode != Mode.KICK and _ik_cap() <= 0.35)) and _t < _lead + 0.16 \
-						and not (_claim and _ball_flat_dist() < 0.42):
-					pass
-				else:
+			if USE_LEG_IK:
+				if _t >= _lead:
+					# Bola ainda fora do alcance da perna: espera um pouco mais
+					# (o corpo continua chegando) em vez de tocar "de longe".
+					# (domínio com a bola passando debaixo do corpo: mata já)
+					if (not _reachable or (mode != Mode.KICK and _ik_cap() <= 0.35)) and _t < _lead + 0.16 \
+							and not (_claim and _ball_flat_dist() < 0.42):
+						pass
+					else:
+						_contact()
+			else:
+				# SEM IK: a perna é só a da animação. O toque acontece no quadro
+				# em que o PÉ DA PASSADA chega na bola (ou a bola chega nele);
+				# até lá o corpo é que se ajusta. Passou da janela: não toca.
+				var near := mode == Mode.KICK or _ik_cap() > 0.35 \
+					or (_claim and _ball_flat_dist() < 0.42)
+				if (_t >= _lead * 0.5 and near) or _t >= _lead + WAIT_WINDOW:
 					_contact()
 		Phase.HOLD:
 			_weight = 1.0
@@ -151,7 +174,19 @@ func update(delta: float) -> void:
 ## O CORPO inteiro se ajusta até ~14 cm na direção da bola no toque (o
 ## quadril vai junto, como um jogador ajustando a passada); a perna só corrige
 ## o resto, bem pouco — nada de perna esticada/deformada.
-const BODY_SHIFT_MAX := 0.14
+const BODY_SHIFT_MAX := 0.0
+## A IK da perna "contorcia" o pé (torção da coxa/joelho do SkeletonIK3D).
+## Desligada: a perna é sempre a da animação, o toque espera o pé chegar.
+const USE_LEG_IK := false
+## Sem IK: distância máxima (tornozelo da animação → ponto de toque) para
+## o pé contar como "na bola", por tipo de toque.
+const TOL_INSIDE := 0.15
+const TOL_SOLE := 0.17
+const TOL_CUSHION := 0.19
+## Quanto o toque pode esperar a passada trazer o pé até a bola (s).
+const WAIT_WINDOW := 0.3
+## Velocidade máxima do ajuste do corpo até a bola (m/s).
+const BODY_ADJUST_SPEED := 1.4
 const IK_FULL := 0.1
 const IK_MAX := 0.22
 ## Pisar na bola à frente (sola) é uma pose natural de perna levantada para a
@@ -164,6 +199,15 @@ func _ik_cap() -> float:
 	var v := player.visual
 	if v == null or not v.has_method("get_ankle_position"):
 		return 1.0
+	if not USE_LEG_IK:
+		var an: Vector3 = v.call("get_ankle_position", side)
+		var dd := Vector2(an.x - _target.x, an.z - _target.z).length()
+		var tol := TOL_INSIDE
+		if mode == Mode.SOLE:
+			tol = TOL_SOLE
+		elif mode == Mode.CUSHION:
+			tol = TOL_CUSHION
+		return clampf(1.0 - (dd - tol) / 0.06, 0.0, 1.0)
 	var a: Vector3 = v.call("get_ankle_position", side) - _shift
 	# o que o corpo não consegue cobrir fica para a perna
 	var disp := maxf(a.distance_to(_target) - BODY_SHIFT_MAX, 0.0)
@@ -279,6 +323,15 @@ func _target_now(t: float) -> Vector3:
 func _apply() -> void:
 	var v := player.visual
 	if v == null or not v.has_method("set_foot_target"):
+		return
+	if not USE_LEG_IK:
+		_last_target[side] = _target
+		if _shown[1.0] > 0.0 or _shown[-1.0] > 0.0 or v.position != Vector3.ZERO:
+			_shown[1.0] = 0.0
+			_shown[-1.0] = 0.0
+			v.position = Vector3.ZERO
+			v.call("set_foot_target", 1.0, _target, 0.0, player.facing)
+			v.call("set_foot_target", -1.0, _target, 0.0, player.facing)
 		return
 	var cap := _ik_cap() if phase == Phase.REACH or phase == Phase.HOLD else 1.0
 	# peso de cada perna muda suave (a perna nunca "pula" de pose)

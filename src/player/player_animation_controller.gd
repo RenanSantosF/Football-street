@@ -126,6 +126,9 @@ var _prev_speed := 0.0
 var _getting_up := false
 var _prev_facing := Vector3.FORWARD
 var _turn_rate := 0.0
+var _pending_reaction: StringName = &""
+var _clip_x := 0.0
+var _mark_pos := Vector2.ZERO
 var _gesture_state: StringName = &""
 var _ball_blend := 0.0
 var _stride := 0.0
@@ -180,45 +183,67 @@ func physics_update(delta: float) -> void:
 	if player.visual.has_method("get_locomotion_scale"):
 		k = player.visual.call("get_locomotion_scale")
 	k = maxf(k, 0.01)
-	var v := player.get_flat_velocity()
+	var v := player.get_flat_velocity() + Vector3(player.body_adjust.x, 0.0, player.body_adjust.z)
 	# Girando parado: dá passinhos (a velocidade de giro alimenta a passada),
 	# em vez de rodar com os pés deslizando.
 	var ang := absf(_prev_facing.signed_angle_to(player.facing, Vector3.UP)) / maxf(delta, 0.001)
 	_prev_facing = player.facing
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
-	var raw := maxf(v.length(), minf(_turn_rate * 0.3, 1.0)) / k
+	# (girando parado: passos curtos, sem "andar no lugar")
+	var raw := maxf(v.length(), minf(_turn_rate * 0.12, 0.3)) / k
 	# Passada suave: a velocidade que alimenta a animação muda devagar (sem
 	# pé "teleportando" quando o corpo freia/acelera um pouco).
-	_stride = lerpf(_stride, raw, 1.0 - exp(-7.0 * delta))
+	_stride = lerpf(_stride, raw, 1.0 - exp(-14.0 * delta))
 	# Devagar NÃO mistura "parado" com "andando" (isso dava passo arrastado,
 	# "tentando andar"): usa a caminhada inteira, mais lenta (TimeScale).
-	var walk := WALK_STRIDE
-	var pos := _stride
+	# UMA animação de passada por vez (andar / trote / corrida / sprint), com
+	# a velocidade do clipe ajustada EXATAMENTE à do corpo: o pé apoiado não
+	# desliza. (Misturar dois clipes de ritmos diferentes deixava os pés fora
+	# de fase — "patinando" — entre 1,8 e 4 m/s.)
+	var has_b := player.ball_control.has_ball()
+	var pts: Array = AnimationCatalog.LOCOMOTION_BALL_POINTS if has_b else AnimationCatalog.LOCOMOTION_POINTS
+	var pos := 0.0
 	var time_scale := 1.0
-	if _stride < 0.22:
-		pos = 0.0
-	elif _stride < walk:
-		pos = walk
-		time_scale = clampf(_stride / walk, 0.45, 1.0)
-	elif _stride > AnimationCatalog.TOP_SPEED:
-		time_scale = _stride / AnimationCatalog.TOP_SPEED
-	# troca parado ↔ andando com mistura de ~0,2 s
-	_blend_pos = move_toward(_blend_pos, pos, delta * 8.0)
-	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-8.0 * delta))
+	if _stride >= 0.07:
+		pos = _pick_stride_clip(pts, _stride)
+		time_scale = clampf(_stride / pos, 0.12, 1.6)
+	_clip_x = pos
+	# troca de clipe com mistura curta (~0,1 s)
+	if pos == 0.0 or _blend_pos == 0.0 or _blend_pos < 1.0:
+		_blend_pos = move_toward(_blend_pos, pos, delta * 8.0)
+	else:
+		# troca de clipe em ~0,2 s (sem "estalo" de pose)
+		_blend_pos = lerpf(_blend_pos, pos, 1.0 - exp(-14.0 * delta))
+		if absf(_blend_pos - pos) < 0.01:
+			_blend_pos = pos
+	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-16.0 * delta))
 	var ball_target := 1.0 if player.ball_control.has_ball() else 0.0
-	_ball_blend = move_toward(_ball_blend, ball_target, delta * 3.0)
+	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
 	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
 	# Marcação: velocidade no referencial do corpo (x = direita, y = frente).
 	var right := player.facing.cross(Vector3.UP)
-	anim_tree.set("parameters/Mark/Dir/blend_position", Vector2(v.dot(right), v.dot(player.facing)) / k)
+	# (suave: trocar de passo lateral para trás/frente sem "estalar" o quadril)
+	var mk := Vector2(v.dot(right), v.dot(player.facing)) / k
+	_mark_pos = _mark_pos.move_toward(mk, delta * 9.0)
+	anim_tree.set("parameters/Mark/Dir/blend_position", _mark_pos)
 
 	var current := playback.get_current_node()
 	_time_since_contact += delta
 
 	if player.current_reaction() != &"":
+		# comemoração/lamento só depois de parar (antes deslizava nessa pose)
+		var cur_r := playback.get_current_node()
+		if _pending_reaction != &"" and v.length() < 0.35:
+			_play(_pending_reaction)
+			_pending_reaction = &""
+		elif v.length() > 0.6 and cur_r in [&"Celebrate", &"CelebrateIdle", &"Samba", &"Defeated"]:
+			# andando de volta para a posição: anda de verdade (sem deslizar na pose)
+			_pending_reaction = cur_r
+			playback.travel(&"Locomotion")
 		_prev_speed = v.length()
-		return # comemoração/lamento: fica até a próxima saída de bola
+		return # fica até a próxima saída de bola
+	_pending_reaction = &""
 
 	var wanted := _wanted_base()
 	# Ação já terminou na lógica e o jogador está correndo: volta para a
@@ -294,6 +319,25 @@ func physics_update(delta: float) -> void:
 	_prev_speed = v.length()
 
 
+## Clipe de passada (posição no BlendSpace) para a velocidade [param stride],
+## com histerese (não fica trocando de clipe na fronteira).
+func _pick_stride_clip(pts: Array, stride: float) -> float:
+	var speeds: Array[float] = []
+	for p in pts:
+		if float(p[1]) > 0.0 and AnimationCatalog.has_clip(p[0]):
+			speeds.append(float(p[1]))
+	if speeds.is_empty():
+		return WALK_STRIDE
+	# fronteira entre clipes vizinhos: média geométrica das velocidades
+	var best := speeds[0]
+	for i in range(1, speeds.size()):
+		var edge := sqrt(speeds[i - 1] * speeds[i])
+		var hyst := 0.12 if _clip_x == speeds[i - 1] else (-0.12 if _clip_x == speeds[i] else 0.0)
+		if stride > edge + hyst:
+			best = speeds[i]
+	return best
+
+
 func _wanted_base() -> StringName:
 	if player.is_marking() and _has_state(&"Mark"):
 		return &"Mark"
@@ -349,6 +393,10 @@ func _on_action_started(kind: StringName) -> void:
 			seek = maxf(AnimationCatalog.contact_time(logical) - player.time_to_contact() * ACTION_SPEED, 0.0)
 		_play_action(state_name, seek, KIND_SPEED.get(kind, ACTION_SPEED))
 		_time_since_contact = -player.time_to_contact()
+	elif kind in [&"celebrate", &"defeated", &"samba"] and player.get_horizontal_speed() > 0.35:
+		_pending_reaction = state_name
+		if not (playback.get_current_node() in BASE_STATES):
+			playback.travel(&"Locomotion")
 	else:
 		_play(state_name)
 
