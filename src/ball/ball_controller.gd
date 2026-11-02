@@ -18,7 +18,7 @@ const LOSE_TEAMMATE_DIST := 2.4
 @export var rolling_resistance := 2.0
 ## Bola no pé de alguém (conduzindo): rola menos, como na grama — o jogador
 ## tem mais domínio e a bola não "foge" entre os toques.
-@export var possessed_rolling_factor := 1.6
+@export var possessed_rolling_factor := 1.25
 
 
 func current_rolling() -> float:

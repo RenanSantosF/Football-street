@@ -322,24 +322,21 @@ func _update_move(delta: float) -> void:
 			# acompanha a velocidade da bola (feed-forward) e ainda fecha a distância
 			var bvf := ball.flat_velocity()
 			desired = (bvf + to / 0.22).limit_length(sprint_speed * 1.05) if to.length() > 0.08 else bvf + w * jog_speed * 0.3
-		elif get_flat_velocity().length() > 1.5 and ball_control.foot.busy() and ball_control.foot.mode == FootContact.Mode.INSIDE \
-				and ball_control.foot.phase == FootContact.Phase.REACH and get_flat_velocity().normalized().dot(w) < 0.95:
+		elif _hold_for_side_touch(w):
 			# TOQUE DE LADO: primeiro o pé (o de fora: para ir à esquerda, a parte
 			# de dentro do pé direito no lado direito da bola), depois o corpo.
-			# Até o contato o corpo segue reto, sem girar antes da bola.
+			# Até o pé encostar, o corpo segue reto (sem girar antes da bola).
 			desired = get_flat_velocity()
 		else:
+			# Corre LIVRE atrás da bola: os tapas a mandam à frente e a próxima
+			# passada a alcança. Só acelera além se ela fugiu demais, e só segura
+			# se a bola ficou debaixo do corpo, mais lenta.
 			desired += ball_control.catch_up_velocity(w)
-			# Não "atropela" a bola: com ela no pé e ainda sem o toque, o corpo
-			# ajusta a passada à velocidade da bola até o pé encostar nela.
 			var off_b := ball_control.ball_offset()
 			var along_b := off_b.dot(w)
 			var bspeed := ball.flat_velocity().dot(w)
-			# o corpo mantém a bola ~0,3 m à frente (a passada chega nela); não
-			# encosta nem passa por cima esperando o toque
-			var cap_v := bspeed + clampf((along_b - 0.3) * 4.0, -0.5, 0.6)
-			if along_b < 0.42 and desired.length() > cap_v:
-				desired = desired.normalized() * maxf(cap_v, 0.6)
+			if along_b < 0.12 and desired.length() > bspeed + 0.8:
+				desired = desired.normalized() * maxf(bspeed + 0.8, 0.8)
 	elif has_ball:
 		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
 		var off := ball_control.ball_offset()
@@ -363,7 +360,16 @@ func _update_move(delta: float) -> void:
 	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.2 \
 		and hv.normalized().dot(input.normalized()) < -0.5 \
 		and (ball_control.ball_distance() > 0.36 or ball.flat_velocity().length() > 1.5)
-	if has_ball and (input.length() < 0.1 or reversing_ball) and hv.length() > 1.4 and ball_control.ball_distance() < 0.9 \
+	if has_ball and reversing_ball and not ball_control.is_reverse_pulling() \
+			and ball_control.ball_offset().dot(facing) > 0.2 and ball_control.ball_distance() < 2.0:
+		# Pediu o lado contrário com a bola à frente (tapa): dá um pique curto
+		# até a bola para pisar nela e voltar (não fica freando atrás dela).
+		var offr := ball_control.ball_offset()
+		var bspr := ball.flat_velocity().dot(facing)
+		desired = facing * clampf(bspr + (offr.dot(facing) - 0.3) * 6.0, 0.0, sprint_speed) \
+			+ facing.cross(Vector3.UP) * clampf(offr.dot(facing.cross(Vector3.UP)) * 3.0, -1.2, 1.2)
+		rate = acceleration * 1.3
+	elif has_ball and input.length() < 0.1 and hv.length() > 1.4 and ball_control.ball_distance() < 0.9 \
 			and not ball_control.is_reverse_pulling():
 		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
 		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
@@ -373,7 +379,7 @@ func _update_move(delta: float) -> void:
 		var bsp := ball.flat_velocity().dot(facing)
 		desired = facing * clampf(bsp + (along - 0.3) * 4.0, 0.0, hv.length()) \
 			+ facing.cross(Vector3.UP) * clampf(lat * 2.5, -1.2, 1.2)
-		rate = 8.0 if reversing_ball else 6.0
+		rate = 6.0
 	hv = hv.move_toward(desired, rate * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
@@ -1212,6 +1218,25 @@ func _compute_marking() -> bool:
 ## Condições que desligam a marcação na hora (sem esperar o tempo mínimo).
 func _compute_marking_allowed() -> bool:
 	return ball != null and ball.in_play and state == State.MOVE and not ball_control.has_ball()
+
+
+var _side_hold_t := 0.0
+
+
+## Virando correndo com a bola à frente: o corpo segura a direção até o toque
+## de lado mandar a bola para o novo lado (no máximo ~0,45 s).
+func _hold_for_side_touch(w: Vector3) -> bool:
+	var hv := get_flat_velocity()
+	var bv := ball.flat_velocity()
+	var off := ball_control.ball_offset()
+	var turning := hv.length() > 1.5 and hv.normalized().angle_to(w) > deg_to_rad(25.0)
+	var ball_not_yet := bv.length() < 0.5 or bv.normalized().angle_to(w) > deg_to_rad(25.0)
+	var ball_near_front := off.dot(hv.normalized()) > -0.05 and off.length() < 0.9
+	if turning and ball_not_yet and ball_near_front and _side_hold_t < 0.45:
+		_side_hold_t += get_physics_process_delta_time()
+		return true
+	_side_hold_t = 0.0
+	return false
 
 
 ## Adversário colado (até 1,8 m) de quem estou com a bola: direção até ele

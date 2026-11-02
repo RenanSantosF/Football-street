@@ -100,6 +100,16 @@ func get_foot_positions() -> Array[Vector3]:
 	return out
 
 
+## Ponta do pé [param side] (+1 direito, -1 esquerdo) no mundo, na animação.
+func get_toe_position(side: float) -> Vector3:
+	var i := 1 if side > 0.0 else 0
+	if skeleton == null or _toe_bones.size() < 2:
+		return get_ankle_position(side)
+	var toe := skeleton.global_transform * skeleton.get_bone_global_pose(_toe_bones[i]).origin
+	var an := get_ankle_position(side)
+	return toe + (toe - an).normalized() * 0.06 # até a ponta dos dedos
+
+
 func _build(wanted: StringName) -> void:
 	var order: Array[StringName] = []
 	if wanted != &"" and BASES.has(wanted):

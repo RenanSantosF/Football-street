@@ -75,7 +75,7 @@ func _physics_process(_d: float) -> void:
 			Input.action_release(a)
 		# dominou = está com a bola no pé (parado ou já conduzindo, se o analógico estava apertado)
 		var moving_on := OS.get_environment("MOVE") != ""
-		var got := ball.possessor == me and me.ball_control.ball_distance() < 0.9 \
+		var got := ball.possessor == me and me.ball_control.ball_distance() < (1.7 if moving_on else 0.9) \
 			and (moving_on or ball.flat_velocity().length() < 2.0)
 		if got:
 			ok += 1

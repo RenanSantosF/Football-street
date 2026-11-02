@@ -60,6 +60,8 @@ var _trapping := false
 var _sole_on := false
 var _carry_on := false
 var _dragging := false
+## Toques de condução feitos (contato do pé).
+var _touch_count := 0
 ## Puxada de sola na inversão de direção (o corpo gira por cima da bola).
 var _reverse_pull := false
 var _carry_frame := 0
@@ -138,6 +140,7 @@ func physics_update(delta: float) -> void:
 	if ball == null:
 		return
 	foot.update(delta)
+	_track_feet(delta)
 	_sync_possession()
 	if _carry_on and Engine.get_physics_frames() - _carry_frame > 2:
 		_carry_on = false
@@ -224,12 +227,16 @@ func catch_up_velocity(dir: Vector3) -> Vector3:
 	var along := off.dot(dir)
 	var right := dir.cross(Vector3.UP)
 	var v := Vector3.ZERO
-	# O CORPO alcança a bola (não a bola que volta para o corpo): se ela está
-	# além do ponto de toque, o jogador acelera para a passada chegar nela.
-	if along > FOOT_DISTANCE + 0.1:
-		v += dir * clampf((along - FOOT_DISTANCE - 0.1) * 2.0, 0.0, 1.6)
-	if along > 0.0:
-		v += right * clampf(off.dot(right) * 2.0, -1.5, 1.5)
+	# a bola fugiu além do tapa normal: o corpo acelera para alcançá-la
+	var v_t := player.intent.move.length() * _top_speed_with_ball()
+	var lead_max := 0.45 + tap_lead(v_t) + 0.3
+	if along > lead_max:
+		v += dir * clampf((along - lead_max) * 1.5, 0.0, 1.0)
+	# alinha o corpo com a bola (ela fica entre os pés, na linha da passada):
+	# acompanha o deslize lateral dela e ainda fecha a diferença
+	if along > -0.1:
+		var blat := ball.flat_velocity().dot(right)
+		v += right * clampf(blat + off.dot(right) * 4.0, -1.8, 1.8)
 	return v
 
 
@@ -446,7 +453,7 @@ func _conduct(delta: float) -> void:
 	# trás) com a bola no pé → pisa na bola, o corpo freia firme e gira por cima
 	# dela, e a sola traz a bola para a frente da nova direção. ~0,5 s.
 	if want.length() >= 0.15 and pv.length() > 0.8 and pv.normalized().dot(want.normalized()) < -0.35 \
-			and d <= 0.68 and off.dot(player.facing) > -0.05 and _since_touch > 0.12:
+			and d <= 0.72 and off.dot(player.facing) > -0.05 and _since_touch > 0.12:
 		_since_touch = 0.0
 		foot.begin(foot.nearest_foot(), player.facing, TOUCH_LEAD, FootContact.Mode.SOLE, func():
 			_dragging = true
@@ -494,75 +501,114 @@ func _conduct(delta: float) -> void:
 		_since_touch = 0.0
 		player.notify_touch(&"drag")
 		return
-	var braking_now := want.length() < 0.05 and pv.length() > 1.4
-	# correndo, a passada alcança mais à frente: toca de novo antes de a bola
-	# se afastar (condução com mais toques, bola sempre no pé)
-	var reach_now := TOUCH_REACH + clampf((pv.length() - 2.0) * 0.12, 0.0, 0.22)
-	if d > (0.62 if braking_now else reach_now):
-		return # longe: o Player vai até a bola primeiro (approach_point)
+	# CONDUÇÃO EM MOVIMENTO: o toque acontece quando o PÉ DA PASSADA encosta de
+	# verdade na bola (contato do pé da animação, sem esticar a perna).
+	_foot_contact_touch(want, pv, bv)
+
+
+## Pés da animação no mundo (posição e velocidade) — para o contato com a bola.
+var _ank_prev := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
+var _ank_vel := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
+var _toe_prev := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
+const TAP_COOLDOWN := 0.14
+
+
+func _track_feet(delta: float) -> void:
+	var v := player.visual
+	if v == null or not v.has_method("get_toe_position") or delta <= 0.0:
+		return
+	for sd in [1.0, -1.0]:
+		var an: Vector3 = v.call("get_ankle_position", sd)
+		var tp: Vector3 = v.call("get_toe_position", sd)
+		if _toe_prev[sd] != Vector3.ZERO:
+			_ank_vel[sd] = (tp - _toe_prev[sd]) / delta
+		_ank_prev[sd] = an
+		_toe_prev[sd] = tp
+
+
+## O PÉ (tornozelo → ponta, em 3D) está encostando na bola e indo NA bola?
+func _foot_hits_ball(sd: float, bv: Vector3) -> bool:
+	var an: Vector3 = _ank_prev[sd]
+	var tp: Vector3 = _toe_prev[sd]
+	if an == Vector3.ZERO or tp == Vector3.ZERO:
+		return false
+	var b := ball.global_position
+	if minf(an.y, tp.y) > b.y + 0.06:
+		return false # pé por cima da bola (passando/pisando): não é o tapa
+	var seg := tp - an
+	var tt := clampf((b - an).dot(seg) / maxf(seg.length_squared(), 0.0001), 0.0, 1.0)
+	var near := an + seg * tt
+	var dist := b.distance_to(near)
+	if dist > Ball.RADIUS + 0.055:
+		return false
+	var n := Vector3(b.x - near.x, 0.0, b.z - near.z)
+	if n.length() < 0.02:
+		return false # pé em cima da bola (pisando), não é toque de condução
+	n = n.normalized()
+	var vf: Vector3 = _ank_vel[sd]
+	var rel := Vector2(vf.x - bv.x, vf.z - bv.z).dot(Vector2(n.x, n.z))
+	return rel > 0.25 # o pé vem na bola (pé apoiado parado não "toca")
+
+
+func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
+	if _since_touch < TAP_COOLDOWN:
+		return
+	var v := player.visual
+	if v == null or not v.has_method("get_toe_position"):
+		if ball_distance() < 0.4:
+			_tap(want, pv, 0.0)
+		return
+	for sd in [1.0, -1.0]:
+		if _foot_hits_ball(sd, bv):
+			_tap(want, pv, sd)
+			return
+
+
+## Distância extra que a bola corre à frente do pé a cada toque (m): perto
+## andando, mais longa correndo ("tapas").
+static func tap_lead(v_target: float) -> float:
+	return lerpf(0.12, 0.6, clampf((v_target - 1.2) / 3.0, 0.0, 1.0))
+
+
+func _top_speed_with_ball() -> float:
+	return player.speed_dribbling if (player.intent.sprint and player.stamina > 0.05) \
+		else player.jog_speed * player.ball_speed_factor
+
+
+## O TAPA: o pé encostou na bola — ela sai na direção pedida, na frente do
+## corpo, com a força certa para o jogador alcançá-la na próxima passada.
+func _tap(want: Vector3, pv: Vector3, foot_side: float) -> void:
 	var speed := pv.length()
-	# virando (direção pedida diferente do rumo da bola) o pé pode ir de novo
-	# logo; reto, respeita a cadência da passada
-	var turning_now := bv.length() > 0.4 and bv.normalized().dot(want.normalized()) < 0.85
-	if _since_touch < (0.1 if turning_now else 0.2):
-		return
-	var right := w.cross(Vector3.UP)
-	var along := off.dot(w)
-	var lateral := off.dot(right)
-	var rel_along := (bv - pv).dot(w)
-	var behind := along < FOOT_DISTANCE + 0.25 and rel_along < 0.3
-	var drifting := absf(lateral) > 0.3
-	var mismatch := bv.length() > 0.4 and bv.normalized().dot(w) < 0.8
-	# freando (soltou o analógico): a bola mais rápida que o corpo pede um toque
-	# curto que a segura
-	var braking_touch := want.length() < 0.05 and (rel_along > 0.3 or bv.length() > 1.4) and _since_touch > 0.22
-	if braking_touch and along > 0.15:
-		# FREIO COM A SOLA: a perna estica à frente, pisa na bola e a segura
-		# (fica ~55% da velocidade do corpo); repete até parar.
-		_since_touch = 0.0
-		foot.begin(foot.nearest_foot(), player.facing, TOUCH_LEAD, FootContact.Mode.SOLE, func():
-			var pvn := _flat(player.velocity)
-			ball.touch(pvn * 0.55, player)
-			player.notify_touch(&"brake"), 0.08)
-		return
-	if not (behind or drifting or mismatch or braking_touch):
-		_touch_wait = 0.0
-		return
-	# Toque de lado: para ir para a DIREITA o pé bate no lado ESQUERDO da bola
-	# (e vice-versa). Espera um instante pelo pé certo chegar na bola.
-	var turn_side := 0.0
-	if bv.length() > 0.4 or speed > 0.8:
-		var ref := bv.normalized() if bv.length() > 0.4 else player.facing
-		var ang := ref.signed_angle_to(w, Vector3.UP)
-		if absf(ang) > deg_to_rad(18.0):
-			turn_side = -signf(ang) # +1 = virando para a direita
-	# Qual pé: virando, o do lado de onde a bola sai (dentro do pé esquerdo
-	# empurra para a direita); reto, o pé que está mais perto da bola.
-	var f := -turn_side
-	if turn_side == 0.0:
-		# reto: o pé que está mais perto do ponto de toque na passada
-		f = 1.0 if foot.ideal_distance(1.0, w, FootContact.Mode.INSIDE) <= foot.ideal_distance(-1.0, w, FootContact.Mode.INSIDE) else -1.0
-		if speed < 1.6:
-			# devagar: o pé do lado em que a bola está (sem cruzar as pernas)
-			f = 1.0 if lateral >= 0.0 else -1.0
-	# Espera a passada da animação levar o pé até a bola (a perna não estica).
-	var max_wait := 0.08 if turn_side != 0.0 else 0.32
-	var near_ok := 0.2 if speed >= 1.6 else 0.4
-	if _touch_wait < max_wait and foot.ideal_distance(f, w, FootContact.Mode.INSIDE) > near_ok:
-		_touch_wait += delta
-		return
-	last_touch_forced = _touch_wait >= max_wait
-	_touch_wait = 0.0
+	var a := ball.current_rolling()
+	var vel: Vector3
+	var kind := &"dribble_touch"
+	if want.length() < 0.15:
+		# soltou o analógico: toque curto que segura a bola (o corpo freia junto)
+		var bdir := pv.normalized() if speed > 0.3 else player.facing
+		vel = bdir * speed * 0.45
+	else:
+		var w := want.normalized()
+		var ref := pv.normalized() if speed > 0.6 else player.facing
+		var ang := ref.signed_angle_to(w, Vector3.UP) # + = esquerda
+		var left := ang > 0.0
+		# Para a esquerda, a parte de DENTRO do pé direito (o de fora) leva a bola;
+		# o outro pé só dá um toquinho de fora, de leve.
+		var outer := (left and foot_side > 0.0) or (not left and foot_side < 0.0) or foot_side == 0.0
+		var lim := deg_to_rad(70.0) if (outer or absf(ang) < deg_to_rad(20.0)) else deg_to_rad(28.0)
+		var dir := ref.rotated(Vector3.UP, clampf(ang, -lim, lim))
+		if absf(ang) > deg_to_rad(20.0):
+			kind = &"side_touch"
+		var v_t := maxf(want.length() * _top_speed_with_ball(), 0.9)
+		var u := sqrt(2.0 * a * tap_lead(v_t))
+		vel = dir * (v_t + u)
+		# leva a bola para a linha do corpo (entre os pés)
+		var right := dir.cross(Vector3.UP)
+		var lat := ball_offset().dot(right)
+		vel -= right * clampf(lat * 1.5, -0.6, 0.6)
+	ball.touch(Vector3(vel.x, 0.0, vel.z), player)
 	_since_touch = 0.0
-	var ts := turn_side
-	foot.begin(f, w, TOUCH_LEAD, FootContact.Mode.INSIDE, func():
-		# direção ATUAL do analógico no contato (ele pode ter girado mais um
-		# pouco enquanto o pé ia até a bola) — o toque não fica "atrasado"
-		var cur := _flat(player.intent.move)
-		var wd := cur.normalized() if cur.length() > 0.15 and cur.normalized().dot(w) > 0.3 else w
-		_do_touch(wd, _flat(player.velocity).length(), 0.0)
-		if ts != 0.0:
-			player.notify_touch(&"side_touch"))
+	_touch_count += 1
+	player.notify_touch(kind)
 
 
 ## Soltou o analógico: o jogador PARA A BOLA. Se ela rolou à frente, ele vai
