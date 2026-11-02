@@ -13,3 +13,4 @@ assets/animations/mixamo/**/*.fbx
 # Personagens do autor rigados no Mixamo (fora do repositório público).
 assets/characters/teen_01/*.fbx
 assets/characters/teen_01/*.png
+assets/animations/rohr/*.fbx

@@ -50,7 +50,8 @@ func _physics_process(_d: float) -> void:
 		6: _ball_behind_test(Vector3(-0.6, 0, -0.55), "atras_lado")
 		7: _ball_behind_test(Vector3(-0.9, 0, 0.3), "atras_longe")
 		8: _small_turn_test()
-		9:
+		9: _side_test()
+		10:
 			print("RESULTADOS: ", results)
 			get_tree().quit()
 
@@ -215,6 +216,33 @@ func _small_turn_test() -> void:
 		results["virada_leve_puxou_com_sola"] = _dragged > 0
 		results["virada_leve_virou"] = me.facing.dot(want) > 0.85
 		results["virada_leve_bola_na_frente"] = o.normalized().dot(want) > 0.6
+		_next()
+
+
+var _side_t := -1
+
+
+## Andando com a bola para a frente e analógico 90° para o lado: quanto tempo
+## até o toque levar a bola para o novo lado.
+func _side_test() -> void:
+	if t0 == 0:
+		_setup(Vector3(-6, 0, 0), Vector3(1, 0, 0))
+		t0 = f
+		_side_t = -1
+		Input.action_press("move_right", 1.0)
+	var t := f - t0
+	if t == 60:
+		Input.action_release("move_right")
+		Input.action_press("move_up", 1.0)
+	if OS.get_environment("DBG") != "" and t >= 58 and t < 150 and t % 4 == 0:
+		print("SD t=", t, " me=", me.global_position.snapped(Vector3.ONE*0.01), " v=", me.get_flat_velocity().snapped(Vector3.ONE*0.1), " face=", me.facing.snapped(Vector3.ONE*0.01), " in=", me.intent.move.snapped(Vector3.ONE*0.01), " ball=", ball.global_position.snapped(Vector3.ONE*0.01), " bv=", ball.flat_velocity().snapped(Vector3.ONE*0.1), " d=", snappedf(me.ball_control.ball_distance(),0.01), " foot=", me.ball_control.foot.phase, "/", me.ball_control.foot.mode, " st=", me.state, " ", me._action_kind)
+	if t > 60 and _side_t < 0 and ball.flat_velocity().dot(Vector3(0, 0, -1)) > 1.0:
+		_side_t = t - 60
+	if t == 150:
+		results["lado_tempo_ate_toque_s"] = snappedf(_side_t / 60.0, 0.01) if _side_t >= 0 else -1.0
+		results["lado_tem_bola"] = me.ball_control.has_ball()
+		var o := ball.global_position - me.global_position
+		results["lado_bola_na_frente"] = o.z < -0.1
 		_next()
 
 

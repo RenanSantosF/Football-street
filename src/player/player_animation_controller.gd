@@ -34,6 +34,13 @@ const ACTION_STATES := {
 	&"turn_l": &"TurnLeft",
 	&"turn_r": &"TurnRight",
 	&"run_stop": &"RunStop",
+	&"cut_r": &"Cut",
+	&"cut_l": &"CutL",
+	&"walk_turn180_r": &"WalkTurn180",
+	&"walk_turn180_l": &"WalkTurn180L",
+	&"stand_turn_r": &"StandTurn",
+	&"stand_turn_l": &"StandTurnL",
+	&"walk_stop": &"WalkStop",
 	&"recv_chest": &"RecvChest",
 	&"recv_knee": &"RecvKnee",
 	&"header": &"Header",
@@ -61,6 +68,13 @@ const ACTION_LOGICAL := {
 	&"turn_l": &"turn_l",
 	&"turn_r": &"turn_r",
 	&"run_stop": &"run_stop",
+	&"cut_r": &"cut_r",
+	&"cut_l": &"cut_r_m",
+	&"walk_turn180_r": &"walk_turn180",
+	&"walk_turn180_l": &"walk_turn180_m",
+	&"stand_turn_r": &"stand_turn_r",
+	&"stand_turn_l": &"stand_turn_r_m",
+	&"walk_stop": &"walk_stop",
 	&"recv_chest": &"recv_chest",
 	&"recv_knee": &"recv_knee",
 	&"header": &"header",
@@ -71,7 +85,8 @@ const ACTION_LOGICAL := {
 const AUTO_RETURN: Array[StringName] = [
 	&"PassShort", &"PassLong", &"Shoot", &"ShootPower", &"PassShortL", &"PassLongL", &"ShootL",
 	&"ShootPowerL", &"Receive", &"Spin", &"GKPass", &"GKCatch", &"Jump", &"Turn180", &"TurnLeft",
-	&"TurnRight", &"RunStop", &"RecvChest", &"Header", &"HeadControl", &"HeaderJump", &"Burst",
+	&"TurnRight", &"RunStop", &"Cut", &"CutL", &"WalkTurn180", &"WalkTurn180L", &"StandTurn",
+	&"StandTurnL", &"WalkStop", &"RecvChest", &"Header", &"HeadControl", &"HeaderJump", &"Burst",
 	&"Stumble", &"GetUpFront", &"GetUpBack",
 ]
 ## Domínios no ar: depois do contato voltam para a locomoção (o joelho é um
@@ -81,6 +96,8 @@ const AERIAL_STATES: Array[StringName] = [&"RecvChest", &"RecvKnee", &"Header", 
 const KIND_SPEED := {
 	&"turn180": Player.TURN_SPEED_UP, &"turn_l": Player.TURN_SPEED_UP,
 	&"turn_r": Player.TURN_SPEED_UP, &"run_stop": 1.0,
+	&"cut_r": 1.0, &"cut_l": 1.0, &"walk_turn180_r": 1.15, &"walk_turn180_l": 1.15,
+	&"stand_turn_r": 1.2, &"stand_turn_l": 1.2, &"walk_stop": 1.0,
 }
 ## Gesto de espera -> estado.
 const GESTURE_STATES := {

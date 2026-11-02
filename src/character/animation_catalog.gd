@@ -60,6 +60,10 @@ const LIBRARY_SOURCES := {
 	&"m_turn_l": "Left Turn",
 	&"m_turn_r": "Right Turn",
 	&"m_turn180": "Running Turn 180",
+	&"m_cut_r": "Running Right Turn",
+	&"m_walk_turn180": "Walking Turn 180",
+	&"m_stand_turn_r": "Standing Cover Turn",
+	&"m_walk_stop": "Stop Walking",
 	&"m_run_stop": "Run To Stop",
 	&"m_argue": "Standing Arguing",
 	&"m_getup": "Standing Up",
@@ -88,6 +92,10 @@ const CLIPS := {
 	&"turn_l": &"m_turn_l/mixamo_com",
 	&"turn_r": &"m_turn_r/mixamo_com",
 	&"turn180": &"m_turn180/mixamo_com",
+	&"cut_r": &"m_cut_r/mixamo_com",
+	&"walk_turn180": &"m_walk_turn180/mixamo_com",
+	&"stand_turn_r": &"m_stand_turn_r/mixamo_com",
+	&"walk_stop": &"m_walk_stop/mixamo_com",
 	&"run_stop": &"m_run_stop/mixamo_com",
 	&"argue": &"m_argue/mixamo_com",
 	&"idle_ball": &"m_offensive_idle/mixamo_com",
@@ -221,7 +229,14 @@ const LOCOMOTION_SPEEDS := {&"sprint": 5.65}
 const HIPS_POSITION_TRACK := "%GeneralSkeleton:Hips"
 ## Clipes cujo deslocamento do corpo vem da própria animação (root motion):
 ## a física do jogador segue a curva do quadril gravada no clipe.
-const ROOT_MOTION: Array[StringName] = [&"tackle", &"trip", &"jump", &"spin", &"turn180", &"turn_l", &"turn_r", &"run_stop"]
+const ROOT_MOTION: Array[StringName] = [&"tackle", &"trip", &"jump", &"spin", &"turn180", &"turn_l", &"turn_r", &"run_stop",
+	&"cut_r", &"walk_turn180", &"stand_turn_r", &"walk_stop"]
+## Ângulo (graus, + = esquerda) de cada virada, medido nos clipes. As versões
+## "_m" (espelhadas) viram para o outro lado.
+const TURN_ANGLES := {
+	&"turn180": -180.0, &"turn_l": 90.0, &"turn_r": -90.0,
+	&"cut_r": -40.0, &"walk_turn180": -180.0, &"stand_turn_r": -55.0,
+}
 const ROOT_MOTION_FPS := 30.0
 ## Clipes que levantam no lugar (quadril fixo na horizontal).
 const IN_PLACE_FIXED: Array[StringName] = [&"getup", &"getup_b", &"getup_c", &"fallen"]
@@ -263,7 +278,8 @@ static func get_libraries() -> Dictionary:
 
 ## Chutes/passes com o OUTRO pé: o mesmo clipe espelhado (troca esquerda ↔
 ## direita). O esqueleto do retarget é simétrico, então o espelho é exato.
-const MIRRORED: Array[StringName] = [&"pass_short", &"pass_long", &"shoot", &"shoot_power"]
+const MIRRORED: Array[StringName] = [&"pass_short", &"pass_long", &"shoot", &"shoot_power",
+	&"cut_r", &"walk_turn180", &"stand_turn_r"]
 
 
 static func mirrored_name(logical: StringName) -> StringName:
@@ -351,6 +367,12 @@ static func clip_length(logical: StringName) -> float:
 		return 0.0
 	var parts := String(CLIPS[logical]).split("/")
 	return (get_libraries()[StringName(parts[0])] as AnimationLibrary).get_animation(StringName(parts[1])).length
+
+
+static func turn_angle(logical: StringName) -> float:
+	var mirrored := String(logical).ends_with("_m")
+	var a: float = TURN_ANGLES.get(_base(logical), 0.0)
+	return -a if mirrored else a
 
 
 static func contact_time(logical: StringName) -> float:

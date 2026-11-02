@@ -59,13 +59,22 @@ func _physics_process(_d: float) -> void:
 		var dist := minf(8.0, 4.2 / maxf(absf(sin(a)), 0.01)) # dentro das laterais
 		ball.place_at(from_dir * dist + Vector3(0, Ball.RADIUS, 0))
 	var t := f - t0
+	if t == 1 and OS.get_environment("SPRINT") != "":
+		Input.action_press("sprint") # recebendo com CORRER apertado
+		if OS.get_environment("MOVE") != "":
+			Input.action_press(OS.get_environment("MOVE"), 1.0)
 	if t == 3:
 		var v := (Vector3(0, Ball.RADIUS, 0) - ball.global_position)
 		v.y = 0.0
 		ball.kick(v.normalized() * float(c[1]), Vector3.ZERO, null)
 		ball.pass_target = me
 	if t == 150:
-		var got := ball.possessor == me and me.ball_control.ball_distance() < 0.8 and ball.flat_velocity().length() < 2.0
+		for a in ["sprint", "move_left", "move_right", "move_up", "move_down"]:
+			Input.action_release(a)
+		# dominou = está com a bola no pé (parado ou já conduzindo, se o analógico estava apertado)
+		var moving_on := OS.get_environment("MOVE") != ""
+		var got := ball.possessor == me and me.ball_control.ball_distance() < 0.9 \
+			and (moving_on or ball.flat_velocity().length() < 2.0)
 		if got:
 			ok += 1
 		else:

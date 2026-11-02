@@ -117,6 +117,7 @@ var _kick_mirror := false
 ## Giro com a bola antes de um passe/chute para trás.
 var _pivot_dir := Vector3.ZERO
 var _kick_ik := false
+var _turn_speed_k := TURN_SPEED_UP
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -295,8 +296,9 @@ func _update_move(delta: float) -> void:
 			# e só então dá o toque. Nunca larga a bola para trás.
 			var to := ap - global_position
 			to.y = 0.0
-			var chase := clampf(to.length() / 0.28, jog_speed * 0.5, sprint_speed * 1.05)
-			desired = to.normalized() * chase if to.length() > 0.08 else w * jog_speed * 0.3
+			# acompanha a velocidade da bola (feed-forward) e ainda fecha a distância
+			var bvf := ball.flat_velocity()
+			desired = (bvf + to / 0.22).limit_length(sprint_speed * 1.05) if to.length() > 0.08 else bvf + w * jog_speed * 0.3
 		else:
 			desired += ball_control.catch_up_velocity(w)
 			# Não "atropela" a bola: com ela no pé e ainda sem o toque, o corpo
@@ -611,7 +613,7 @@ func _update_action(delta: float) -> void:
 		# Root motion: o corpo segue a curva de deslocamento gravada no clipe.
 		var speed := PlayerAnimationController.ACTION_SPEED
 		if _turn_target != Vector3.ZERO:
-			speed = TURN_SPEED_UP
+			speed = _turn_speed_k
 		var anim_t := _action_seek + _action_time * speed
 		var rv := AnimationCatalog.root_motion_velocity(_action_logical, anim_t)
 		var hips_h := 0.85
@@ -686,7 +688,7 @@ func _update_action(delta: float) -> void:
 			rotation.y = atan2(-facing.x, -facing.z)
 			_turn_target = Vector3.ZERO
 	# Parada brusca: se voltar a mexer o analógico (ou pedir passe/chute), sai da parada.
-	if state == State.ACTION and _action_kind == &"run_stop" and \
+	if state == State.ACTION and (_action_kind == &"run_stop" or _action_kind == &"walk_stop") and \
 			((_action_time > 0.25 and intent.move.length() > 0.5) or (_action_time > 0.1 and _has_pending_kick())):
 		state = State.MOVE
 	if state != State.ACTION and collision_mask != 3:
@@ -775,6 +777,49 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 			var turned := facing.rotated(Vector3.UP, signf(ang) * PI * 0.5)
 			_start_turn(&"turn_l" if ang > 0.0 else &"turn_r", &"turn_l" if ang > 0.0 else &"turn_r", turned)
 			return true
+	var bc0 := ball_control
+	var has_b := bc0.has_ball()
+	var ball_at_foot := not has_b or (bc0.ball_distance() < 0.5 and bc0.ball_offset().dot(facing) > -0.05)
+	if in_len > 0.6 and ai_turn_ok and not fetching and ball_at_foot:
+		var w := input.normalized()
+		var vdir := hv.normalized() if speed > 0.3 else facing
+		var ang_v := vdir.signed_angle_to(w, Vector3.UP) # + = esquerda
+		# CORTE correndo (~40°): "Running Right Turn" (espelhado p/ esquerda).
+		if speed > 3.0 and absf(ang_v) > deg_to_rad(28.0) and absf(ang_v) < deg_to_rad(75.0) \
+				and AnimationCatalog.has_clip(&"cut_r") and _steady_time > 0.04:
+			var left := ang_v > 0.0
+			var lg: StringName = &"cut_r_m" if left else &"cut_r"
+			var nd := facing.rotated(Vector3.UP, deg_to_rad(AnimationCatalog.turn_angle(lg)))
+			_start_turn(&"cut_l" if left else &"cut_r", lg, nd, 1.0, false)
+			if has_b:
+				bc0.touch_towards(nd) # toque de lado com o pé certo no início do corte
+			return true
+		# VIRADA de 180° ANDANDO (devagar): "Walking Turn 180".
+		if speed > 0.35 and speed < 2.4 and absf(ang_v) > deg_to_rad(140.0) \
+				and AnimationCatalog.has_clip(&"walk_turn180") and _steady_time > 0.04:
+			var left2 := ang_v > 0.0
+			_start_turn(&"walk_turn180_l" if left2 else &"walk_turn180_r",
+				&"walk_turn180_m" if left2 else &"walk_turn180", w, 1.15, false)
+			if has_b:
+				bc0.drag_ball_to(w, 1.0)
+			return true
+		# GIRO PARADO com a bola (~55°): "Standing Cover Turn" com a sola na bola.
+		if has_b and speed < 0.6:
+			var ang_f := facing.signed_angle_to(w, Vector3.UP)
+			if absf(ang_f) > deg_to_rad(35.0) and absf(ang_f) < deg_to_rad(85.0) \
+					and AnimationCatalog.has_clip(&"stand_turn_r"):
+				var left3 := ang_f > 0.0
+				var lg3: StringName = &"stand_turn_r_m" if left3 else &"stand_turn_r"
+				var nd3 := facing.rotated(Vector3.UP, deg_to_rad(AnimationCatalog.turn_angle(lg3)))
+				_start_turn(&"stand_turn_l" if left3 else &"stand_turn_r", lg3, nd3, 1.2, false)
+				bc0.drag_ball_around(nd3, _action_length * 0.8)
+				return true
+	# Parada andando (sem bola): "Stop Walking".
+	if released and speed > 0.9 and speed < 2.8 and not has_b and AnimationCatalog.has_clip(&"walk_stop") \
+			and bc0.ball_distance() > 2.0 and ai_turn_ok:
+		_start_root_action(&"walk_stop", &"walk_stop", 0.0, facing)
+		_action_length = minf(_action_length, 1.6)
+		return true
 	if released and speed > 3.2 and AnimationCatalog.has_clip(&"run_stop"):
 		var bc := ball_control
 		var ball_ok := bc.ball_distance() > 3.0
@@ -789,12 +834,14 @@ func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
 	return false
 
 
-func _start_turn(kind: StringName, logical: StringName, new_dir: Vector3) -> void:
-	_turn_cooldown = 1.2
+func _start_turn(kind: StringName, logical: StringName, new_dir: Vector3, play_speed := TURN_SPEED_UP,
+		drag := true) -> void:
+	_turn_cooldown = 1.0
 	_start_root_action(kind, logical, 0.0, facing)
-	_action_length /= TURN_SPEED_UP
+	_turn_speed_k = play_speed
+	_action_length /= play_speed
 	_turn_target = Vector3(new_dir.x, 0.0, new_dir.z).normalized()
-	if ball_control.has_ball():
+	if drag and ball_control.has_ball():
 		ball_control.drag_ball_to(_turn_target) # puxa a bola junto na virada
 
 
@@ -807,9 +854,8 @@ func play_gesture(kind: StringName, duration: float) -> void:
 
 func _receive_pass(delta: float) -> void:
 	var target := _pass_intercept_point()
-	if is_human and intent.move.length() > 0.3:
-		# O sistema leva o recebedor até a bola; o analógico só ajusta um pouco.
-		target += Vector3(intent.move.x, 0.0, intent.move.z) * 0.5
+	# O sistema leva o recebedor até a bola (o analógico só escolhe para onde
+	# vai o primeiro toque — domínio orientado).
 	var to := target - global_position
 	to.y = 0.0
 	var d := to.length()
@@ -817,7 +863,10 @@ func _receive_pass(delta: float) -> void:
 	if d > 0.35:
 		var t_ball := _ball_time_to(target)
 		var need := d / maxf(t_ball, 0.15)
-		desired = to / d * clampf(need, 0.8, sprint_speed)
+		var top := sprint_speed
+		if t_ball < 0.6:
+			top = 2.2 # a bola está chegando: chega controlado, sem atropelar a bola
+		desired = to / d * clampf(need, 0.8, top)
 	var hv := get_flat_velocity()
 	hv = hv.move_toward(desired, (acceleration if desired.length() > hv.length() else deceleration) * delta)
 	velocity.x = hv.x

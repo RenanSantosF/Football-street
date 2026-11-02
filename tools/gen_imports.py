@@ -33,6 +33,12 @@ def ue_names():
         m[f"{side}Foot"]=f"foot_{s}"; m[f"{side}Toes"]=f"ball_{s}"
     return m
 
+def ue5_names():
+    """UE5 Manny (5 vértebras, nomes em minúsculas)."""
+    m = ue_names()
+    m.update({"Spine":"spine_01","Chest":"spine_03","UpperChest":"spine_05","Neck":"neck_01","Head":"head"})
+    return m
+
 def rigify_names():
     m = {"Root":"root","Hips":"DEF-hips","Spine":"DEF-spine.001","Chest":"DEF-spine.002",
          "UpperChest":"DEF-spine.003","Neck":"DEF-neck","Head":"DEF-head"}
@@ -67,6 +73,9 @@ USER_PACK = [
     'Standing Arguing', 'Breathing Idle', 'Walking', 'Start Walking', 'Right Turn',
     'Left Turn', 'Run To Stop', 'Running Turn 180',
     'Jog Forward Diagonal (2)', 'Jog Forward Diagonal (3)',
+    'Standing Cover Turn', 'Stop Walking', 'Jog Strafe Left (1)', 'Jog Strafe Right (1)',
+    'Walking Turn 180', 'Walking Left Turn', 'Running Right Turn', 'Running Turn 180 (1)',
+    'Running To Turn',
     'Change Direction',
     'Defeated',
     'Dribble',
@@ -187,3 +196,9 @@ if __name__ == "__main__":
     # em pose A e os clipes "sem skin" em pose T: Fix Silhouette normaliza as
     # duas para a mesma silhueta antes do retarget (senão os braços vão para trás).
     write("assets/characters/teen_01/teen_01.fbx", "Skeleton3D", mixamo_names(), True, fix_silhouette=True)
+    # Pack de mocap de futebol (Anderson Rohr), esqueleto UE5 Manny.
+    rohr = "assets/animations/rohr"
+    if os.path.isdir(rohr):
+        for fn in sorted(os.listdir(rohr)):
+            if fn.endswith(".fbx"):
+                write(f"{rohr}/{fn}", "Skeleton3D", ue5_names(), True, fix_silhouette=True)
