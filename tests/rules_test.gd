@@ -211,9 +211,9 @@ func _test_chase() -> void:
 		ball.place_at(Vector3(4, Ball.RADIUS, 2))
 		ball.kick(Vector3(1.5, 0, 0), Vector3.ZERO, null)
 		me.teleport(Vector3(-3, 0, -2), Vector3(1, 0, 0))
-		Input.action_press("dribble")
+		Input.action_press("sprint")
 	var t := f - t0
 	if t == 200:
-		Input.action_release("dribble")
+		Input.action_release("sprint")
 		results["buscar_pegou_bola"] = me.ball_control.has_ball() or me.ball_control.ball_distance() < 1.0
 		phase = 7

@@ -36,8 +36,8 @@ var _aiming := false
 var _lob_pending := false
 var _chip_pending := false
 var _queued_lofted := false
-var _last_dribble_tap := -10.0
-## Segurando BUSCAR (sem a bola): o jogador corre sozinho atrás da bola.
+## Segurando CORRER sem a bola (BUSCAR): o jogador corre sozinho atrás da bola
+## ou cerca quem está com ela.
 var chasing := false
 var _chase_sprint := false
 ## Direção suavizada do analógico (girar rápido de um lado para o outro não
@@ -45,7 +45,6 @@ var _chase_sprint := false
 var _smooth := Vector3.ZERO
 var _raw_dir := Vector3.ZERO
 var _raw_steady := 0.0
-var _last_auto_poke := -10.0
 
 
 func _ready() -> void:
@@ -73,35 +72,27 @@ func _physics_process(delta: float) -> void:
 
 	if Input.is_action_just_pressed("switch_player"):
 		switch_requested.emit()
-	var now := Time.get_ticks_msec() / 1000.0
 	if Input.is_action_just_pressed("dribble"):
-		if has_ball_context():
-			_queue(PlayerIntent.Action.DRIBBLE, 1.0)
-		elif now - _last_dribble_tap < 0.35:
-			# Dois toques em BUSCAR = BOTE (estica o pé; errar e acertar o
-			# adversário é falta).
-			_queue(PlayerIntent.Action.DRIBBLE, 1.0)
-		_last_dribble_tap = now
-	chasing = not has_ball_context() and Input.is_action_pressed("dribble")
-	if chasing and current_player != null and current_player.ball != null:
-		var auto := _chase_direction()
-		if _move.length() > 0.3 and auto.length() > 0.05:
-			# Analógico junto com BUSCAR: escolhe por onde chegar (ex.: dar a
-			# volta e pegar o adversário de frente, não por trás).
-			var mix := (auto.normalized() * 0.55 + _move.normalized() * 0.45).normalized()
-			_move = mix * maxf(auto.length(), 0.6)
-		else:
-			_move = auto
-		_sprint = _sprint or _chase_sprint
-		# Chegou no adversário com a bola: dá o bote sozinho (de frente é mais fácil).
+		# Com a bola: DRIBLE. Sem a bola: DESARME (bote com o pé na bola).
+		_queue(PlayerIntent.Action.DRIBBLE, 1.0)
+	# Sem a bola, CORRER = BUSCAR: corre na bola solta ou no adversário que a
+	# tem. Com um companheiro com a bola, CORRER é só correr (desmarque).
+	chasing = false
+	if not has_ball_context() and _sprint and current_player != null and current_player.ball != null:
 		var b := current_player.ball
-		if b.possessor != null and b.possessor.team != current_player.team \
-				and now - _last_auto_poke > 0.9 and current_player.state == Player.State.MOVE:
-			var dd := b.possessor.global_position - current_player.global_position
-			dd.y = 0.0
-			if dd.length() < 1.05:
-				_last_auto_poke = now
-				_queue(PlayerIntent.Action.DRIBBLE, 1.0)
+		var chase_ok := b.possessor == null or b.possessor.team != current_player.team
+		var auto := _chase_direction() if chase_ok else Vector3.ZERO
+		# analógico apontando para longe da bola: o jogador quer correr para lá
+		if chase_ok and not (_move.length() > 0.5 and auto.length() > 0.05 and _move.normalized().dot(auto.normalized()) < -0.2):
+			chasing = true
+			if _move.length() > 0.3 and auto.length() > 0.05:
+				# Analógico junto: escolhe por onde chegar (ex.: dar a volta e
+				# pegar o adversário de frente, não por trás).
+				var mix := (auto.normalized() * 0.6 + _move.normalized() * 0.4).normalized()
+				_move = mix * maxf(auto.length(), 0.6)
+			else:
+				_move = auto
+			_sprint = _chase_sprint
 
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
@@ -257,9 +248,28 @@ func _chase_direction() -> Vector3:
 	var b := p.ball
 	var target: Vector3
 	if b.possessor != null and b.possessor.team != p.team:
+		# CERCAR: chega rápido e, perto, fica na frente dele (entre a bola e o
+		# meu gol) acompanhando de lado, sem dar o bote sozinho — o bote é no
+		# DESARME, na hora certa.
 		var c := b.possessor.global_position
 		var own_goal := Field.goal_center(p.team)
-		target = c + (own_goal - c).normalized() * 0.9
+		var bp := b.global_position
+		bp.y = 0.0
+		var goal_dir := (own_goal - c)
+		goal_dir.y = 0.0
+		goal_dir = goal_dir.normalized()
+		target = c + goal_dir * 1.15 + b.possessor.get_flat_velocity() * 0.25
+		var dd := Vector2(c.x - p.global_position.x, c.z - p.global_position.z).length()
+		if dd < 2.6:
+			var dir := target - p.global_position
+			dir.y = 0.0
+			_chase_sprint = false
+			if dir.length() < 0.15:
+				return Vector3.ZERO
+			# acompanha na velocidade dele (contenção)
+			var need := clampf(dir.length() / 0.6, 0.0, 1.0)
+			var follow := b.possessor.get_flat_velocity().length() / maxf(p.jog_speed, 0.1)
+			return dir.normalized() * clampf(maxf(need, follow), 0.25, 1.0)
 	else:
 		target = b.predict_ground_position(0.0)
 		for i in 4:

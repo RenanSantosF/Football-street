@@ -22,6 +22,7 @@ roupas sujas e dribles naturais.
 - 🔄 Etapa 15 (viradas novas, domínio correndo, condução para o lado): [`docs/ETAPA_15.md`](docs/ETAPA_15.md)
 - 🎯 Etapa 16 (viradas rápidas, inversão sem perder a bola, domínio, pé natural): [`docs/ETAPA_16.md`](docs/ETAPA_16.md)
 - ⚡ Etapa 17 (domínio sem atravessar, primeiro toque orientado, corpo se ajusta ao toque, regras): [`docs/ETAPA_17.md`](docs/ETAPA_17.md)
+- 🛡️ Etapa 18 (CORRER = buscar/cercar, desarme pelo corpo, proteção de bola, apoio e tabela): [`docs/ETAPA_18.md`](docs/ETAPA_18.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado

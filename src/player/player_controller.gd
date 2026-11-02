@@ -312,7 +312,11 @@ func _update_move(delta: float) -> void:
 		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
 		var off := ball_control.ball_offset()
 		var bv := ball.flat_velocity()
-		if off.length() > 0.45 and not ball_control.is_trapping():
+		if off.length() < 0.26 and bv.length() < 0.3:
+			# bola embaixo/encostada no pé: um passinho para trás (o corpo se
+			# ajusta, a bola não é empurrada)
+			desired = -off.normalized() * 0.5 if off.length() > 0.02 else -facing * 0.5
+		elif off.length() > 0.45 and not ball_control.is_trapping():
 			var stop_at := ball.predict_ground_position(0.3) - facing * 0.3
 			var to := stop_at - global_position
 			to.y = 0.0
@@ -379,6 +383,16 @@ func _update_facing(delta: float) -> void:
 		target_dir = _flat_dir_to(ball.global_position) # sempre de frente para a bola
 	elif _marking and state == State.MOVE:
 		target_dir = _flat_dir_to(_mark_focus())
+	elif state == State.MOVE and ball_control.has_ball() and intent.move.length() < 0.2 and hv.length() < 1.0 \
+			and _shield_threat() != Vector3.ZERO:
+		# PROTEÇÃO: parado com a bola e adversário colado → fica de costas/de
+		# lado para ele, com o corpo entre ele e a bola.
+		target_dir = -_shield_threat()
+	elif state == State.MOVE and ball_control.has_ball() and intent.move.length() < 0.2 and hv.length() < 0.6 \
+			and ball_control.ball_distance() > 0.15 and ball_control.ball_offset().normalized().dot(facing) < 0.8 \
+			and ball.flat_velocity().length() < 0.3:
+		# parado: o CORPO se ajusta à bola (olha para ela), não a bola ao corpo
+		target_dir = ball_control.ball_offset().normalized()
 	elif hv.length() > 0.4:
 		target_dir = hv.normalized()
 	elif intent.move.length() > 0.2:
@@ -480,10 +494,13 @@ func _update_actions(delta: float) -> void:
 		PlayerIntent.Action.DRIBBLE:
 			if not ball_control.has_ball():
 				# DESARME em pé (botão de drible sem a bola).
-				var t2 := ball_control.find_tackle_target(POKE_RANGE + 0.3)
+				var t2 := ball_control.find_tackle_target(POKE_RANGE + 0.5)
 				if t2 != null:
-					_begin_action(&"tackle", 0.15, 0.45, 0.0, _buffer_aim, null, 0.8)
-					_action_face = _flat_dir_to(t2.global_position)
+					_begin_action(&"tackle", 0.18, 0.42, 0.0, _buffer_aim, null, 0.8)
+					_action_face = _flat_dir_to(ball.global_position)
+					# o pé vai DE VERDADE na bola (o corpo dá o passo junto)
+					ball_control.foot.begin(ball_control.foot.nearest_foot(), _action_face, 0.18,
+						FootContact.Mode.KICK, Callable(), 0.08)
 					_buffer_timer = 0.0
 					_buffer_action = PlayerIntent.Action.NONE
 				return
@@ -677,6 +694,12 @@ func _update_action(delta: float) -> void:
 		var to := _aerial_point - global_position
 		to.y = 0.0
 		hv = hv.move_toward((to / remaining).limit_length(sprint_speed), acceleration * 3.0 * delta)
+	elif not _action_contact_done and _action_kind == &"tackle":
+		# bote: um passo rápido até a bola (o pé de apoio chega perto dela)
+		var remaining_t := maxf(_action_contact - _action_time, 0.05)
+		var to_b := ball_control.ball_offset()
+		to_b -= to_b.normalized() * minf(0.55, to_b.length())
+		hv = hv.move_toward((to_b / remaining_t).limit_length(sprint_speed), acceleration * 3.0 * delta)
 	elif not _action_contact_done and _is_kick_action():
 		# Preparação do chute/passe: acompanhar a bola até o pé de apoio,
 		# para que no contato ela esteja ao alcance (sem "furar").
@@ -748,8 +771,7 @@ func _do_contact() -> void:
 			if ball_control.execute_dribble(_action_aim):
 				_burst_timer = 0.5
 		&"tackle":
-			if not ball_control.execute_tackle():
-				stumble(0.6)
+			ball_control.execute_tackle() # errou: só recupera o passo (sem cair)
 		&"slide":
 			ball_control.execute_slide_tackle()
 		&"spin":
@@ -1049,6 +1071,20 @@ func _compute_marking() -> bool:
 ## Condições que desligam a marcação na hora (sem esperar o tempo mínimo).
 func _compute_marking_allowed() -> bool:
 	return ball != null and ball.in_play and state == State.MOVE and not ball_control.has_ball()
+
+
+## Adversário colado (até 1,8 m) de quem estou com a bola: direção até ele
+## (ZERO se ninguém perto).
+func _shield_threat() -> Vector3:
+	var best := 1.8
+	var dir := Vector3.ZERO
+	for opp in get_opponents():
+		var off := opp.global_position - global_position
+		off.y = 0.0
+		if off.length() < best and off.length() > 0.05:
+			best = off.length()
+			dir = off / off.length()
+	return dir
 
 
 ## Para onde o jogador olha ao marcar: quem tem a bola (ou a bola, no goleiro).

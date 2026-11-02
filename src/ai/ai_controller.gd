@@ -169,6 +169,24 @@ func _think_with_ball() -> void:
 			_patience = _rng.randf_range(1.6, 3.4)
 			return
 
+	# Marcador colado e sem passe: PROTEGE (corpo entre ele e a bola) e
+	# gira para o lado, sem correr para cima dele.
+	if nearest < 1.4:
+		var closest: Player = null
+		for opp in player.get_opponents():
+			if closest == null or opp.global_position.distance_to(pos) < closest.global_position.distance_to(pos):
+				closest = opp
+		var away := pos - closest.global_position
+		away.y = 0.0
+		away = away.normalized()
+		if away.dot(dir_goal) < 0.2:
+			var lateral := dir_goal.cross(Vector3.UP)
+			if lateral.dot(away) < 0.0:
+				lateral = -lateral
+			_move_target = pos + (away * 0.6 + lateral * 0.8).normalized() * 1.2
+			_sprint = false
+			return
+
 	# Conduzir para o gol, desviando de quem está na frente.
 	var dir := dir_goal
 	for opp in player.get_opponents():
@@ -195,36 +213,65 @@ func _support_or_mark(carrier: Player) -> void:
 	var s := Field.attack_sign(player.team)
 	var ball_pos := player.ball.global_position
 	if carrier != null:
-		# Apoio inteligente: um companheiro abre À FRENTE no corredor oposto ao
-		# de quem conduz; o outro dá opção na DIAGONAL de trás, do mesmo lado.
-		# Nunca os dois juntos do mesmo lado. Os pontos "respiram" um pouco
-		# (desmarque), para não ficarem parados.
+		# APOIO: os dois companheiros ficam LONGE o bastante para receber
+		# (nunca colados em quem conduz) e se mexem:
+		#  - o de frente INFILTRA: alterna entre vir buscar e correr nas costas
+		#    do marcador, no corredor oposto ao da bola;
+		#  - o outro abre no lado da bola, na diagonal, como opção segura.
+		#  - quem acabou de passar faz o "passa e vai" (tabela): corre para a
+		#    frente para receber de volta.
 		var c := carrier.global_position
 		var side := signf(c.z)
 		if absf(c.z) < 0.6:
 			side = 1.0 if player.formation_index == 1 else -1.0
-		var spot_a := Vector3(c.x + s * 4.2, 0.0, -side * 2.9)
-		var spot_b := Vector3(c.x - s * 3.0, 0.0, side * clampf(absf(c.z) - 1.8, -1.5, 2.5))
-		if absf(c.z) < 0.6:
-			spot_b = Vector3(c.x + s * 1.5, 0.0, side * 3.2)
+		var goal_x := Field.goal_line_x(Team.other(player.team))
+		# linha do último defensor (sem goleiro) entre a bola e o gol
+		var def_x := c.x + s * 3.0
+		for opp in player.get_opponents():
+			if opp.is_goalkeeper():
+				continue
+			if (opp.global_position.x - c.x) * s > 0.0:
+				def_x = opp.global_position.x if (opp.global_position.x - c.x) * s > (def_x - c.x) * s else def_x
+		var t := Time.get_ticks_msec() / 1000.0 + float(player.formation_index) * 2.3
+		var running := fmod(t, 4.5) > 2.3 # ciclo: vem buscar ↔ corre nas costas
+		var deep_x := def_x + s * 1.8
+		var short_x := c.x + s * 4.5
+		var run_x := deep_x if running else short_x
+		run_x = c.x + s * clampf((run_x - c.x) * s, 4.0, 9.0)
+		run_x = goal_x - s * maxf((goal_x - run_x) * s, 2.2)
+		var spot_a := Vector3(run_x, 0.0, -side * 3.1)
+		var spot_b := Vector3(c.x + s * 1.0, 0.0, side * 3.8) if absf(c.z) < 1.8 \
+			else Vector3(c.x - s * 4.5, 0.0, -side * 0.5)
 		var mates: Array[Player] = []
 		for m in player.get_teammates():
 			if m != carrier and not m.is_goalkeeper():
 				mates.append(m)
 		var target := spot_a
-		if mates.size() >= 1:
+		var my_pass := player.get_meta("last_pass_ms", -100000) as int
+		var just_passed := Time.get_ticks_msec() - my_pass < 2600 and player.ball.last_toucher != player
+		if just_passed:
+			# PASSA E VAI: corre para o espaço à frente de quem recebeu, pelo
+			# outro lado — opção da tabela.
+			target = Vector3(c.x + s * 5.5, 0.0, -side * 2.6)
+			target.x = goal_x - s * maxf((goal_x - target.x) * s, 2.2)
+			_sprint = true
+		elif mates.size() >= 1:
 			var other: Player = mates[0] # get_teammates() já exclui o próprio jogador
 			var mine_a := player.global_position.distance_to(spot_a) + other.global_position.distance_to(spot_b)
 			var mine_b := player.global_position.distance_to(spot_b) + other.global_position.distance_to(spot_a)
 			# desempate estável pelo número da formação
-			if absf(mine_a - mine_b) < 1.0:
+			if absf(mine_a - mine_b) < 1.5:
 				target = spot_a if player.formation_index < other.formation_index else spot_b
 			else:
 				target = spot_a if mine_a < mine_b else spot_b
-		var t := Time.get_ticks_msec() / 1000.0 + float(player.formation_index) * 1.7
-		target += Vector3(sin(t * 0.7) * 0.9, 0.0, cos(t * 0.5) * 0.6)
+			_sprint = target == spot_a and running
+		# nunca colado em quem está com a bola
+		var from_c := target - c
+		from_c.y = 0.0
+		if from_c.length() < 5.0:
+			target = c + (from_c.normalized() if from_c.length() > 0.1 else Vector3(s, 0, 0)) * 5.0
 		_move_target = Field.clamp_inside(target, 0.7)
-		_sprint = player.global_position.distance_to(_move_target) > 4.0
+		_sprint = _sprint or player.global_position.distance_to(_move_target) > 4.0
 		return
 	else:
 		# Bola livre e não sou o perseguidor: zona do meu lado.
@@ -249,14 +296,18 @@ func _defend(carrier: Player) -> void:
 		# Pressionar: ficar entre o atacante e o gol, e dar o bote.
 		var to_goal := (own_goal - carrier.global_position)
 		to_goal.y = 0.0
-		_move_target = carrier.global_position + to_goal.normalized() * 0.7
-		_sprint = true
 		var d := player.global_position.distance_to(carrier.global_position)
-		if d < 1.3 and _tackle_cooldown <= 0.0:
-			_tackle_cooldown = _rng.randf_range(1.0, 2.0)
-			if _rng.randf() < 0.45:
-				# Desarme em pé (mesmo botão do drible, sem a bola).
-				_set_action(PlayerIntent.Action.DRIBBLE, 0.0, Vector3.ZERO, null)
+		# CERCAR: chega rápido, e perto fica na frente dele (lado do gol),
+		# acompanhando o movimento — sem se jogar.
+		_move_target = carrier.global_position + to_goal.normalized() * 1.1 + carrier.get_flat_velocity() * 0.3
+		_sprint = d > 3.0
+		var bp := player.ball.global_position
+		var ball_exposed := Vector2(bp.x - carrier.global_position.x, bp.z - carrier.global_position.z).length() > 0.55
+		var ball_near_me := Vector2(bp.x - player.global_position.x, bp.z - player.global_position.z).length() < 1.1
+		if ball_near_me and _tackle_cooldown <= 0.0 and (ball_exposed or _rng.randf() < 0.12):
+			# Bote quando a bola fica exposta (toque longo / virada): o pé alcança.
+			_tackle_cooldown = _rng.randf_range(0.8, 1.6)
+			_set_action(PlayerIntent.Action.DRIBBLE, 0.0, Vector3.ZERO, null)
 		elif d < Player.SLIDE_RANGE - 0.4 and d > 1.8 and _tackle_cooldown <= 0.0:
 			# Carrinho: mais provável quando o atacante se aproxima do gol.
 			_tackle_cooldown = _rng.randf_range(1.5, 3.0)

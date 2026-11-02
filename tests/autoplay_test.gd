@@ -9,6 +9,9 @@ const SECONDS := 240.0
 var _mm: MatchManager
 var _ball: Ball
 var _time := 0.0
+var _support_sum := 0.0
+var _support_n := 0
+var _support_close := 0
 var _stats := {"goals": 0, "outs_side": 0, "outs_end": 0, "possessions": 0,
 	"passes": 0, "shots": 0, "tackles": 0, "restarts": 0}
 var _max_ball_speed := 0.0
@@ -80,6 +83,17 @@ func _physics_process(delta: float) -> void:
 	else:
 		_hold_owner = _ball.possessor
 		_hold_time = 0.0
+	if int(_time * 60.0) % 6 == 0 and _ball.possessor != null and not _ball.possessor.is_goalkeeper():
+		# espaçamento do apoio: companheiro mais perto de quem tem a bola
+		var near := INF
+		for m in _ball.possessor.get_teammates():
+			if not m.is_goalkeeper():
+				near = minf(near, m.global_position.distance_to(_ball.possessor.global_position))
+		if near < INF:
+			_support_sum += near
+			_support_n += 1
+			if near < 2.5:
+				_support_close += 1
 	if int(_time * 60.0) % 6 == 0:
 		for p in _mm.players:
 			if p.anim_controller.is_active():
@@ -97,4 +111,6 @@ func _physics_process(delta: float) -> void:
 		print("vel. máx bola: %.1f m/s | bola escapou do mundo: %s | maior tempo bola parada sem dono: %.1fs" % [
 			_max_ball_speed, _ball_escaped, _max_stuck])
 		print("maior posse contínua: %.1fs (%s)" % [_max_hold, _max_hold_name])
+		print("apoio: companheiro mais perto em média %.1f m | colado (< 2,5 m) %d%% do tempo" % [
+			_support_sum / maxf(_support_n, 1), 100 * _support_close / maxi(_support_n, 1)])
 		get_tree().quit()

@@ -20,6 +20,7 @@ var _fps_label: Label
 @onready var shoot_button: TouchButton = $ShootButton
 @onready var pass_button: TouchButton = $PassButton
 @onready var dribble_button: TouchButton = $DribbleButton
+@onready var sprint_button: TouchButton = $SprintButton
 var _charge_kind: StringName = &""
 var _power_panel: Control
 var _power_fill: ColorRect
@@ -66,6 +67,7 @@ func _update_button_labels() -> void:
 	var incoming := human_input != null and human_input.current_player != null \
 		and human_input.current_player.ball != null and human_input.current_player.ball.possessor == null \
 		and human_input.current_player.ball.pass_target == human_input.current_player
+	sprint_button.alt_hint = ""
 	if with_ball and incoming:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "de primeira"
@@ -85,8 +87,9 @@ func _update_button_labels() -> void:
 		shoot_button.alt_hint = ""
 		pass_button.set_label("TROCAR")
 		pass_button.alt_hint = ""
-		dribble_button.set_label("BUSCAR")
-		dribble_button.alt_hint = "2 toques: bote"
+		dribble_button.set_label("DESARME")
+		dribble_button.alt_hint = ""
+		sprint_button.alt_hint = "segure: buscar"
 
 
 # --- Placar ------------------------------------------------------------------------
@@ -244,7 +247,7 @@ func _build_minimap() -> void:
 
 ## Dica rápida dos controles no começo da partida.
 func _show_hints() -> void:
-	var l := _label("Segure CHUTE e use o analógico para MIRAR  •  Arraste PASSE: toque por cima\nArraste CHUTE: cavadinha  •  Sem a bola: segure BUSCAR (2 toques = bote), CARRINHO, TROCAR", 18, Color(1, 1, 1, 0.95))
+	var l := _label("Segure CHUTE e use o analógico para MIRAR  •  Arraste PASSE: toque por cima\nArraste CHUTE: cavadinha  •  Sem a bola: segure CORRER = buscar/cercar, DESARME, CARRINHO, TROCAR", 18, Color(1, 1, 1, 0.95))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	l.grow_horizontal = Control.GROW_DIRECTION_BOTH

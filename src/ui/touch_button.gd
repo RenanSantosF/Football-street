@@ -20,8 +20,9 @@ var charge := 0.0:
 		queue_redraw()
 var alt_hint := "":
 	set(v):
-		alt_hint = v
-		queue_redraw()
+		if v != alt_hint:
+			alt_hint = v
+			queue_redraw()
 
 var _touch_index := -1
 var _press_pos := Vector2.ZERO
