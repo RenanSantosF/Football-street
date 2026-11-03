@@ -552,14 +552,17 @@ func _update_actions(delta: float) -> void:
 					done = true
 		PlayerIntent.Action.DRIBBLE:
 			if not ball_control.has_ball():
-				# DESARME em pé (botão de drible sem a bola).
+				# DESARME em pé (botão de drible sem a bola): escolhe a perna do lado da bola.
 				var t2 := ball_control.find_tackle_target(POKE_RANGE + 0.5)
 				if t2 != null:
-					_begin_action(&"tackle", 0.18, 0.42, 0.0, _buffer_aim, null, 0.8)
-					_action_face = _flat_dir_to(ball.global_position)
+					var face_b := _flat_dir_to(ball.global_position)
+					_kick_mirror = _choose_kick_foot(face_b)
+					_begin_action(&"tackle", 0.16, 0.42, 0.0, _buffer_aim, null, 0.85)
+					_action_face = face_b
+					var tackle_foot := -1.0 if _kick_mirror else 1.0
 					# o pé vai DE VERDADE na bola (o corpo dá o passo junto)
-					ball_control.foot.begin(ball_control.foot.nearest_foot(), _action_face, 0.18,
-						FootContact.Mode.KICK, Callable(), 0.08)
+					ball_control.foot.begin(tackle_foot, _action_face, 0.16,
+						FootContact.Mode.INSIDE, Callable(), 0.08)
 					_buffer_timer = 0.0
 					_buffer_action = PlayerIntent.Action.NONE
 				return
@@ -1326,6 +1329,17 @@ func stumble(time: float) -> void:
 	_stun_timer = time
 	_buffer_timer = 0.0
 	action_started.emit(&"stumble")
+
+
+## Tranco forte de corpo / jogo de corpo pesado ("Shoved Reaction With Spin").
+func shoved(push_vel: Vector3, time := 0.65) -> void:
+	collision_mask = 3
+	state = State.STUNNED
+	_stun_timer = time
+	_buffer_timer = 0.0
+	velocity.x = push_vel.x
+	velocity.z = push_vel.z
+	action_started.emit(&"shoved" if AnimationCatalog.has_clip(&"shoved") else &"stumble")
 
 
 # --- Controle externo (MatchManager) -------------------------------------------

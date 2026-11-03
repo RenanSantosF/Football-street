@@ -129,15 +129,15 @@ func body_correction() -> Vector3:
 		return Vector3.ZERO
 	var an: Vector3 = _raw_ankle(side)
 	var err := Vector3(_target.x - an.x, 0.0, _target.z - an.z)
-	if err.length() < 0.04 or err.length() > 0.65:
+	if err.length() < 0.03 or err.length() > 0.72:
 		return Vector3.ZERO
-	var rem := maxf(_lead - _t, 0.08)
-	var c := (err * 0.45 / rem).limit_length(BODY_ADJUST_SPEED * 0.6)
+	var rem := maxf(_lead - _t, 0.07)
+	var c := (err * 0.58 / rem).limit_length(BODY_ADJUST_SPEED * 0.75)
 	var pv := Vector3(player.velocity.x, 0.0, player.velocity.z)
 	if pv.length() > 2.0 and dir.dot(pv.normalized()) > 0.9:
 		var fw := pv.normalized()
-		var along := fw * clampf(c.dot(fw), -BODY_ADJUST_SPEED * 0.5, 0.25)
-		var lat := (c - along).limit_length(0.22)
+		var along := fw * clampf(c.dot(fw), -BODY_ADJUST_SPEED * 0.5, 0.35)
+		var lat := (c - along).limit_length(0.28)
 		c = along + lat
 	return c
 
@@ -181,11 +181,11 @@ const TOL_INSIDE := 0.18
 const TOL_SOLE := 0.24
 const TOL_CUSHION := 0.22
 const WAIT_WINDOW := 0.3
-const BODY_ADJUST_SPEED := 1.4
-const IK_FULL := 0.38
-const IK_MAX := 0.68
-const IK_FULL_SOLE := 0.44
-const IK_MAX_SOLE := 0.72
+const BODY_ADJUST_SPEED := 1.65
+const IK_FULL := 0.34
+const IK_MAX := 0.58
+const IK_FULL_SOLE := 0.38
+const IK_MAX_SOLE := 0.62
 
 
 func _ik_cap() -> float:
@@ -199,16 +199,16 @@ func _ik_cap() -> float:
 	var rel := _target - player.global_position
 	var fwd := rel.dot(player.facing)
 	var lat_s := rel.dot(player.facing.cross(Vector3.UP)) * side
-	var crossing := lat_s < -0.24
+	var crossing := lat_s < -0.22
 	if mode == Mode.CUSHION and fwd > -0.25 and not crossing:
-		full = 0.44
-		mx = 0.74
+		full = 0.38
+		mx = 0.64
 	elif mode == Mode.SOLE and fwd > -0.25 and not crossing:
 		full = IK_FULL_SOLE
 		mx = IK_MAX_SOLE
 	elif mode in [Mode.INSIDE, Mode.OUTSIDE] and not crossing:
-		full = 0.40
-		mx = 0.70
+		full = 0.35
+		mx = 0.60
 	return clampf(1.0 - (disp - full) / maxf(mx - full, 0.05), 0.0, 1.0)
 
 

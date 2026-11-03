@@ -13,19 +13,22 @@ var amount := 0.0
 var accel_lean := 0.0
 var turn_lean := 0.0
 
-const SPINE_DEG := 4.0
-const HEAD_DEG := 5.0
-const ACCEL_SPINE_DEG := 6.5
-const TURN_BANK_DEG := 7.5
-const TURN_YAW_DEG := 5.0
+## Ângulos sutis para manter o jogador sempre posturado (tronco ereto de atleta,
+## sem envergar ou quebrar a coluna mesmo no sprint).
+const SPINE_DEG := 2.0
+const HEAD_DEG := 2.0
+const ACCEL_SPINE_DEG := 2.5
+const TURN_BANK_DEG := 3.5
+const TURN_YAW_DEG := 2.5
 
 const STANCE_Y_MAX := 0.106
-const STANCE_DY_MAX := 0.18
-const STANCE_MAX_HIP_DIST := 0.46
+const STANCE_MAX_LOCK_DIST := 0.14
 const MIN_ANKLE_Y := 0.058
 
 var _spine := -2
 var _chest := -2
+var _upper_chest := -2
+var _neck := -2
 var _head := -2
 var _hips := -2
 var _l_arm := -2
@@ -41,6 +44,11 @@ var _ball_target := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
 var _ball_weight := {1.0: 0.0, -1.0: 0.0}
 var _ball_mode := {1.0: 0, -1.0: 0}
 var _ball_forward := {1.0: Vector3.FORWARD, -1.0: Vector3.FORWARD}
+
+## Jogada de corpo reativa a cada estilo de toque na bola (decai suavemente).
+var _touch_pitch := 0.0
+var _touch_yaw := 0.0
+var _touch_bank := 0.0
 
 ## Estado da trava do pé de apoio no chão (evita patinação/deslize no solo).
 var _planted := {1.0: false, -1.0: false}
@@ -66,6 +74,38 @@ func set_foot_ik(side: float, world_pos: Vector3, weight: float, forward: Vector
 	_ball_mode[s] = mode
 
 
+## Aciona uma reação corporal sutil e natural ("jogada de corpo") de acordo com
+## o tipo de toque, direção (radianos) e pé usado (+1 direito, -1 esquerdo).
+func trigger_touch_style(style: StringName, dir_angle: float, foot_side: float) -> void:
+	var s := 1.0 if foot_side >= 0.0 else -1.0
+	match style:
+		&"dribble_touch":
+			_touch_pitch = deg_to_rad(1.2)
+			_touch_yaw = deg_to_rad(-1.8 * s)
+			_touch_bank = deg_to_rad(1.4 * s)
+		&"side_touch":
+			_touch_pitch = deg_to_rad(1.5)
+			_touch_yaw = clampf(dir_angle * 0.16, deg_to_rad(-4.0), deg_to_rad(4.0))
+			_touch_bank = deg_to_rad(-2.6 * s)
+		&"outside_touch":
+			_touch_pitch = deg_to_rad(1.8)
+			_touch_yaw = deg_to_rad(-3.0 * s)
+			_touch_bank = deg_to_rad(3.2 * s)
+		&"cut_touch", &"dribble":
+			var side_sign := signf(dir_angle) if absf(dir_angle) > 0.05 else -s
+			_touch_pitch = deg_to_rad(2.0)
+			_touch_yaw = deg_to_rad(3.8 * side_sign)
+			_touch_bank = deg_to_rad(-3.2 * side_sign)
+		&"pull", &"drag":
+			_touch_pitch = deg_to_rad(-1.4)
+			_touch_yaw = clampf(dir_angle * 0.14, deg_to_rad(-3.2), deg_to_rad(3.2))
+			_touch_bank = deg_to_rad(1.5 * s)
+		&"receive", &"receive_side":
+			_touch_pitch = deg_to_rad(-1.6)
+			_touch_yaw = deg_to_rad(-2.0 * s)
+			_touch_bank = deg_to_rad(-1.5 * s)
+
+
 func get_raw_ankle_world(side: float) -> Vector3:
 	ensure_updated()
 	var s := 1.0 if side > 0.0 else -1.0
@@ -87,6 +127,8 @@ func get_raw_hip_world(side: float) -> Vector3:
 func _cache_bones(sk: Skeleton3D) -> void:
 	_spine = sk.find_bone("Spine")
 	_chest = sk.find_bone("Chest")
+	_upper_chest = sk.find_bone("UpperChest")
+	_neck = sk.find_bone("Neck")
 	_head = sk.find_bone("Head")
 	_hips = sk.find_bone("Hips")
 	_l_arm = sk.find_bone("LeftUpperArm")
@@ -123,7 +165,7 @@ func _process_modification() -> void:
 	var cur_frame := Engine.get_physics_frames()
 	var is_new_frame := (_cached_frame != cur_frame)
 	var tracked_bones := [
-		_spine, _chest, _head,
+		_spine, _chest, _upper_chest, _neck, _head,
 		_hip_bones[1.0], _knee_bones[1.0], _foot_bones[1.0], _toe_bones[1.0],
 		_hip_bones[-1.0], _knee_bones[-1.0], _foot_bones[-1.0], _toe_bones[-1.0],
 	]
@@ -139,22 +181,31 @@ func _process_modification() -> void:
 			if b >= 0 and _raw_local_poses.has(b):
 				sk.set_bone_pose(b, _raw_local_poses[b])
 
-	# 1. Postura dinâmica do tronco e cabeça (corrida, aceleração e curvas).
-	var pitch_spine := -deg_to_rad(SPINE_DEG) * amount + deg_to_rad(ACCEL_SPINE_DEG) * accel_lean
-	var pitch_head := -deg_to_rad(HEAD_DEG) * amount - deg_to_rad(ACCEL_SPINE_DEG * 0.45) * accel_lean
-	var bank_rad := deg_to_rad(TURN_BANK_DEG) * turn_lean
-	var yaw_rad := deg_to_rad(TURN_YAW_DEG) * turn_lean
+	var dt := 1.0 / float(max(Engine.physics_ticks_per_second, 30))
+	if is_new_frame:
+		var decay := exp(-9.5 * dt)
+		_touch_pitch *= decay
+		_touch_yaw *= decay
+		_touch_bank *= decay
 
-	if absf(pitch_spine) > 0.001 or absf(bank_rad) > 0.001:
-		_rotate_local_axes(sk, _spine, pitch_spine * 0.6, yaw_rad * 0.5, bank_rad * 0.6)
-		_rotate_local_axes(sk, _chest, pitch_spine * 0.4, yaw_rad * 0.5, bank_rad * 0.4)
-	if absf(pitch_head) > 0.001 or absf(bank_rad) > 0.001:
-		_rotate_local_axes(sk, _head, pitch_head, -yaw_rad * 0.3, -bank_rad * 0.35)
+	# 1. Postura dinâmica sutil distribuída entre Spine, Chest e UpperChest (sem entortar).
+	# No rig humanoide (+Z = frente do modelo), pitch positivo inclina de leve à frente.
+	var pitch_spine := deg_to_rad(SPINE_DEG) * amount + deg_to_rad(ACCEL_SPINE_DEG) * accel_lean + _touch_pitch
+	var pitch_head := -deg_to_rad(HEAD_DEG) * amount - deg_to_rad(ACCEL_SPINE_DEG * 0.45) * accel_lean - _touch_pitch * 0.5
+	var bank_rad := deg_to_rad(TURN_BANK_DEG) * turn_lean + _touch_bank
+	var yaw_rad := deg_to_rad(TURN_YAW_DEG) * turn_lean + _touch_yaw
+
+	if absf(pitch_spine) > 0.0005 or absf(bank_rad) > 0.0005 or absf(yaw_rad) > 0.0005:
+		_rotate_bone_local(sk, _spine, pitch_spine * 0.40, yaw_rad * 0.35, bank_rad * 0.40)
+		_rotate_bone_local(sk, _chest, pitch_spine * 0.35, yaw_rad * 0.35, bank_rad * 0.35)
+		_rotate_bone_local(sk, _upper_chest, pitch_spine * 0.25, yaw_rad * 0.30, bank_rad * 0.25)
+	if absf(pitch_head) > 0.0005 or absf(bank_rad) > 0.0005 or absf(yaw_rad) > 0.0005:
+		_rotate_bone_local(sk, _neck, pitch_head * 0.4, -yaw_rad * 0.20, -bank_rad * 0.20)
+		_rotate_bone_local(sk, _head, pitch_head * 0.6, -yaw_rad * 0.25, -bank_rad * 0.25)
 
 	# 2. Guarda as posições da animação antes de aplicar IK das pernas.
 	var sk_xform := sk.global_transform
 	var sk_inv := sk_xform.affine_inverse()
-	var dt := 1.0 / float(max(Engine.physics_ticks_per_second, 30))
 	var teleported := false
 	if is_new_frame:
 		teleported = _prev_skel_origin != Vector3.ZERO and sk_xform.origin.distance_to(_prev_skel_origin) > 0.45
@@ -191,7 +242,7 @@ func _process_modification() -> void:
 					_plant_world[side] = anim_ankle_w
 				var hip_flat := Vector2(anim_hip_w.x, anim_hip_w.z)
 				var plant_flat := Vector2(_plant_world[side].x, _plant_world[side].z)
-				if plant_flat.distance_to(hip_flat) > 0.65:
+				if plant_flat.distance_to(hip_flat) > 0.58:
 					_plant_world[side] = anim_ankle_w
 				_plant_world[side].y = maxf(anim_ankle_w.y, MIN_ANKLE_Y)
 				_stance_weight[side] = 1.0
@@ -221,17 +272,17 @@ func _process_modification() -> void:
 	_applying = false
 
 
-func _rotate_local_axes(sk: Skeleton3D, bone: int, pitch_x: float, yaw_y: float, roll_z: float) -> void:
+## Rotaciona o osso no seu próprio referencial local preservando origin e scale intactos.
+func _rotate_bone_local(sk: Skeleton3D, bone: int, pitch_x: float, yaw_y: float, roll_z: float) -> void:
 	if bone < 0:
 		return
-	var gp := sk.get_bone_global_pose(bone)
-	var rot := Basis.from_euler(Vector3(pitch_x, yaw_y, roll_z))
-	gp.basis = rot * gp.basis
-	sk.set_bone_global_pose(bone, gp)
+	var cur_q := sk.get_bone_pose_rotation(bone)
+	var delta_q := Quaternion.from_euler(Vector3(pitch_x, yaw_y, roll_z))
+	sk.set_bone_pose_rotation(bone, (cur_q * delta_q).normalized())
 
 
-## Solver analítico de 2 ossos (coxa + canela) com preservação do plano do joelho
-## (zero torção axial) e orientação biomecânica do pé no contato com a bola.
+## Solver analítico de 2 ossos (coxa + canela) com preservação exata dos comprimentos
+## L1 e L2, plano do joelho sem torção axial e orientação da superfície do pé.
 func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 		target_world: Vector3, ball_w: float, mode: int) -> void:
 	var h_idx: int = _hip_bones[side]
@@ -259,7 +310,7 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	if raw_d < 0.01:
 		return
 	var min_d := absf(L1 - L2) + 0.02
-	var max_d := (L1 + L2) - 0.006
+	var max_d := (L1 + L2) - 0.008
 	var d := clampf(raw_d, min_d, max_d)
 	var u_new := to_target / raw_d
 	var T_clamped := H + u_new * d
@@ -271,13 +322,12 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	# Direção atual do joelho perpendicular ao eixo quadril-tornozelo.
 	var k_perp := (K - H) - u_old * (K - H).dot(u_old)
 	if k_perp.length_squared() < 0.0004:
-		# Perna quase reta: usa +Z (frente do esqueleto) como direção do joelho.
 		k_perp = Vector3(0.0, 0.0, 1.0) - u_old * u_old.z
 	var q_swing := Quaternion(u_old, u_new)
 	var n_knee := (q_swing * k_perp).normalized()
 	# Garante que o joelho sempre dobre para a frente (+Z no espaço do modelo).
 	if n_knee.z < 0.08:
-		var fwd_hint := (Vector3(side * -0.08, 0.1, 1.0) - u_new * Vector3(side * -0.08, 0.1, 1.0).dot(u_new))
+		var fwd_hint := (Vector3(side * -0.06, 0.1, 1.0) - u_new * Vector3(side * -0.06, 0.1, 1.0).dot(u_new))
 		if fwd_hint.length_squared() > 0.001:
 			n_knee = (n_knee * 0.35 + fwd_hint.normalized() * 0.65).normalized()
 
@@ -285,38 +335,39 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	var sin_a := sqrt(maxf(0.0, 1.0 - cos_a * cos_a))
 	var K_new := H + u_new * (L1 * cos_a) + n_knee * (L1 * sin_a)
 
-	# Rotaciona coxa (UpperLeg) pelo menor arco (sem torcer o fêmur).
+	# 1. Rotaciona coxa (UpperLeg) pelo menor arco (zero torção axial).
 	var d1_old := (K - H).normalized()
 	var d1_new := (K_new - H).normalized()
 	var q1 := Quaternion(d1_old, d1_new)
 	gp_hip.basis = Basis(q1) * gp_hip.basis
 
-	# Rotaciona canela (LowerLeg) a partir da rotação acumulada da coxa.
+	# 2. Rotaciona canela (LowerLeg) preservando exatamente L1 = |K_new - H|.
 	var d2_after_q1 := (q1 * (A - K)).normalized()
 	var d2_new := (T_clamped - K_new).normalized()
 	var q2 := Quaternion(d2_after_q1, d2_new)
 	gp_knee.basis = Basis(q2) * Basis(q1) * gp_knee.basis
 	gp_knee.origin = K_new
 
-	# Posiciona o tornozelo (Foot) e ajusta suavemente a orientação da superfície do pé.
+	# 3. Posiciona o tornozelo preservando L2 = |T_clamped - K_new| e orienta a superfície do pé.
 	gp_foot.origin = T_clamped
 	if ball_w > 0.01:
 		var foot_euler := Vector3.ZERO
 		match mode:
-			0, 4: # INSIDE / CUSHION (chapa / amortecimento com a parte interna)
-				foot_euler = Vector3(deg_to_rad(4.0), deg_to_rad(-18.0 * side), deg_to_rad(10.0 * side))
-			1: #SOLE (sola em cima da bola: ponta do pé levemente levantada)
-				foot_euler = Vector3(deg_to_rad(-14.0), 0.0, 0.0)
+			0, 4: # INSIDE / CUSHION (chapa / parte interna)
+				foot_euler = Vector3(deg_to_rad(4.0), deg_to_rad(-16.0 * side), deg_to_rad(9.0 * side))
+			1: # SOLE (sola em cima da bola: ponta do pé levemente levantada)
+				foot_euler = Vector3(deg_to_rad(-13.0), 0.0, 0.0)
 			2: # KICK (peito do pé: ponta esticada para baixo no chute)
-				foot_euler = Vector3(deg_to_rad(16.0), 0.0, 0.0)
+				foot_euler = Vector3(deg_to_rad(15.0), 0.0, 0.0)
 			3: # CUSHION
-				foot_euler = Vector3(deg_to_rad(3.0), deg_to_rad(-16.0 * side), deg_to_rad(8.0 * side))
+				foot_euler = Vector3(deg_to_rad(3.0), deg_to_rad(-14.0 * side), deg_to_rad(7.0 * side))
 			5: # OUTSIDE (três dedos / parte externa do pé)
-				foot_euler = Vector3(deg_to_rad(6.0), deg_to_rad(15.0 * side), deg_to_rad(-8.0 * side))
+				foot_euler = Vector3(deg_to_rad(5.0), deg_to_rad(14.0 * side), deg_to_rad(-7.0 * side))
 		var rot_mod := Basis.from_euler(foot_euler * ball_w)
 		gp_foot.basis = gp_foot.basis * rot_mod
 
 	sk.set_bone_global_pose(h_idx, gp_hip)
 	sk.set_bone_global_pose(k_idx, gp_knee)
 	sk.set_bone_global_pose(f_idx, gp_foot)
+
 

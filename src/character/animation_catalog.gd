@@ -30,7 +30,8 @@ const LIBRARY_SOURCES := {
 	&"m_idle_to_sprint": "Idle To Sprint",
 	&"m_dribble": "Dribble",
 	# marcação (andar de lado / de costas)
-	&"m_gk_idle": TEEN_01,
+	&"m_gk_idle": "Soccer Idle",
+	&"m_shoved": TEEN_01,
 	&"m_back": "Run Backward",
 	&"m_strafe_l_jog": "Jog Strafe Left",
 	&"m_strafe_r_jog": "Jog Strafe Right",
@@ -125,6 +126,7 @@ const CLIPS := {
 	&"idle_to_sprint": &"m_idle_to_sprint/mixamo_com",
 	&"dribble": &"m_dribble/mixamo_com",
 	&"mark_idle": &"m_gk_idle/mixamo_com",
+	&"shoved": &"m_shoved/seg_shoved",
 	&"back": &"m_back/mixamo_com",
 	&"strafe_l_jog": &"m_strafe_l_jog/mixamo_com",
 	&"strafe_r_jog": &"m_strafe_r_jog/mixamo_com",
@@ -199,7 +201,7 @@ const CONTACTS := {
 	&"receive": [0.29, 1.0],
 	&"receive_ball": [0.28, 1.0],
 	&"tackle": [0.36, -1.0],
-	&"stand_tackle": [0.25, 1.0],
+	&"stand_tackle": [0.22, 1.0],
 	&"spin": [1.0, 1.0],
 	&"gk_pass": [1.15, 1.0],
 	&"scissor_kick": [0.55, 1.0],
@@ -216,6 +218,7 @@ const SEGMENTS := {
 	&"r_side_kick": {&"seg_pass": [0.90, 2.40]},
 	&"r_power_kick": {&"seg_kick": [1.90, 3.60]},
 	&"r_juggling": {&"seg_juggle": [1.0, 21.0]},
+	&"m_shoved": {&"seg_shoved": [1.15, 2.75]},
 }
 
 
@@ -273,7 +276,7 @@ const HIPS_POSITION_TRACK := "%GeneralSkeleton:Hips"
 ## Clipes cujo deslocamento do corpo vem da própria animação (root motion):
 ## a física do jogador segue a curva do quadril gravada no clipe.
 const ROOT_MOTION: Array[StringName] = [&"tackle", &"trip", &"jump", &"spin", &"turn180", &"turn_l", &"turn_r", &"run_stop",
-	&"cut_r", &"walk_turn180", &"stand_turn_r", &"walk_stop"]
+	&"cut_r", &"walk_turn180", &"stand_turn_r", &"walk_stop", &"shoved"]
 ## Ângulo (graus, + = esquerda) de cada virada, medido nos clipes. As versões
 ## "_m" (espelhadas) viram para o outro lado.
 const TURN_ANGLES := {
@@ -318,6 +321,8 @@ static func get_libraries() -> Dictionary:
 				lib = _with_segments(lib, SEGMENTS[prefix])
 			if prefix != &"ual":
 				lib = _make_in_place(prefix, lib)
+			if prefix == &"m_shoved" and lib.has_animation(&"seg_shoved"):
+				_normalize_shoved_spin(lib.get_animation(&"seg_shoved"))
 			_libraries[prefix] = lib
 		_build_ual_fallbacks()
 		_apply_loops()
@@ -325,42 +330,71 @@ static func get_libraries() -> Dictionary:
 	return _libraries
 
 
+## No clipe Shoved Reaction With Spin, o personagem leva um tranco, gira 360°
+## mantendo o eixo final alinhado com a frente do jogador (sem estalo ao sair).
+static func _normalize_shoved_spin(anim: Animation) -> void:
+	var tr := anim.find_track(NodePath(HIPS_POSITION_TRACK), Animation.TYPE_ROTATION_3D)
+	if tr < 0 or anim.track_get_key_count(tr) == 0:
+		return
+	var len := maxf(anim.length, 0.01)
+	for k in anim.track_get_key_count(tr):
+		var t := anim.track_get_key_time(tr, k)
+		var u := clampf(t / len, 0.0, 1.0)
+		var q: Quaternion = anim.track_get_key_value(tr, k)
+		var e := q.get_euler()
+		var target_yaw := lerpf(e.y, 0.0, u * u)
+		var pitch := clampf(e.x * 0.65, deg_to_rad(-10.0), deg_to_rad(14.0))
+		var roll := clampf(e.z * 0.65, deg_to_rad(-8.0), deg_to_rad(8.0))
+		anim.track_set_key_value(tr, k, Quaternion.from_euler(Vector3(pitch, target_yaw, roll)))
+	for bname in ["Spine", "Chest", "UpperChest"]:
+		var btr := anim.find_track(NodePath("%GeneralSkeleton:" + bname), Animation.TYPE_ROTATION_3D)
+		if btr >= 0:
+			for k in anim.track_get_key_count(btr):
+				var q: Quaternion = anim.track_get_key_value(btr, k)
+				var e := q.get_euler() * 0.6
+				anim.track_set_key_value(btr, k, Quaternion.from_euler(e))
+
+
 ## Quando os arquivos .fbx do Mixamo/Rohr não estão no disco (ex.: clone limpo
 ## do git ou build de CI), sintetiza/mapeia a partir da biblioteca UAL
 ## (AnimationLibrary_Godot_Standard.gltf) para que 100% dos clipes lógicos
-## funcionem perfeitamente com o esqueleto humanoide.
+## funcionem perfeitamente com o esqueleto humanoide e postura ereta de jogador.
 static func _build_ual_fallbacks() -> void:
 	if not _libraries.has(&"ual"):
 		return
 	var ual_lib := _libraries[&"ual"] as AnimationLibrary
 	if ual_lib == null:
 		return
+	if ual_lib.has_animation(&"Hit_Chest"):
+		var hc := _apply_footballer_posture(ual_lib.get_animation(&"Hit_Chest").duplicate(true) as Animation, &"stumble")
+		ual_lib.remove_animation(&"Hit_Chest")
+		ual_lib.add_animation(&"Hit_Chest", hc)
 	var fb_lib := AnimationLibrary.new()
 	var map_source := {
 		&"idle": ["Idle", 1.0],
 		&"soccer_idle": ["Idle", 1.0],
 		&"idle_ball": ["Idle", 1.0],
-		&"mark_idle": ["Crouch_Idle", 1.0],
+		&"mark_idle": ["Idle", 1.05],     # postura de marcação ereta e equilibrada
 		&"walk": ["Walk", 1.50],          # escala p/ casar passada a 1,64 m/s
 		&"slow_jog": ["Jog_Fwd", 0.78],
 		&"dribble": ["Jog_Fwd", 0.88],    # condução próxima a 2,10 m/s
 		&"jog": ["Jog_Fwd", 1.0],         # trote a 2,37 m/s
-		&"run": ["Sprint", 0.85],         # corrida a 4,04 m/s
-		&"sprint": ["Sprint", 1.18],      # sprint a 5,65 m/s
+		&"run": ["Jog_Fwd", 1.22],        # corrida a 4,04 m/s com postura atlética ereta
+		&"sprint": ["Sprint", 1.18],      # sprint a 5,65 m/s (corrigido p/ postura de jogador)
 		&"idle_to_sprint": ["Sprint", 1.2],
 		&"sad_run": ["Jog_Fwd", 0.85],
 		&"back": ["Walk", 1.2],
 		&"strafe_l_walk": ["Walk", 1.35],
 		&"strafe_l_jog": ["Jog_Fwd", 1.0],
 		&"strafe_r_jog": ["Jog_Fwd", 1.0],
-		&"strafe_l_fast": ["Sprint", 0.9],
-		&"strafe_r_fast": ["Sprint", 0.9],
+		&"strafe_l_fast": ["Jog_Fwd", 1.15],
+		&"strafe_r_fast": ["Jog_Fwd", 1.15],
 		&"diag_l": ["Jog_Fwd", 0.95],
 		&"diag_r": ["Jog_Fwd", 0.95],
 		&"pass_short": ["Jog_Fwd", 0.95],
 		&"pass_long": ["Jog_Fwd", 1.1],
 		&"shoot": ["Jog_Fwd", 1.05],
-		&"shoot_power": ["Sprint", 0.65],
+		&"shoot_power": ["Jog_Fwd", 0.95],
 		&"receive": ["Walk", 1.4],
 		&"receive_ball": ["Walk", 1.4],
 		&"spin": ["Jog_Fwd", 0.8],
@@ -379,7 +413,7 @@ static func _build_ual_fallbacks() -> void:
 		&"head_control": ["Jump_Start", 1.0],
 		&"header_jump": ["Jump", 1.2],
 		&"tackle": ["Roll_RM", 1.4],
-		&"stand_tackle": ["Jog_Fwd", 1.2],
+		&"stand_tackle": ["Jog_Fwd", 1.25],
 		&"trip": ["Death01", 1.4],
 		&"fallen": ["Death01", 1.0],
 		&"jump": ["Jump", 1.5],
@@ -389,7 +423,7 @@ static func _build_ual_fallbacks() -> void:
 		&"victory": ["Jump", 1.2],
 		&"victory_idle": ["Dance", 1.0],
 		&"samba": ["Dance", 1.0],
-		&"defeated": ["Crouch_Idle", 1.0],
+		&"defeated": ["Idle", 0.9],
 		&"argue": ["Idle_Talking", 1.0],
 		&"gk_catch": ["Interact", 1.4],
 		&"gk_dive": ["Roll_RM", 1.3],
@@ -399,10 +433,11 @@ static func _build_ual_fallbacks() -> void:
 		&"kneeing": ["Jog_Fwd", 0.9],
 		&"warmup": ["Idle", 1.15],
 		&"scissor_kick": ["Jump", 1.3],
-		&"sprint_turn": ["Sprint", 1.1],
+		&"sprint_turn": ["Jog_Fwd", 1.15],
 		&"run_to_turn": ["Jog_Fwd", 1.1],
 		&"walk_turn_l": ["Walk", 1.4],
 		&"start_walk": ["Walk", 1.4],
+		&"shoved": ["Hit_Chest", 0.85],
 	}
 	for logical: StringName in map_source:
 		# Se o clipe original do Mixamo/Rohr já existe no disco, preserva-o!
@@ -417,6 +452,7 @@ static func _build_ual_fallbacks() -> void:
 			continue
 		var base_anim := ual_lib.get_animation(src_name)
 		var anim := _scale_anim_time(base_anim, rate)
+		anim = _apply_footballer_posture(anim, logical)
 		if CONTACTS.has(logical):
 			var ct: float = float(CONTACTS[logical][0])
 			var cf: float = float(CONTACTS[logical][1])
@@ -450,6 +486,140 @@ static func _build_ual_fallbacks() -> void:
 		_libraries[&"ual_fb"] = fb_lib
 
 
+## Corrige a postura da biblioteca UAL para postura real de jogador de futebol:
+## - Remove a curvatura exagerada (45°–52° no UpperChest/Hips) e a torção
+##   assimétrica que deixava a coluna "quebrada" ou torta.
+## - Distribui a inclinação suave e natural do tronco pelos 3 ossos da coluna
+##   (Spine 42%, Chest 33%, UpperChest 25%), exatamente como no Mixamo.
+## - Mantém o pescoço e a cabeça erguidos olhando para o jogo.
+static func _apply_footballer_posture(src: Animation, logical: StringName) -> Animation:
+	if logical in [&"tackle", &"trip", &"fallen", &"gk_dive", &"getup", &"getup_b", &"getup_c"]:
+		return src
+	var out := src.duplicate(true) as Animation
+	var fps := 30.0
+	var n_keys := maxi(int(round(out.length * fps)), 2)
+
+	var hip_pitch_deg := 1.5
+	var torso_pitch_deg := 3.2
+	if logical in [&"idle", &"soccer_idle", &"idle_ball", &"warmup", &"talk", &"argue", &"defeated", &"victory_idle"]:
+		hip_pitch_deg = 0.5
+		torso_pitch_deg = 2.0
+	elif logical == &"mark_idle":
+		hip_pitch_deg = 2.0
+		torso_pitch_deg = 4.0
+	elif logical in [&"walk", &"strafe_l_walk", &"turn_l", &"turn_r", &"walk_turn180", &"stand_turn_r", &"walk_stop", &"receive", &"receive_ball", &"walk_turn_l", &"start_walk"]:
+		hip_pitch_deg = 1.0
+		torso_pitch_deg = 2.8
+	elif logical in [&"slow_jog", &"dribble", &"jog", &"sad_run", &"back", &"strafe_l_jog", &"strafe_r_jog", &"diag_l", &"diag_r", &"pass_short", &"pass_long", &"spin", &"cut", &"cut_r", &"gk_pass", &"kick_up", &"kneeing"]:
+		hip_pitch_deg = 2.0
+		torso_pitch_deg = 4.5
+	elif logical in [&"run", &"shoot", &"stand_tackle"]:
+		hip_pitch_deg = 2.8
+		torso_pitch_deg = 5.5
+	elif logical in [&"sprint", &"idle_to_sprint", &"strafe_l_fast", &"strafe_r_fast", &"shoot_power", &"sprint_turn", &"run_to_turn", &"run_stop"]:
+		hip_pitch_deg = 3.5
+		torso_pitch_deg = 6.5
+
+	# 1. Alinha o quadril (Hips): sem torção lateral nem inclinação exagerada.
+	var tr_hips := out.find_track(NodePath("%GeneralSkeleton:Hips"), Animation.TYPE_ROTATION_3D)
+	var hip_eulers: Array[Vector3] = []
+	var avg_hip := Vector3.ZERO
+	if tr_hips >= 0:
+		for i in n_keys + 1:
+			var t := minf(float(i) / fps, out.length)
+			var e := out.rotation_track_interpolate(tr_hips, t).get_euler()
+			hip_eulers.append(e)
+			avg_hip += e
+		avg_hip /= float(n_keys + 1)
+		out.remove_track(tr_hips)
+	tr_hips = out.add_track(Animation.TYPE_ROTATION_3D)
+	out.track_set_path(tr_hips, NodePath("%GeneralSkeleton:Hips"))
+	for i in n_keys + 1:
+		var t := minf(float(i) / fps, out.length)
+		var raw_e := hip_eulers[i] if i < hip_eulers.size() else Vector3.ZERO
+		var de := raw_e - avg_hip
+		var hx := deg_to_rad(hip_pitch_deg) + clampf(de.x * 0.35, deg_to_rad(-3.0), deg_to_rad(3.0))
+		var hy := clampf(de.y * 0.45, deg_to_rad(-5.0), deg_to_rad(5.0))
+		var hz := clampf(de.z * 0.45, deg_to_rad(-3.0), deg_to_rad(3.0))
+		out.rotation_track_insert_key(tr_hips, t, Quaternion.from_euler(Vector3(hx, hy, hz)))
+
+	# 2. Redistribui a coluna (Spine, Chest, UpperChest) sem "quebrar" o tronco.
+	var tr_spine := out.find_track(NodePath("%GeneralSkeleton:Spine"), Animation.TYPE_ROTATION_3D)
+	var tr_chest := out.find_track(NodePath("%GeneralSkeleton:Chest"), Animation.TYPE_ROTATION_3D)
+	var tr_uchest := out.find_track(NodePath("%GeneralSkeleton:UpperChest"), Animation.TYPE_ROTATION_3D)
+	var comb_eulers: Array[Vector3] = []
+	var avg_comb := Vector3.ZERO
+	for i in n_keys + 1:
+		var t := minf(float(i) / fps, out.length)
+		var ec := out.rotation_track_interpolate(tr_chest, t).get_euler() if tr_chest >= 0 else Vector3.ZERO
+		var eu := out.rotation_track_interpolate(tr_uchest, t).get_euler() if tr_uchest >= 0 else Vector3.ZERO
+		var es := out.rotation_track_interpolate(tr_spine, t).get_euler() if tr_spine >= 0 else Vector3.ZERO
+		var c := es + ec + eu
+		comb_eulers.append(c)
+		avg_comb += c
+	avg_comb /= float(n_keys + 1)
+
+	for bname in ["Spine", "Chest", "UpperChest"]:
+		var old_tr := out.find_track(NodePath("%GeneralSkeleton:" + bname), Animation.TYPE_ROTATION_3D)
+		if old_tr >= 0:
+			out.remove_track(old_tr)
+	tr_spine = out.add_track(Animation.TYPE_ROTATION_3D)
+	out.track_set_path(tr_spine, NodePath("%GeneralSkeleton:Spine"))
+	tr_chest = out.add_track(Animation.TYPE_ROTATION_3D)
+	out.track_set_path(tr_chest, NodePath("%GeneralSkeleton:Chest"))
+	tr_uchest = out.add_track(Animation.TYPE_ROTATION_3D)
+	out.track_set_path(tr_uchest, NodePath("%GeneralSkeleton:UpperChest"))
+
+	# 3. Pescoço e Cabeça (Neck, Head) erguidos, olhando para o campo.
+	for bname in ["Neck", "Head"]:
+		var old_nh := out.find_track(NodePath("%GeneralSkeleton:" + bname), Animation.TYPE_ROTATION_3D)
+		if old_nh >= 0:
+			out.remove_track(old_nh)
+	var tr_neck := out.add_track(Animation.TYPE_ROTATION_3D)
+	out.track_set_path(tr_neck, NodePath("%GeneralSkeleton:Neck"))
+	var tr_head := out.add_track(Animation.TYPE_ROTATION_3D)
+	out.track_set_path(tr_head, NodePath("%GeneralSkeleton:Head"))
+
+	for i in n_keys + 1:
+		var t := minf(float(i) / fps, out.length)
+		var dc := comb_eulers[i] - avg_comb
+		var tot_x := deg_to_rad(torso_pitch_deg) + clampf(dc.x * 0.22, deg_to_rad(-3.5), deg_to_rad(3.5))
+		var tot_y := clampf(dc.y * 0.26, deg_to_rad(-10.5), deg_to_rad(10.5))
+		var tot_z := clampf(dc.z * 0.22, deg_to_rad(-3.5), deg_to_rad(3.5))
+		var tot := Vector3(tot_x, tot_y, tot_z)
+		out.rotation_track_insert_key(tr_spine, t, Quaternion.from_euler(tot * 0.42))
+		out.rotation_track_insert_key(tr_chest, t, Quaternion.from_euler(tot * 0.33))
+		out.rotation_track_insert_key(tr_uchest, t, Quaternion.from_euler(tot * 0.25))
+
+		var head_comp_x := -(deg_to_rad(hip_pitch_deg) + tot_x) + deg_to_rad(1.2)
+		var head_comp_y := -tot_y * 0.55
+		var head_comp_z := -tot_z * 0.65
+		var nh := Vector3(head_comp_x, head_comp_y, head_comp_z)
+		out.rotation_track_insert_key(tr_neck, t, Quaternion.from_euler(nh * 0.45))
+		out.rotation_track_insert_key(tr_head, t, Quaternion.from_euler(nh * 0.55))
+
+	# 4. Simetriza os braços no Idle/Mark (evita um ombro/braço caído torto).
+	if logical in [&"idle", &"soccer_idle", &"idle_ball", &"mark_idle", &"warmup", &"defeated"]:
+		var tr_la := out.find_track(NodePath("%GeneralSkeleton:LeftUpperArm"), Animation.TYPE_ROTATION_3D)
+		var tr_ra := out.find_track(NodePath("%GeneralSkeleton:RightUpperArm"), Animation.TYPE_ROTATION_3D)
+		var tr_ll := out.find_track(NodePath("%GeneralSkeleton:LeftLowerArm"), Animation.TYPE_ROTATION_3D)
+		var tr_rl := out.find_track(NodePath("%GeneralSkeleton:RightLowerArm"), Animation.TYPE_ROTATION_3D)
+		var base_arm_p := deg_to_rad(64.0 if logical == &"mark_idle" else 70.0)
+		var base_fore_p := deg_to_rad(38.0 if logical == &"mark_idle" else 28.0)
+		if tr_la >= 0 and tr_ra >= 0:
+			for k in out.track_get_key_count(tr_la):
+				out.track_set_key_value(tr_la, k, Quaternion.from_euler(Vector3(base_arm_p, deg_to_rad(172.0), deg_to_rad(-12.0))))
+			for k in out.track_get_key_count(tr_ra):
+				out.track_set_key_value(tr_ra, k, Quaternion.from_euler(Vector3(base_arm_p, deg_to_rad(-172.0), deg_to_rad(12.0))))
+		if tr_ll >= 0 and tr_rl >= 0:
+			for k in out.track_get_key_count(tr_ll):
+				out.track_set_key_value(tr_ll, k, Quaternion.from_euler(Vector3(base_fore_p, deg_to_rad(-88.0), 0.0)))
+			for k in out.track_get_key_count(tr_rl):
+				out.track_set_key_value(tr_rl, k, Quaternion.from_euler(Vector3(base_fore_p, deg_to_rad(88.0), 0.0)))
+
+	return out
+
+
 static func _scale_anim_time(src: Animation, rate: float) -> Animation:
 	if absf(rate - 1.0) < 0.01 or rate <= 0.05:
 		return src.duplicate(true) as Animation
@@ -467,7 +637,7 @@ static func _scale_anim_time(src: Animation, rate: float) -> Animation:
 	return out
 
 
-## Esculpe a mecânica de chute/passe/domínio na perna de contato do clipe fallback.
+## Esculpe a mecânica de chute/passe/domínio/bote na perna de contato do clipe fallback.
 static func _sculpt_kick_or_contact(src: Animation, logical: StringName, contact_t: float, foot_side: float) -> Animation:
 	var out := src.duplicate(true) as Animation
 	var min_len := contact_t + 0.38
@@ -483,12 +653,13 @@ static func _sculpt_kick_or_contact(src: Animation, logical: StringName, contact
 	if hip_tr >= 0 and knee_tr >= 0:
 		var t_prep := maxf(contact_t - 0.16, 0.02)
 		var t_follow := minf(contact_t + 0.16, out.length - 0.02)
-		var q_hip_prep := out.rotation_track_interpolate(hip_tr, t_prep) * Quaternion(Vector3.RIGHT, deg_to_rad(24.0))
-		var q_knee_prep := out.rotation_track_interpolate(knee_tr, t_prep) * Quaternion(Vector3.RIGHT, deg_to_rad(32.0))
-		var swing_deg := -34.0 if logical in [&"shoot", &"shoot_power", &"pass_long"] else -22.0
+		var back_deg := 14.0 if logical == &"stand_tackle" else 22.0
+		var q_hip_prep := out.rotation_track_interpolate(hip_tr, t_prep) * Quaternion(Vector3.RIGHT, deg_to_rad(back_deg))
+		var q_knee_prep := out.rotation_track_interpolate(knee_tr, t_prep) * Quaternion(Vector3.RIGHT, deg_to_rad(28.0))
+		var swing_deg := -32.0 if logical in [&"shoot", &"shoot_power", &"pass_long", &"stand_tackle"] else -20.0
 		var q_hip_hit := out.rotation_track_interpolate(hip_tr, contact_t) * Quaternion(Vector3.RIGHT, deg_to_rad(swing_deg))
 		var q_knee_hit := out.rotation_track_interpolate(knee_tr, contact_t) * Quaternion(Vector3.RIGHT, deg_to_rad(-18.0))
-		var q_hip_fol := out.rotation_track_interpolate(hip_tr, t_follow) * Quaternion(Vector3.RIGHT, deg_to_rad(swing_deg * 1.15))
+		var q_hip_fol := out.rotation_track_interpolate(hip_tr, t_follow) * Quaternion(Vector3.RIGHT, deg_to_rad(swing_deg * 1.1))
 		out.rotation_track_insert_key(hip_tr, t_prep, q_hip_prep)
 		out.rotation_track_insert_key(knee_tr, t_prep, q_knee_prep)
 		out.rotation_track_insert_key(hip_tr, contact_t, q_hip_hit)
@@ -497,10 +668,10 @@ static func _sculpt_kick_or_contact(src: Animation, logical: StringName, contact
 	return out
 
 
-## Chutes/passes com o OUTRO pé: o mesmo clipe espelhado (troca esquerda ↔
+## Chutes/passes/botes com o OUTRO pé: o mesmo clipe espelhado (troca esquerda ↔
 ## direita). O esqueleto do retarget é simétrico, então o espelho é exato.
 const MIRRORED: Array[StringName] = [&"pass_short", &"pass_long", &"shoot", &"shoot_power",
-	&"cut_r", &"walk_turn180", &"stand_turn_r"]
+	&"cut_r", &"walk_turn180", &"stand_turn_r", &"stand_tackle"]
 
 
 static func mirrored_name(logical: StringName) -> StringName:

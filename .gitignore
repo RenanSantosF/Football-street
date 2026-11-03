@@ -10,8 +10,7 @@ build/
 # Os .import (configuração de retarget) ficam versionados. Se o repositório for
 # privado e você quiser versionar o pack, apague a linha abaixo.
 assets/animations/mixamo/**/*.fbx
-# Personagens do autor rigados no Mixamo (fora do repositório público).
-assets/characters/teen_01/*.fbx
-assets/characters/teen_01/*.png
 assets/animations/rohr/*.fbx
 assets/animations/rohr_extra/
+public/assets/aistudio/
+

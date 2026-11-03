@@ -158,15 +158,31 @@ func _think_with_ball() -> void:
 			_move_target = pos + dir_goal
 			return
 
-	# Passe sob pressão ou por paciência.
+	# 1. Tabela (1-2 / passa e vai) ou companheiro infiltrando livre à frente.
+	var s := Field.attack_sign(player.team)
+	if _hold_time > 0.26:
+		var best_mate := _best_pass_option()
+		if best_mate != null:
+			var mate_pass_ms := best_mate.get_meta("last_pass_ms", -100000) as int
+			var is_give_and_go := Time.get_ticks_msec() - mate_pass_ms < 2600 \
+				and (best_mate.global_position.x - pos.x) * s > 1.2
+			var adv := (best_mate.global_position.x - pos.x) * s
+			var mate_open := _nearest_opponent_distance(best_mate.global_position) > 2.4
+			if is_give_and_go or (_hold_time > 0.55 and adv > 2.2 and mate_open):
+				var dp := best_mate.global_position.distance_to(pos)
+				_set_action(PlayerIntent.Action.PASS, 0.32 if dp < 11.0 else 0.68, Vector3.ZERO, best_mate)
+				_patience = _rng.randf_range(1.2, 2.5)
+				return
+
+	# 2. Passe sob pressão ou por paciência (troca de passes fluida).
 	var nearest := _nearest_opponent_distance(pos)
-	var pressured := nearest < 2.0
-	if (pressured and _hold_time > 0.35) or _hold_time > _patience:
+	var pressured := nearest < 2.2
+	if (pressured and _hold_time > 0.28) or _hold_time > _patience:
 		var mate := _best_pass_option()
 		if mate != null:
 			var d := mate.global_position.distance_to(pos)
 			_set_action(PlayerIntent.Action.PASS, 0.3 if d < 11.0 else 0.7, Vector3.ZERO, mate)
-			_patience = _rng.randf_range(1.6, 3.4)
+			_patience = _rng.randf_range(1.3, 2.6)
 			return
 
 	# Marcador colado e sem passe: PROTEGE (corpo entre ele e a bola) e
@@ -270,6 +286,12 @@ func _support_or_mark(carrier: Player) -> void:
 		from_c.y = 0.0
 		if from_c.length() < 5.0:
 			target = c + (from_c.normalized() if from_c.length() > 0.1 else Vector3(s, 0, 0)) * 5.0
+		# Se um defensor estiver bloqueando a linha de passe, abre lateralmente para sair da sombra.
+		if not _lane_clear(c, target, 0.85):
+			var shift_dir := Vector3(0.0, 0.0, 1.6 if target.z <= 0.0 else -1.6)
+			var alt := Field.clamp_inside(target + shift_dir, 0.7)
+			if _lane_clear(c, alt, 0.8):
+				target = alt
 		_move_target = Field.clamp_inside(target, 0.7)
 		_sprint = _sprint or player.global_position.distance_to(_move_target) > 4.0
 		return
@@ -297,16 +319,16 @@ func _defend(carrier: Player) -> void:
 		var to_goal := (own_goal - carrier.global_position)
 		to_goal.y = 0.0
 		var d := player.global_position.distance_to(carrier.global_position)
-		# CERCAR: chega rápido, e perto fica na frente dele (lado do gol),
-		# acompanhando o movimento — sem se jogar.
-		_move_target = carrier.global_position + to_goal.normalized() * 1.1 + carrier.get_flat_velocity() * 0.3
-		_sprint = d > 3.0
+		# CERCAR: chega rápido, fecha o corredor do gol e encurta na bola quando o atacante dá espaço.
 		var bp := player.ball.global_position
-		var ball_exposed := Vector2(bp.x - carrier.global_position.x, bp.z - carrier.global_position.z).length() > 0.55
-		var ball_near_me := Vector2(bp.x - player.global_position.x, bp.z - player.global_position.z).length() < 1.1
-		if ball_near_me and _tackle_cooldown <= 0.0 and (ball_exposed or _rng.randf() < 0.12):
-			# Bote quando a bola fica exposta (toque longo / virada): o pé alcança.
-			_tackle_cooldown = _rng.randf_range(0.8, 1.6)
+		var ball_exposed := Vector2(bp.x - carrier.global_position.x, bp.z - carrier.global_position.z).length() > 0.48
+		var dist_offset := 0.85 if ball_exposed else 1.05
+		_move_target = carrier.global_position + to_goal.normalized() * dist_offset + carrier.get_flat_velocity() * 0.28
+		_sprint = d > 2.4
+		var ball_near_me := Vector2(bp.x - player.global_position.x, bp.z - player.global_position.z).length() < 1.15
+		if ball_near_me and _tackle_cooldown <= 0.0 and (ball_exposed or _rng.randf() < 0.22):
+			# Bote em pé quando a bola fica exposta ou ao alcance: o pé rouba a bola.
+			_tackle_cooldown = _rng.randf_range(0.65, 1.35)
 			_set_action(PlayerIntent.Action.DRIBBLE, 0.0, Vector3.ZERO, null)
 		elif d < Player.SLIDE_RANGE - 0.4 and d > 1.8 and _tackle_cooldown <= 0.0:
 			# Carrinho: mais provável quando o atacante se aproxima do gol.
@@ -471,11 +493,13 @@ func _best_pass_option() -> Player:
 		if mate.is_goalkeeper():
 			continue
 		var d := pos.distance_to(mate.global_position)
-		if d < 2.0 or d > 20.0 or not _lane_clear(pos, mate.global_position, 0.9):
+		if d < 2.0 or d > 20.0 or not _lane_clear(pos, mate.global_position, 0.85):
 			continue
 		var advance := (mate.global_position.x - pos.x) * s
 		var openness := minf(_nearest_opponent_distance(mate.global_position), 5.0)
-		var score := advance * 0.4 + openness - d * 0.08
+		var mate_pass_ms := mate.get_meta("last_pass_ms", -100000) as int
+		var give_and_go_bonus := 1.2 if (Time.get_ticks_msec() - mate_pass_ms < 2600 and advance > 0.5) else 0.0
+		var score := advance * 0.45 + openness + give_and_go_bonus - d * 0.07
 		if score > best_score:
 			best_score = score
 			best = mate

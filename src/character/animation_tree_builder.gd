@@ -55,11 +55,14 @@ const ACTION_CLIPS := {
 	&"Header": &"header",
 	&"HeadControl": &"head_control",
 	&"HeaderJump": &"header_jump",
+	&"StandTackle": &"stand_tackle",
+	&"StandTackleL": &"stand_tackle_m",
 }
 ## estado -> [nome lógico, volta sozinho para a locomoção no fim?]
 const REACTION_CLIPS := {
 	&"Burst": [&"idle_to_sprint", true],
 	&"Stumble": [&"stumble", true],
+	&"Shoved": [&"shoved", true],
 	&"Fallen": [&"fallen", false],
 	&"Celebrate": [&"victory", false],
 	&"CelebrateIdle": [&"victory_idle", false],

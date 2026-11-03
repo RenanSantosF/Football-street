@@ -96,6 +96,11 @@ func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float)
 		lean.turn_lean = clampf(turn_bank, -1.0, 1.0)
 
 
+func trigger_touch_style(style: StringName, dir_angle: float = 0.0, foot_side: float = 1.0) -> void:
+	if lean != null:
+		lean.trigger_touch_style(style, dir_angle, foot_side)
+
+
 func get_locomotion_scale() -> float:
 	return _hips_rest_height * _model_scale * scale.x / REF_HIPS_HEIGHT
 
