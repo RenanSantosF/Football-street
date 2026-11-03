@@ -178,6 +178,10 @@ func kick_foot(kind: StringName) -> float:
 	return AnimationCatalog.contact_foot(logical) if AnimationCatalog.has_clip(logical) else 0.0
 
 
+var _signed_turn := 0.0
+var _accel_lean := 0.0
+
+
 func physics_update(delta: float) -> void:
 	if not is_active():
 		return
@@ -188,9 +192,13 @@ func physics_update(delta: float) -> void:
 	var v := player.get_flat_velocity() + Vector3(player.body_adjust.x, 0.0, player.body_adjust.z)
 	# Girando parado: dá passinhos (a velocidade de giro alimenta a passada),
 	# em vez de rodar com os pés deslizando.
-	var ang := absf(_prev_facing.signed_angle_to(player.facing, Vector3.UP)) / maxf(delta, 0.001)
+	var signed_ang := _prev_facing.signed_angle_to(player.facing, Vector3.UP) / maxf(delta, 0.001)
+	var ang := absf(signed_ang)
 	_prev_facing = player.facing
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
+	_signed_turn = lerpf(_signed_turn, signed_ang, 1.0 - exp(-8.0 * delta))
+	var raw_accel := (v.length() - _prev_speed) / maxf(delta, 0.001)
+	_accel_lean = lerpf(_accel_lean, clampf(raw_accel / 10.0, -1.0, 1.0), 1.0 - exp(-8.0 * delta))
 	# (girando parado: passos curtos, sem "andar no lugar")
 	var raw := maxf(v.length(), minf(_turn_rate * 0.12, 0.3)) / k
 	# Passada suave: a velocidade que alimenta a animação muda devagar (sem
@@ -223,9 +231,12 @@ func physics_update(delta: float) -> void:
 	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
 	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
-	if player.visual.has_method("set_run_lean"):
-		# correndo: tronco e cabeça um pouco menos inclinados para a frente
-		player.visual.call("set_run_lean", clampf((v.length() - 1.6) / 2.6, 0.0, 1.0))
+	var run_lean := clampf((v.length() - 1.6) / 2.6, 0.0, 1.0)
+	var turn_bank := clampf(_signed_turn * (v.length() / 4.0) * 0.22, -1.0, 1.0)
+	if player.visual.has_method("set_posture_dynamics"):
+		player.visual.call("set_posture_dynamics", run_lean, _accel_lean, turn_bank)
+	elif player.visual.has_method("set_run_lean"):
+		player.visual.call("set_run_lean", run_lean)
 	# Marcação: velocidade no referencial do corpo (x = direita, y = frente).
 	var right := player.facing.cross(Vector3.UP)
 	# (suave: trocar de passo lateral para trás/frente sem "estalar" o quadril)

@@ -89,6 +89,18 @@ const LIBRARY_SOURCES := {
 	&"r_juggling": ROHR % "04_Juggling_01_ue5",
 	&"m_kneeing": "Kneeing Soccerball",
 	&"m_warmup": "Offensive Idle aquecimento",
+	# animações adicionais catalogadas no pack Mixamo
+	&"m_receive_ball": "Receive Soccerball",
+	&"m_gk_dive": "Goalkeeper Diving Save",
+	&"m_scissor": "Scissor Kick",
+	&"m_sprint_turn": "Sprint Turn",
+	&"m_run_to_turn": "Running To Turn",
+	&"m_walk_turn_l": "Walking Left Turn",
+	&"m_start_walk": "Start Walking",
+	&"m_stand_tackle": "Soccer Tackle",
+	&"m_walk_strafe_l": "Walk Strafe Left",
+	&"m_diag_back_l": "Jog Forward Diagonal (2)",
+	&"m_diag_back_r": "Jog Forward Diagonal (3)",
 }
 
 ## nome lógico -> "prefixo/clipe"
@@ -126,6 +138,7 @@ const CLIPS := {
 	&"shoot": &"m_shoot/mixamo_com",
 	&"shoot_power": &"r_power_kick/seg_kick",
 	&"receive": &"m_receive/mixamo_com",
+	&"receive_ball": &"m_receive_ball/mixamo_com",
 	&"spin": &"m_spin/mixamo_com",
 	&"cut": &"m_cut/mixamo_com",
 	&"recv_chest": &"m_chest/mixamo_com",
@@ -134,6 +147,7 @@ const CLIPS := {
 	&"head_control": &"m_head_ctrl/mixamo_com",
 	&"header_jump": &"m_header_jump/mixamo_com",
 	&"tackle": &"m_tackle/mixamo_com",
+	&"stand_tackle": &"m_stand_tackle/mixamo_com",
 	&"trip": &"m_trip/mixamo_com",
 	&"fallen": &"m_fallen/mixamo_com",
 	&"jump": &"m_jump/mixamo_com",
@@ -146,13 +160,20 @@ const CLIPS := {
 	&"defeated": &"m_defeated/mixamo_com",
 	&"sad_run": &"m_sad_run/mixamo_com",
 	&"gk_catch": &"m_gk_catch/mixamo_com",
+	&"gk_dive": &"m_gk_dive/mixamo_com",
 	&"gk_pass": &"m_gk_pass/mixamo_com",
 	&"gk_place": &"m_gk_place/mixamo_com",
 	&"kick_up": &"r_juggling/seg_juggle",
 	&"kneeing": &"m_kneeing/mixamo_com",
 	&"warmup": &"m_warmup/mixamo_com",
+	&"scissor_kick": &"m_scissor/mixamo_com",
+	&"sprint_turn": &"m_sprint_turn/mixamo_com",
+	&"run_to_turn": &"m_run_to_turn/mixamo_com",
+	&"walk_turn_l": &"m_walk_turn_l/mixamo_com",
+	&"start_walk": &"m_start_walk/mixamo_com",
 	# reserva (biblioteca UAL)
 	&"ual_idle": &"ual/Idle",
+	&"ual_walk": &"ual/Walk",
 	&"ual_jog": &"ual/Jog_Fwd",
 	&"ual_sprint": &"ual/Sprint",
 	&"stumble": &"ual/Hit_Chest",
@@ -176,9 +197,12 @@ const CONTACTS := {
 	&"shoot": [0.45, 1.0],
 	&"shoot_power": [0.70, -1.0], # chute forte (mocap, pé esquerdo): contato 2,60 s
 	&"receive": [0.29, 1.0],
+	&"receive_ball": [0.28, 1.0],
 	&"tackle": [0.36, -1.0],
+	&"stand_tackle": [0.25, 1.0],
 	&"spin": [1.0, 1.0],
 	&"gk_pass": [1.15, 1.0],
+	&"scissor_kick": [0.55, 1.0],
 	# domínio no ar / cabeceio (0 = corpo/cabeça; -1 joelho esquerdo)
 	&"recv_chest": [0.45, 0.0],
 	&"recv_knee": [0.52, -1.0],
@@ -208,6 +232,9 @@ const GETUP_SPEED := 2.4
 static func getup_duration(logical: StringName) -> float:
 	if not has_clip(logical) or not GETUP_SEGMENTS.has(logical):
 		return 0.0
+	var cpath := String(clip(logical))
+	if cpath.begins_with("ual_fb/"):
+		return clip_length(logical) / GETUP_SPEED
 	var seg: Array = GETUP_SEGMENTS[logical]
 	return (seg[1] - seg[0]) / GETUP_SPEED
 
@@ -258,6 +285,7 @@ const ROOT_MOTION_FPS := 30.0
 const IN_PLACE_FIXED: Array[StringName] = [&"getup", &"getup_b", &"getup_c", &"fallen"]
 
 static var _libraries := {}
+static var _fallback_clips := {}
 ## clipe "prefixo/nome" -> deslocamento horizontal total retirado (root motion).
 static var root_motion := {}
 ## clipe "prefixo/nome" -> curva do deslocamento horizontal do quadril
@@ -291,9 +319,182 @@ static func get_libraries() -> Dictionary:
 			if prefix != &"ual":
 				lib = _make_in_place(prefix, lib)
 			_libraries[prefix] = lib
+		_build_ual_fallbacks()
 		_apply_loops()
 		_add_mirrored()
 	return _libraries
+
+
+## Quando os arquivos .fbx do Mixamo/Rohr não estão no disco (ex.: clone limpo
+## do git ou build de CI), sintetiza/mapeia a partir da biblioteca UAL
+## (AnimationLibrary_Godot_Standard.gltf) para que 100% dos clipes lógicos
+## funcionem perfeitamente com o esqueleto humanoide.
+static func _build_ual_fallbacks() -> void:
+	if not _libraries.has(&"ual"):
+		return
+	var ual_lib := _libraries[&"ual"] as AnimationLibrary
+	if ual_lib == null:
+		return
+	var fb_lib := AnimationLibrary.new()
+	var map_source := {
+		&"idle": ["Idle", 1.0],
+		&"soccer_idle": ["Idle", 1.0],
+		&"idle_ball": ["Idle", 1.0],
+		&"mark_idle": ["Crouch_Idle", 1.0],
+		&"walk": ["Walk", 1.50],          # escala p/ casar passada a 1,64 m/s
+		&"slow_jog": ["Jog_Fwd", 0.78],
+		&"dribble": ["Jog_Fwd", 0.88],    # condução próxima a 2,10 m/s
+		&"jog": ["Jog_Fwd", 1.0],         # trote a 2,37 m/s
+		&"run": ["Sprint", 0.85],         # corrida a 4,04 m/s
+		&"sprint": ["Sprint", 1.18],      # sprint a 5,65 m/s
+		&"idle_to_sprint": ["Sprint", 1.2],
+		&"sad_run": ["Jog_Fwd", 0.85],
+		&"back": ["Walk", 1.2],
+		&"strafe_l_walk": ["Walk", 1.35],
+		&"strafe_l_jog": ["Jog_Fwd", 1.0],
+		&"strafe_r_jog": ["Jog_Fwd", 1.0],
+		&"strafe_l_fast": ["Sprint", 0.9],
+		&"strafe_r_fast": ["Sprint", 0.9],
+		&"diag_l": ["Jog_Fwd", 0.95],
+		&"diag_r": ["Jog_Fwd", 0.95],
+		&"pass_short": ["Jog_Fwd", 0.95],
+		&"pass_long": ["Jog_Fwd", 1.1],
+		&"shoot": ["Jog_Fwd", 1.05],
+		&"shoot_power": ["Sprint", 0.65],
+		&"receive": ["Walk", 1.4],
+		&"receive_ball": ["Walk", 1.4],
+		&"spin": ["Jog_Fwd", 0.8],
+		&"cut": ["Jog_Fwd", 1.1],
+		&"cut_r": ["Jog_Fwd", 1.15],
+		&"turn_l": ["Walk", 1.5],
+		&"turn_r": ["Walk", 1.5],
+		&"turn180": ["Jog_Fwd", 1.1],
+		&"walk_turn180": ["Walk", 1.4],
+		&"stand_turn_r": ["Walk", 1.5],
+		&"walk_stop": ["Walk", 1.5],
+		&"run_stop": ["Jog_Fwd", 1.1],
+		&"recv_chest": ["Hit_Chest", 0.55],
+		&"recv_knee": ["Jump_Start", 1.2],
+		&"header": ["Jump_Start", 1.1],
+		&"head_control": ["Jump_Start", 1.0],
+		&"header_jump": ["Jump", 1.2],
+		&"tackle": ["Roll_RM", 1.4],
+		&"stand_tackle": ["Jog_Fwd", 1.2],
+		&"trip": ["Death01", 1.4],
+		&"fallen": ["Death01", 1.0],
+		&"jump": ["Jump", 1.5],
+		&"getup": ["Jump_Land", 0.9],
+		&"getup_b": ["Jump_Land", 0.9],
+		&"getup_c": ["Jump_Land", 0.9],
+		&"victory": ["Jump", 1.2],
+		&"victory_idle": ["Dance", 1.0],
+		&"samba": ["Dance", 1.0],
+		&"defeated": ["Crouch_Idle", 1.0],
+		&"argue": ["Idle_Talking", 1.0],
+		&"gk_catch": ["Interact", 1.4],
+		&"gk_dive": ["Roll_RM", 1.3],
+		&"gk_pass": ["Jog_Fwd", 0.7],
+		&"gk_place": ["PickUp_Table", 1.0],
+		&"kick_up": ["Jog_Fwd", 0.9],
+		&"kneeing": ["Jog_Fwd", 0.9],
+		&"warmup": ["Idle", 1.15],
+		&"scissor_kick": ["Jump", 1.3],
+		&"sprint_turn": ["Sprint", 1.1],
+		&"run_to_turn": ["Jog_Fwd", 1.1],
+		&"walk_turn_l": ["Walk", 1.4],
+		&"start_walk": ["Walk", 1.4],
+	}
+	for logical: StringName in map_source:
+		# Se o clipe original do Mixamo/Rohr já existe no disco, preserva-o!
+		var primary_parts := String(CLIPS.get(logical, &"")).split("/")
+		if primary_parts.size() == 2 and _libraries.has(StringName(primary_parts[0])) \
+				and (_libraries[StringName(primary_parts[0])] as AnimationLibrary).has_animation(StringName(primary_parts[1])):
+			continue
+		var spec: Array = map_source[logical]
+		var src_name := StringName(spec[0])
+		var rate: float = float(spec[1])
+		if not ual_lib.has_animation(src_name):
+			continue
+		var base_anim := ual_lib.get_animation(src_name)
+		var anim := _scale_anim_time(base_anim, rate)
+		if CONTACTS.has(logical):
+			var ct: float = float(CONTACTS[logical][0])
+			var cf: float = float(CONTACTS[logical][1])
+			anim = _sculpt_kick_or_contact(anim, logical, ct, cf)
+		fb_lib.add_animation(logical, anim)
+		var fb_key := "ual_fb/" + String(logical)
+		_fallback_clips[logical] = StringName(fb_key)
+		# Gera curvas suaves de root motion / root yaw para viradas e paradas.
+		if TURN_ANGLES.has(logical):
+			var total_rad := deg_to_rad(float(TURN_ANGLES[logical]))
+			var n_samples := int(anim.length * ROOT_MOTION_FPS) + 1
+			var y_curve := PackedFloat32Array()
+			var r_curve := PackedVector3Array()
+			for i in n_samples:
+				var u := float(i) / float(max(n_samples - 1, 1))
+				var s := u * u * (3.0 - 2.0 * u)
+				y_curve.append(total_rad * s)
+				r_curve.append(Vector3(0.0, 0.0, 0.18 * sin(u * PI)))
+			root_yaw[fb_key] = y_curve
+			root_curves[fb_key] = r_curve
+		elif logical in ROOT_MOTION:
+			var n_s := int(anim.length * ROOT_MOTION_FPS) + 1
+			var rc := PackedVector3Array()
+			var dist := 0.85 if logical in [&"tackle", &"run_stop", &"jump"] else 0.35
+			for i in n_s:
+				var u := float(i) / float(max(n_s - 1, 1))
+				var ease_out := 1.0 - (1.0 - u) * (1.0 - u)
+				rc.append(Vector3(0.0, 0.0, dist * ease_out))
+			root_curves[fb_key] = rc
+	if fb_lib.get_animation_list().size() > 0:
+		_libraries[&"ual_fb"] = fb_lib
+
+
+static func _scale_anim_time(src: Animation, rate: float) -> Animation:
+	if absf(rate - 1.0) < 0.01 or rate <= 0.05:
+		return src.duplicate(true) as Animation
+	var out := Animation.new()
+	out.length = maxf(src.length / rate, 0.15)
+	for i in src.get_track_count():
+		var ty := src.track_get_type(i)
+		var j := out.add_track(ty)
+		out.track_set_path(j, src.track_get_path(i))
+		out.track_set_interpolation_type(j, src.track_get_interpolation_type(i))
+		for k in src.track_get_key_count(i):
+			var t := src.track_get_key_time(i, k) / rate
+			var v = src.track_get_key_value(i, k)
+			out.track_insert_key(j, t, v)
+	return out
+
+
+## Esculpe a mecânica de chute/passe/domínio na perna de contato do clipe fallback.
+static func _sculpt_kick_or_contact(src: Animation, logical: StringName, contact_t: float, foot_side: float) -> Animation:
+	var out := src.duplicate(true) as Animation
+	var min_len := contact_t + 0.38
+	if out.length < min_len:
+		out.length = min_len
+	if foot_side == 0.0:
+		return out
+	var prefix := "Right" if foot_side > 0.0 else "Left"
+	var hip_path := NodePath("%GeneralSkeleton:" + prefix + "UpperLeg")
+	var knee_path := NodePath("%GeneralSkeleton:" + prefix + "LowerLeg")
+	var hip_tr := out.find_track(hip_path, Animation.TYPE_ROTATION_3D)
+	var knee_tr := out.find_track(knee_path, Animation.TYPE_ROTATION_3D)
+	if hip_tr >= 0 and knee_tr >= 0:
+		var t_prep := maxf(contact_t - 0.16, 0.02)
+		var t_follow := minf(contact_t + 0.16, out.length - 0.02)
+		var q_hip_prep := out.rotation_track_interpolate(hip_tr, t_prep) * Quaternion(Vector3.RIGHT, deg_to_rad(24.0))
+		var q_knee_prep := out.rotation_track_interpolate(knee_tr, t_prep) * Quaternion(Vector3.RIGHT, deg_to_rad(32.0))
+		var swing_deg := -34.0 if logical in [&"shoot", &"shoot_power", &"pass_long"] else -22.0
+		var q_hip_hit := out.rotation_track_interpolate(hip_tr, contact_t) * Quaternion(Vector3.RIGHT, deg_to_rad(swing_deg))
+		var q_knee_hit := out.rotation_track_interpolate(knee_tr, contact_t) * Quaternion(Vector3.RIGHT, deg_to_rad(-18.0))
+		var q_hip_fol := out.rotation_track_interpolate(hip_tr, t_follow) * Quaternion(Vector3.RIGHT, deg_to_rad(swing_deg * 1.15))
+		out.rotation_track_insert_key(hip_tr, t_prep, q_hip_prep)
+		out.rotation_track_insert_key(knee_tr, t_prep, q_knee_prep)
+		out.rotation_track_insert_key(hip_tr, contact_t, q_hip_hit)
+		out.rotation_track_insert_key(knee_tr, contact_t, q_knee_hit)
+		out.rotation_track_insert_key(hip_tr, t_follow, q_hip_fol)
+	return out
 
 
 ## Chutes/passes com o OUTRO pé: o mesmo clipe espelhado (troca esquerda ↔
@@ -310,13 +511,14 @@ static func _add_mirrored() -> void:
 	for logical in MIRRORED:
 		if not has_clip(logical):
 			continue
-		var parts := String(CLIPS[logical]).split("/")
+		var cpath := String(clip(logical))
+		var parts := cpath.split("/")
 		var lib := _libraries[StringName(parts[0])] as AnimationLibrary
 		var src := lib.get_animation(StringName(parts[1]))
 		var mname := StringName(parts[1] + "_m")
 		if not lib.has_animation(mname):
 			lib.add_animation(mname, _mirror(src))
-		var key := String(CLIPS[logical])
+		var key := cpath
 		var mkey := parts[0] + "/" + String(mname)
 		if root_curves.has(key):
 			var c: PackedVector3Array = root_curves[key]
@@ -359,26 +561,30 @@ static func _mirror(a: Animation) -> Animation:
 static func _apply_loops() -> void:
 	for logical in LOOPING:
 		if has_clip(logical):
-			var parts := String(CLIPS[logical]).split("/")
+			var parts := String(clip(logical)).split("/")
 			var anim := (_libraries[StringName(parts[0])] as AnimationLibrary).get_animation(StringName(parts[1]))
 			anim.loop_mode = Animation.LOOP_LINEAR
 
 
 static func has_clip(logical: StringName) -> bool:
+	var libs := get_libraries()
 	if String(logical).ends_with("_m"):
-		get_libraries()
 		return _mirror_clips.has(logical)
+	if _fallback_clips.has(logical):
+		return true
 	if not CLIPS.has(logical):
 		return false
 	var parts := String(CLIPS[logical]).split("/")
-	var libs := get_libraries()
 	var prefix := StringName(parts[0])
 	return libs.has(prefix) and (libs[prefix] as AnimationLibrary).has_animation(StringName(parts[1]))
 
 
 static func clip(logical: StringName) -> StringName:
+	get_libraries()
 	if _mirror_clips.has(logical):
 		return _mirror_clips[logical]
+	if _fallback_clips.has(logical):
+		return _fallback_clips[logical]
 	return CLIPS.get(logical, &"")
 
 
@@ -391,7 +597,7 @@ static func clip_length(logical: StringName) -> float:
 	logical = _base(logical)
 	if not has_clip(logical):
 		return 0.0
-	var parts := String(CLIPS[logical]).split("/")
+	var parts := String(clip(logical)).split("/")
 	return (get_libraries()[StringName(parts[0])] as AnimationLibrary).get_animation(StringName(parts[1])).length
 
 

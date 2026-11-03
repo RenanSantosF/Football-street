@@ -1,0 +1,83 @@
+name: Build Android APK (Godot 4.3)
+
+on:
+  push:
+    branches: [ main, master, "main-*" ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Exportar APK Android (Rua 10)
+    runs-on: ubuntu-latest
+    env:
+      GODOT_VERSION: "4.3"
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Configurar Java 17 e Android SDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Gerar Debug Keystore para assinatura Android
+        run: |
+          mkdir -p "$HOME/.android"
+          keytool -genkeypair -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Instalar Godot 4.3-stable e Export Templates
+        run: |
+          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          wget -q "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          unzip -q "Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          chmod +x "Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          sudo mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" /usr/local/bin/godot
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          unzip -q "Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          mv templates/* "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable/"
+
+      - name: Configurar Editor Settings (Android SDK e Debug Keystore)
+        run: |
+          mkdir -p "$HOME/.config/godot"
+          cat <<EOF > "$HOME/.config/godot/editor_settings-4.3.tres"
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "${ANDROID_SDK_ROOT}"
+          export/android/debug_keystore = "${HOME}/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+      - name: Importar recursos e validar suíte de testes
+        run: |
+          godot --headless --import
+          godot --headless --fixed-fps 60 --path . res://tests/contact_test.tscn
+          godot --headless --fixed-fps 60 --path . res://tests/receive_test.tscn
+          godot --headless --fixed-fps 60 --path . res://tests/dribble_test.tscn
+
+      - name: Exportar APK Android (build/rua10.apk)
+        run: |
+          mkdir -p build
+          godot --headless --export-debug "Android" build/rua10.apk
+          ls -lh build/rua10.apk
+
+      - name: Publicar artefato APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rua10-android-apk
+          path: build/rua10.apk
+          retention-days: 30

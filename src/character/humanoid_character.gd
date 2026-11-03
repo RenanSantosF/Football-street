@@ -21,9 +21,17 @@ const BASES := {
 		"bone_scales": {},
 		"hair_meshes": false,
 	},
+	&"ual_mannequin": {
+		"path": "res://assets/animations/ual/AnimationLibrary_Godot_Standard.gltf",
+		"original_skin": true,
+		"skin_ref": Color(0.479, 0.313, 0.227),
+		"bone_scales": {},
+		"hair_meshes": false,
+	},
 }
-## Só a skin do autor. Novas skins entram aqui quando forem enviadas.
-const BASE_ORDER: Array[StringName] = [&"teen_01"]
+## Usa teen_01 quando o FBX estiver no disco; caso contrário, usa o esqueleto
+## humanoide padrão da UAL (53 ossos) para manter animações e IK completas.
+const BASE_ORDER: Array[StringName] = [&"teen_01", &"ual_mannequin"]
 
 const HAIR_MODELS: Array[String] = [
 	"res://assets/characters/hair/Hair_SimpleParted.gltf",
@@ -46,7 +54,7 @@ var skeleton: Skeleton3D
 var body_mesh: MeshInstance3D
 var anim_tree: AnimationTree
 var placeholder: PlaceholderBody
-## Postura na corrida (tronco/cabeça levemente para trás).
+## Postura na corrida e IK biomecânica das pernas.
 var lean: LeanModifier
 
 var _material: ShaderMaterial
@@ -81,6 +89,13 @@ func set_run_lean(value: float) -> void:
 		lean.amount = clampf(value, 0.0, 1.0)
 
 
+func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float) -> void:
+	if lean != null:
+		lean.amount = clampf(run_lean, 0.0, 1.0)
+		lean.accel_lean = clampf(accel_pitch, -1.0, 1.0)
+		lean.turn_lean = clampf(turn_bank, -1.0, 1.0)
+
+
 func get_locomotion_scale() -> float:
 	return _hips_rest_height * _model_scale * scale.x / REF_HIPS_HEIGHT
 
@@ -95,6 +110,8 @@ func get_foot_positions() -> Array[Vector3]:
 	var out: Array[Vector3] = []
 	if skeleton == null:
 		return out
+	if lean != null:
+		lean.ensure_updated()
 	for idx in _toe_bones:
 		out.append(skeleton.global_transform * skeleton.get_bone_global_pose(idx).origin)
 	return out
@@ -105,9 +122,27 @@ func get_toe_position(side: float) -> Vector3:
 	var i := 1 if side > 0.0 else 0
 	if skeleton == null or _toe_bones.size() < 2:
 		return get_ankle_position(side)
+	if lean != null:
+		lean.ensure_updated()
 	var toe := skeleton.global_transform * skeleton.get_bone_global_pose(_toe_bones[i]).origin
 	var an := get_ankle_position(side)
 	return toe + (toe - an).normalized() * 0.06 # até a ponta dos dedos
+
+
+func get_raw_ankle_position(side: float) -> Vector3:
+	if lean != null:
+		var raw := lean.get_raw_ankle_world(side)
+		if raw != Vector3.ZERO:
+			return raw
+	return get_ankle_position(side)
+
+
+func get_raw_toe_position(side: float) -> Vector3:
+	if lean != null:
+		var raw := lean.get_raw_toe_world(side)
+		if raw != Vector3.ZERO:
+			return raw
+	return get_toe_position(side)
 
 
 func _build(wanted: StringName) -> void:
@@ -178,17 +213,14 @@ func _build(wanted: StringName) -> void:
 	# O deslocamento do corpo vem da física do jogador.
 	anim_tree.root_motion_track = NodePath("%GeneralSkeleton:Root")
 	anim_tree.active = true
-	_build_foot_ik()
 	lean = LeanModifier.new()
 	lean.name = "Lean"
 	skeleton.add_child(lean)
+	_build_foot_ik()
 
 
-# --- Pé na bola (IK) -----------------------------------------------------------
-## Cada toque na bola leva o PÉ até ela de verdade: uma IK de perna (quadril →
-## tornozelo) é misturada por cima da animação só no instante do toque.
+# --- Pé na bola (IK analítica de 2 ossos via LeanModifier) ----------------------
 
-var _ik := {}           # lado (+1 direito, -1 esquerdo) -> SkeletonIK3D
 var _foot_bones := {}   # lado -> índice do osso do tornozelo
 var _hip_bones := {}    # lado -> índice do osso da coxa
 
@@ -200,55 +232,37 @@ func _build_foot_ik() -> void:
 		var hip := skeleton.find_bone(prefix + "UpperLeg")
 		if foot < 0 or hip < 0:
 			continue
-		var ik := SkeletonIK3D.new()
-		ik.name = prefix + "FootIK"
-		ik.root_bone = prefix + "UpperLeg"
-		ik.tip_bone = prefix + "Foot"
-		ik.use_magnet = true
-		ik.override_tip_basis = true
-		ik.max_iterations = 8
-		ik.influence = 0.0
-		skeleton.add_child(ik)
-		ik.start()
-		ik.active = false
-		_ik[side] = ik
 		_foot_bones[side] = foot
 		_hip_bones[side] = hip
 
 
 ## Leva o tornozelo do pé [param side] até [param world_pos] com peso 0..1
 ## (0 = só a animação). [param forward] orienta o joelho (para a frente).
-func set_foot_target(side: float, world_pos: Vector3, weight: float, forward: Vector3) -> void:
-	if not _ik.has(side):
-		return
-	var ik: SkeletonIK3D = _ik[side]
-	ik.influence = clampf(weight, 0.0, 1.0)
-	ik.active = weight > 0.001 # desligada não custa nada
-	if weight <= 0.001:
-		return
-	# O pé mantém a MESMA rotação da animação (só a posição é corrigida):
-	# sem isso a IK torcia o tornozelo ("pé contorcido").
-	var foot_basis := skeleton.global_transform.basis * skeleton.get_bone_global_pose(_foot_bones[side]).basis
-	ik.target = Transform3D(foot_basis, world_pos)
-	var hip := skeleton.global_transform * skeleton.get_bone_global_pose(_hip_bones[side]).origin
-	ik.magnet = hip + forward * 0.8 + Vector3.DOWN * 0.35
+func set_foot_target(side: float, world_pos: Vector3, weight: float, forward: Vector3, mode: int = 0) -> void:
+	if lean != null:
+		lean.set_foot_ik(side, world_pos, weight, forward, mode)
+		lean.ensure_updated()
 
 
-## Posição (mundo) do tornozelo na ANIMAÇÃO (antes da IK).
+## Posição (mundo) do tornozelo.
 func get_ankle_position(side: float) -> Vector3:
 	if not _foot_bones.has(side):
 		return global_position
+	if lean != null:
+		lean.ensure_updated()
 	return skeleton.global_transform * skeleton.get_bone_global_pose(_foot_bones[side]).origin
 
 
 func get_hip_position(side: float) -> Vector3:
 	if not _hip_bones.has(side):
 		return global_position + Vector3.UP * 0.8
+	if lean != null:
+		lean.ensure_updated()
 	return skeleton.global_transform * skeleton.get_bone_global_pose(_hip_bones[side]).origin
 
 
 func has_foot_ik() -> bool:
-	return not _ik.is_empty()
+	return not _foot_bones.is_empty()
 
 
 const RIVAL_SKIN := Color(0.93, 0.78, 0.66)
