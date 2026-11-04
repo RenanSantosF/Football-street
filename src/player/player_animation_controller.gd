@@ -48,8 +48,7 @@ const ACTION_STATES := {
 	&"header": &"Header",
 	&"head_control": &"HeadControl",
 	&"header_jump": &"HeaderJump",
-	&"tackle": &"StandTackle",
-	&"shoved": &"Shoved",
+	&"tackle": &"PassLong",
 	&"celebrate": &"Celebrate",
 	&"samba": &"Samba",
 	&"defeated": &"Defeated",
@@ -68,7 +67,7 @@ const ACTION_LOGICAL := {
 	&"gk_pass": &"gk_pass",
 	&"trip": &"trip",
 	&"jump": &"jump",
-	&"tackle": &"stand_tackle",
+	&"tackle": &"pass_long",
 	&"turn180": &"turn180",
 	&"turn_l": &"turn_l",
 	&"turn_r": &"turn_r",
@@ -92,7 +91,7 @@ const AUTO_RETURN: Array[StringName] = [
 	&"ShootPowerL", &"Receive", &"Spin", &"GKPass", &"GKCatch", &"Jump", &"Turn180", &"TurnLeft",
 	&"TurnRight", &"RunStop", &"Cut", &"CutL", &"WalkTurn180", &"WalkTurn180L", &"StandTurn",
 	&"StandTurnL", &"WalkStop", &"RecvChest", &"Header", &"HeadControl", &"HeaderJump", &"Burst",
-	&"Stumble", &"Shoved", &"StandTackle", &"StandTackleL", &"GetUpFront", &"GetUpBack",
+	&"Stumble", &"GetUpFront", &"GetUpBack",
 ]
 ## Domínios no ar: depois do contato voltam para a locomoção (o joelho é um
 ## clipe em ciclo, então não acaba sozinho).
@@ -144,7 +143,6 @@ var _rng := RandomNumberGenerator.new()
 
 func setup(p: Player) -> void:
 	player = p
-	_prev_facing = p.facing
 	if not player.action_started.is_connected(_on_action_started):
 		player.action_started.connect(_on_action_started)
 	if not player.ball_touched.is_connected(_on_ball_touched):
@@ -394,7 +392,7 @@ func _on_action_started(kind: StringName) -> void:
 	if not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
-	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip", &"run_pass", &"tackle"] \
+	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip", &"run_pass"] \
 		and _has_state(StringName(String(state_name) + "L"))
 	if mirrored:
 		state_name = StringName(String(state_name) + "L")
@@ -422,10 +420,6 @@ func _on_action_started(kind: StringName) -> void:
 func _on_ball_touched(kind: StringName) -> void:
 	if not is_active():
 		return
-	if player.visual != null and player.visual.has_method("trigger_touch_style"):
-		var f_side := player.ball_control.foot.side if player.ball_control != null else 1.0
-		var ang := player.facing.signed_angle_to(player.ball_control.foot.dir, Vector3.UP) if player.ball_control != null else 0.0
-		player.visual.call("trigger_touch_style", kind, ang, f_side)
 	if kind == &"gk_catch" and _has_state(&"GKCatch"):
 		_action_kind = kind
 		_play_action(&"GKCatch", 0.3)

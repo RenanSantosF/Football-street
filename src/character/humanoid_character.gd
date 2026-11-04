@@ -6,20 +6,26 @@ extends Node3D
 ##   - proporções = escala de alguns ossos; altura = escala do modelo
 ##   - animação = AnimationTree montado pelo AnimationTreeBuilder
 ##
-## Corpos base (BASES): o primeiro disponível na ordem é o padrão. Para um
-## personagem novo (ex.: gerado por IA e rigado no Mixamo), basta colocar o FBX
-## em assets/characters/<nome>/ e registrar aqui. Se nada carregar, cai para o
-## manequim provisório. O modelo olha para -Z, como o resto do jogo.
+## Corpos base (BASES): o primeiro disponível na ordem é o padrão.
+## O modelo olha para -Z, como o resto do jogo.
 
 const BASES := {
-	&"teen_01": {
-		"path": "res://assets/characters/teen_01/teen_01.fbx",
-		## Skin enviada pelo autor, usada exatamente como veio (textura original,
-		## sem troca de pele, roupa, cabelo ou altura).
-		"original_skin": true,
-		"skin_ref": Color(0.479, 0.313, 0.227),
-		"bone_scales": {},
-		"hair_meshes": false,
+	&"superhero": {
+		"path": "res://assets/characters/base/Superhero_Male_FullBody.gltf",
+		"textured": false,
+		"original_skin": false,
+		"body_mesh": "SuperHero_Male",
+		"eyebrows_mesh": "Eyebrows",
+		# Corpo adulto → proporções juvenis atléticas e equilibradas.
+		"bone_scales": {
+			&"Chest": 0.96,
+			&"UpperChest": 0.95,
+			&"LeftUpperArm": 0.98,
+			&"RightUpperArm": 0.98,
+			&"Neck": 0.96,
+			&"Head": 1.08,
+		},
+		"hair_meshes": true,
 	},
 	&"ual_mannequin": {
 		"path": "res://assets/animations/ual/AnimationLibrary_Godot_Standard.gltf",
@@ -29,9 +35,7 @@ const BASES := {
 		"hair_meshes": false,
 	},
 }
-## Usa teen_01 quando o FBX estiver no disco; caso contrário, usa o esqueleto
-## humanoide padrão da UAL (53 ossos) para manter animações e IK completas.
-const BASE_ORDER: Array[StringName] = [&"teen_01", &"ual_mannequin"]
+const BASE_ORDER: Array[StringName] = [&"superhero", &"ual_mannequin"]
 
 const HAIR_MODELS: Array[String] = [
 	"res://assets/characters/hair/Hair_SimpleParted.gltf",
@@ -71,8 +75,6 @@ func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
 		placeholder.apply_appearance(a, team, role)
 		return
 	if BASES[base_id].get("original_skin", false):
-		# Skin original. Só o time rival recebe pele branca (para diferenciar);
-		# bermuda, cabelo e o resto continuam exatamente iguais.
 		if team == Team.SKINS:
 			_apply_rival_skin()
 		return
@@ -94,11 +96,6 @@ func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float)
 		lean.amount = clampf(run_lean, 0.0, 1.0)
 		lean.accel_lean = clampf(accel_pitch, -1.0, 1.0)
 		lean.turn_lean = clampf(turn_bank, -1.0, 1.0)
-
-
-func trigger_touch_style(style: StringName, dir_angle: float = 0.0, foot_side: float = 1.0) -> void:
-	if lean != null:
-		lean.trigger_touch_style(style, dir_angle, foot_side)
 
 
 func get_locomotion_scale() -> float:
@@ -221,6 +218,8 @@ func _build(wanted: StringName) -> void:
 	lean = LeanModifier.new()
 	lean.name = "Lean"
 	skeleton.add_child(lean)
+	if anim_tree.has_signal("mixer_applied"):
+		anim_tree.mixer_applied.connect(lean.notify_animation_applied)
 	_build_foot_ik()
 
 
@@ -283,10 +282,10 @@ func _apply_rival_skin() -> void:
 		m.set_shader_parameter("albedo_tex", original.albedo_texture)
 	m.set_shader_parameter("skin_ref", BASES[base_id].get("skin_ref", Color(0.479, 0.313, 0.227)))
 	m.set_shader_parameter("skin_color", RIVAL_SKIN)
-	m.set_shader_parameter("hair_dark", 0.0)       # cabelo intocado
+	m.set_shader_parameter("hair_dark", 0.0)
 	m.set_shader_parameter("has_shirt", 0.0)
-	m.set_shader_parameter("recolor_shorts", 0.0)  # bermuda jeans original
-	m.set_shader_parameter("has_shoes", 0.0)       # descalço, como a skin
+	m.set_shader_parameter("recolor_shorts", 0.0)
+	m.set_shader_parameter("has_shoes", 0.0)
 	m.set_shader_parameter("dirt", 0.0)
 	body_mesh.material_override = m
 
