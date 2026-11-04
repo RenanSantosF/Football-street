@@ -85,11 +85,13 @@ func set_run_lean(value: float) -> void:
 		lean.amount = clampf(value, 0.0, 1.0)
 
 
-func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float) -> void:
+func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float, feint: float = 0.0, gingado: float = 0.0) -> void:
 	if lean != null:
 		lean.amount = clampf(run_lean, 0.0, 1.0)
 		lean.accel_lean = clampf(accel_pitch, -1.0, 1.0)
 		lean.turn_lean = clampf(turn_bank, -1.0, 1.0)
+		lean.feint_lean = clampf(feint, -1.0, 1.0)
+		lean.dribble_gingado = clampf(gingado, 0.0, 1.0)
 
 
 func set_ball_gaze(ball_world_pos: Vector3, weight: float) -> void:

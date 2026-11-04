@@ -21,7 +21,7 @@ const KICK_MAX_HEIGHT := 0.9
 const TOUCH_REACH := 0.5
 ## Onde a bola fica no toque de condução: no caminho do pé da passada
 ## (medido na animação: o tornozelo chega ~0,14 m à frente do corpo).
-const FOOT_DISTANCE := 0.36
+const FOOT_DISTANCE := 0.30
 const LOSE_RADIUS := 2.5
 const BODY_RADIUS := 0.3
 const GK_BODY_RADIUS := 0.55
@@ -510,7 +510,7 @@ func _conduct(delta: float) -> void:
 var _ank_prev := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
 var _ank_vel := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
 var _toe_prev := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
-const TAP_COOLDOWN := 0.14
+const TAP_COOLDOWN := 0.09
 
 
 func _track_feet(delta: float) -> void:
@@ -564,37 +564,37 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 	var ref := pv.normalized() if speed > 0.5 else player.facing
 	var w := want.normalized() if want.length() >= 0.15 else ref
 	var turn_ang := ref.signed_angle_to(w, Vector3.UP)
-	var turning := want.length() >= 0.15 and absf(turn_ang) > deg_to_rad(20.0)
+	var turning := want.length() >= 0.15 and absf(turn_ang) > deg_to_rad(14.0)
 	var preferred_foot := _choose_conduction_foot(w, ref, turn_ang, off)
 	# 1. Se o pé da animação já encostou na bola, dispara o contato imediato com IK.
 	for sd in [1.0, -1.0]:
 		if _foot_hits_ball(sd, bv):
 			var mode_hit := _select_conduction_mode(sd, w, pv)
 			_foot_side = sd
-			foot.begin(sd, w, 0.016, mode_hit, func(): _tap(want, pv, sd), 0.035)
+			foot.begin(sd, w, 0.015, mode_hit, func(): _tap(want, pv, sd), 0.032)
 			return
 	# 2. Alcance ativo sincronizado com a passada: quando a bola está na zona de
 	# condução à frente dos pés (ou quando o jogador pede mudança de direção),
 	# escolhe o pé anatomicamente ideal (alternando os pés na reta, ou usando
 	# chapa do pé de fora / três dedos do pé de dentro nas curvas) e leva o pé até a bola.
-	if d > 0.56:
+	if d > 0.64:
 		return
-	var in_front := off.dot(ref) > -0.06 or (turning and off.dot(player.facing) > -0.05)
+	var in_front := off.dot(ref) > -0.08 or (turning and off.dot(player.facing) > -0.08)
 	if not in_front:
 		return
-	var cadence := clampf(0.24 - speed * 0.015, 0.15, 0.24)
+	var cadence := clampf(0.18 - speed * 0.012, 0.11, 0.18)
 	if turning:
-		cadence = 0.14
-	if _since_touch < cadence and d > 0.36:
+		cadence = 0.09
+	if _since_touch < cadence and d > 0.32 and not turning:
 		return
 	var chosen_foot := preferred_foot
 	var f_dist := foot.foot_distance(chosen_foot)
-	if f_dist > 0.48 and not turning and d > 0.38:
+	if f_dist > 0.54 and not turning and d > 0.36:
 		return
 	var touch_mode := _select_conduction_mode(chosen_foot, w, pv)
-	var lead_t := clampf((f_dist - 0.14) / 3.8, 0.025, 0.055)
+	var lead_t := clampf((f_dist - 0.12) / 4.2, 0.022, 0.048)
 	_foot_side = chosen_foot
-	foot.begin(chosen_foot, w, lead_t, touch_mode, func(): _tap(want, pv, chosen_foot), 0.04)
+	foot.begin(chosen_foot, w, lead_t, touch_mode, func(): _tap(want, pv, chosen_foot), 0.038)
 
 
 func _choose_conduction_foot(w: Vector3, ref: Vector3, turn_ang: float, off: Vector3) -> float:
@@ -634,7 +634,7 @@ func _select_conduction_mode(foot_side: float, w: Vector3, pv: Vector3) -> FootC
 ## Distância extra que a bola corre à frente do pé a cada toque (m): perto
 ## andando, mais longa correndo ("tapas").
 static func tap_lead(v_target: float) -> float:
-	return lerpf(0.12, 0.58, clampf((v_target - 1.2) / 3.0, 0.0, 1.0))
+	return lerpf(0.07, 0.30, clampf((v_target - 1.1) / 3.2, 0.0, 1.0))
 
 
 func _top_speed_with_ball() -> float:
@@ -659,17 +659,19 @@ func _tap(want: Vector3, pv: Vector3, foot_side: float) -> void:
 		var ang := ref.signed_angle_to(w, Vector3.UP) # + = esquerda
 		var left := ang > 0.0
 		var outer := (left and foot_side > 0.0) or (not left and foot_side < 0.0) or foot_side == 0.0
-		var lim := deg_to_rad(75.0) if (outer or absf(ang) < deg_to_rad(20.0)) else deg_to_rad(68.0)
+		var lim := deg_to_rad(88.0) if (outer or absf(ang) < deg_to_rad(20.0)) else deg_to_rad(80.0)
 		var dir := ref.rotated(Vector3.UP, clampf(ang, -lim, lim))
-		if absf(ang) > deg_to_rad(20.0):
+		var is_cut := absf(ang) > deg_to_rad(18.0)
+		if is_cut:
 			kind = &"side_touch"
 		var v_t := maxf(want.length() * _top_speed_with_ball(), 0.9)
-		var u := sqrt(2.0 * a * tap_lead(v_t))
+		var lead_dist := tap_lead(v_t) * (0.72 if is_cut else 1.0)
+		var u := sqrt(2.0 * a * lead_dist)
 		vel = dir * (v_t + u)
-		# leva a bola para a linha do corpo (entre os pés)
+		# leva a bola para a linha do corpo (entre os pés) com precisão nas ajeitadas
 		var right := dir.cross(Vector3.UP)
 		var lat := ball_offset().dot(right)
-		vel -= right * clampf(lat * 1.5, -0.6, 0.6)
+		vel -= right * clampf(lat * (2.6 if is_cut else 1.8), -0.95, 0.95)
 	ball.touch(Vector3(vel.x, 0.0, vel.z), player)
 	_since_touch = 0.0
 	_touch_count += 1
@@ -756,8 +758,8 @@ func approach_point(w: Vector3) -> Vector3:
 	#  senão passa do lado sem o pé alcançar)
 	var in_front_of_body := off.dot(player.facing) > 0.12
 	var lat_b := absf(off.dot(player.facing.cross(Vector3.UP)))
-	# (sem esticar a perna, "no pé" é só a bola na frente, perto da linha dos pés)
-	if d <= 0.48 and ahead > -0.3 and off.dot(player.facing) > 0.1 and lat_b < 0.22:
+	# (sem esticar a perna, "no pé" é a bola perto da linha dos pés — o pé ajeita na hora sem precisar rodear)
+	if d <= 0.58 and ahead > -0.40 and off.dot(player.facing) > 0.02 and lat_b < 0.30:
 		return Vector3.INF # no pé (à frente ou do lado): o toque de lado resolve NA HORA
 	if d <= 0.45 and in_front_of_body and ahead < -0.35:
 		return Vector3.INF # bola no pé e pediu o contrário: puxada de sola
