@@ -174,7 +174,7 @@ func update(delta: float) -> void:
 	_apply()
 
 
-const BODY_SHIFT_MAX := 0.05
+const BODY_SHIFT_MAX := 0.045
 ## IK analítica de 2 ossos (sem torção de coxa/joelho) ligada no LeanModifier.
 const USE_LEG_IK := true
 const TOL_INSIDE := 0.18
@@ -182,10 +182,10 @@ const TOL_SOLE := 0.24
 const TOL_CUSHION := 0.22
 const WAIT_WINDOW := 0.3
 const BODY_ADJUST_SPEED := 1.4
-const IK_FULL := 0.38
-const IK_MAX := 0.68
-const IK_FULL_SOLE := 0.44
-const IK_MAX_SOLE := 0.72
+const IK_FULL := 0.32
+const IK_MAX := 0.58
+const IK_FULL_SOLE := 0.36
+const IK_MAX_SOLE := 0.62
 
 
 func _ik_cap() -> float:
@@ -199,17 +199,23 @@ func _ik_cap() -> float:
 	var rel := _target - player.global_position
 	var fwd := rel.dot(player.facing)
 	var lat_s := rel.dot(player.facing.cross(Vector3.UP)) * side
-	var crossing := lat_s < -0.24
-	if mode == Mode.CUSHION and fwd > -0.25 and not crossing:
-		full = 0.44
-		mx = 0.74
-	elif mode == Mode.SOLE and fwd > -0.25 and not crossing:
+	# Impede que a perna atravesse o eixo central do corpo.
+	var crossing := lat_s < -0.18
+	if crossing or fwd < -0.24:
+		return 0.0
+	if mode == Mode.CUSHION:
+		full = 0.40
+		mx = 0.68
+	elif mode == Mode.SOLE:
 		full = IK_FULL_SOLE
 		mx = IK_MAX_SOLE
-	elif mode in [Mode.INSIDE, Mode.OUTSIDE] and not crossing:
-		full = 0.40
-		mx = 0.70
-	return clampf(1.0 - (disp - full) / maxf(mx - full, 0.05), 0.0, 1.0)
+	elif mode in [Mode.INSIDE, Mode.OUTSIDE]:
+		full = 0.38
+		mx = 0.64
+	elif mode == Mode.KICK:
+		full = 0.44
+		mx = 0.74
+	return clampf(1.0 - (disp - full) / maxf(mx - full, 0.05), 0.0, 0.92)
 
 
 ## Distância (no chão) entre o tornozelo da ANIMAÇÃO do pé [param foot] e o
@@ -287,7 +293,7 @@ func _target_now(t: float) -> Vector3:
 		var hip: Vector3 = v.call("get_hip_position", side)
 		var to := p - hip
 		if to.length() > MAX_REACH:
-			_reachable = to.length() < MAX_REACH + 0.22
+			_reachable = to.length() < MAX_REACH + 0.20
 			p = hip + to.normalized() * MAX_REACH
 	return p
 
@@ -296,22 +302,22 @@ func _apply() -> void:
 	var v := player.visual
 	if v == null or not v.has_method("set_foot_target"):
 		return
-	var cap := _ik_cap() if phase == Phase.REACH or phase == Phase.HOLD else 1.0
+	var cap := _ik_cap() if phase == Phase.REACH or phase == Phase.HOLD else 0.92
 	var dt := get_physics_delta()
 	if phase == Phase.HOLD:
-		_shown[side] = maxf(cap, 0.85)
+		_shown[side] = cap
 	elif phase == Phase.REACH:
-		_shown[side] = maxf(_shown[side], _weight * maxf(cap, 0.75))
+		_shown[side] = _weight * cap
 	else:
-		_shown[side] = move_toward(_shown[side], _weight * cap, dt * 12.0)
-	_shown[-side] = move_toward(_shown[-side], 0.0, dt * 12.0)
+		_shown[side] = move_toward(_shown[side], _weight * cap, dt * 11.0)
+	_shown[-side] = move_toward(_shown[-side], 0.0, dt * 11.0)
 	var want_shift := Vector3.ZERO
 	var sw := _weight if phase != Phase.IDLE else 0.0
-	if sw > 0.0:
+	if sw > 0.0 and cap > 0.05:
 		var a0: Vector3 = _raw_ankle(side) - _shift
 		var dlt := Vector3(_target.x - a0.x, 0.0, _target.z - a0.z)
 		want_shift = dlt.limit_length(BODY_SHIFT_MAX) * sw
-	_shift = _shift.move_toward(want_shift, dt * 2.4)
+	_shift = _shift.move_toward(want_shift, dt * 2.2)
 	v.position = player.global_transform.basis.inverse() * _shift
 	v.call("set_foot_target", side, _target, _shown[side], player.facing, int(mode))
 	v.call("set_foot_target", -side, _last_target[-side], _shown[-side], player.facing, int(mode))

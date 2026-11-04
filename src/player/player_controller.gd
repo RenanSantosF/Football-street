@@ -49,18 +49,18 @@ const TURN_SPEED_UP := 1.35
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 3.2
-## Velocidade máxima correndo (CORRER).
-@export var sprint_speed := 5.5
+@export var jog_speed := 3.05
+## Velocidade máxima correndo (CORRER) — cadenciada e natural p/ 14 anos.
+@export var sprint_speed := 5.2
 ## Velocidade máxima conduzindo a bola em velocidade.
-@export var speed_dribbling := 4.3
-@export var ball_speed_factor := 0.92
-@export var acceleration := 11.0
-@export var deceleration := 9.0
+@export var speed_dribbling := 4.2
+@export var ball_speed_factor := 0.91
+@export var acceleration := 9.8
+@export var deceleration := 8.2
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 8.0
+@export var turn_speed := 7.6
 ## Mais lento com a bola: dá peso ao girar (lerp_angle).
-@export var turn_speed_with_ball := 5.0
+@export var turn_speed_with_ball := 4.8
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -250,6 +250,7 @@ func _physics_process(delta: float) -> void:
 			_brake(delta, deceleration)
 
 	ball_control.physics_update(delta)
+	_update_body_contest(delta)
 	velocity.y -= _gravity * delta
 	# O CORPO se ajusta para o pé da passada chegar na bola (sem esticar a
 	# perna): um deslocamento pequeno e temporário, a passada acompanha.
@@ -352,7 +353,14 @@ func _update_move(delta: float) -> void:
 			# acompanha a velocidade da bola e ainda diminui a distância (alcança)
 			desired = (bv + to / 0.35).limit_length(sprint_speed)
 	var hv := get_flat_velocity()
-	# Acelera mais devagar do que freia; inverter direção passa por uma freada.
+	# Inércia em curvas rápidas (sem bola): mudar bruscamente de direção em alta
+	# velocidade reduz levemente a velocidade desejada enquanto os pés ajustam o apoio.
+	if not has_ball and input.length() > 0.2 and hv.length() > 2.8:
+		var turn_cos := hv.normalized().dot(input.normalized())
+		if turn_cos < 0.7:
+			var curve_damp := lerpf(0.84, 1.0, clampf((turn_cos + 0.3) / 1.0, 0.0, 1.0))
+			desired *= curve_damp
+	# Acelera progressivamente; inverter direção passa por uma freada com peso.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
 	if has_ball and ball_control.is_reverse_pulling():
@@ -467,14 +475,42 @@ func _update_facing(delta: float) -> void:
 			# um ajuste lento, que a passada acompanha.
 			var da := wrapf(a - cur, -PI, PI)
 			a = cur + clampf(da, -IDLE_TURN_RATE * delta, IDLE_TURN_RATE * delta)
-		# nunca gira mais rápido que um corpo de verdade (sem "estalo" de pose)
+		# Em alta velocidade, girar o corpo exige mais espaço (inércia angular).
 		var max_rate := MAX_TURN_RATE_BALL if ball_control.has_ball() else MAX_TURN_RATE
+		if hv.length() > 2.6 and state == State.MOVE and _pivot_dir == Vector3.ZERO and not ball_control.is_reverse_pulling():
+			var hs_factor := clampf((hv.length() - 2.6) / 2.8, 0.0, 1.0)
+			max_rate *= lerpf(1.0, 0.72, hs_factor)
 		if _pivot_dir != Vector3.ZERO or state == State.ACTION or ball_control.is_reverse_pulling():
 			max_rate *= 1.5
 		var step := wrapf(a - cur, -PI, PI)
 		a = cur + clampf(step, -max_rate * delta, max_rate * delta)
 		facing = Vector3(-sin(a), 0.0, -cos(a))
 	rotation.y = atan2(-facing.x, -facing.z)
+
+
+## Disputa física ombro a ombro: quando dois jogadores de times opostos disputam
+## espaço bem próximos da bola, há resistência corporal natural proporcional à velocidade.
+func _update_body_contest(delta: float) -> void:
+	if state != State.MOVE or is_goalkeeper():
+		return
+	for opp in get_opponents():
+		if not opp.active or opp.state != State.MOVE:
+			continue
+		var diff := global_position - opp.global_position
+		diff.y = 0.0
+		var dist := diff.length()
+		if dist < 0.05 or dist > 0.64:
+			continue
+		var near_ball := ball != null and (ball_control.ball_distance() < 1.8 or opp.ball_control.ball_distance() < 1.8)
+		if not near_ball:
+			continue
+		var n := diff / dist
+		var rel_v := opp.get_flat_velocity() - get_flat_velocity()
+		var closing := rel_v.dot(n)
+		if closing > 0.2:
+			var push := n * minf(closing * 0.45, 2.2) * delta * 12.0
+			velocity.x += push.x
+			velocity.z += push.z
 
 
 static func _rotate_flat(from: Vector3, to: Vector3, max_angle: float) -> Vector3:
@@ -557,9 +593,9 @@ func _update_actions(delta: float) -> void:
 				if t2 != null:
 					_begin_action(&"tackle", 0.18, 0.42, 0.0, _buffer_aim, null, 0.8)
 					_action_face = _flat_dir_to(ball.global_position)
-					# o pé vai DE VERDADE na bola (o corpo dá o passo junto)
+					# o pé vai DE VERDADE na bola com a parte interna (bote controlado)
 					ball_control.foot.begin(ball_control.foot.nearest_foot(), _action_face, 0.18,
-						FootContact.Mode.KICK, Callable(), 0.08)
+						FootContact.Mode.INSIDE, Callable(), 0.08)
 					_buffer_timer = 0.0
 					_buffer_action = PlayerIntent.Action.NONE
 				return
@@ -780,11 +816,13 @@ func _update_action(delta: float) -> void:
 		# para que no contato ela esteja ao alcance (sem "furar").
 		var remaining := maxf(_action_contact - _action_time, 0.05)
 		if not _kick_ik and remaining <= 0.12:
-			# O pé que chuta vai exatamente até a bola no instante do contato.
+			# O pé que chuta vai até a bola: passe curto / chute colocado usa chapa (INSIDE);
+			# lançamento e chute forte usam peito do pé (KICK).
 			_kick_ik = true
 			var kf := anim_controller.kick_foot(_action_kind)
 			var kd := _action_face if _action_face != Vector3.ZERO else facing
-			ball_control.foot.begin(kf if kf != 0.0 else 1.0, kd, remaining, FootContact.Mode.KICK, Callable(), 0.06)
+			var k_mode := FootContact.Mode.INSIDE if (_action_kind in [&"pass", &"chip"] or (_action_kind == &"shoot" and _action_power < 0.45)) else FootContact.Mode.KICK
+			ball_control.foot.begin(kf if kf != 0.0 else 1.0, kd, remaining, k_mode, Callable(), 0.06)
 		var plant := ball_control.ball_offset() + ball.flat_velocity() * remaining
 		var to_ball_dir := plant.normalized() if plant.length() > 0.01 else facing
 		# Pé de apoio ao lado da bola: quem chuta de direita deixa a bola à direita.

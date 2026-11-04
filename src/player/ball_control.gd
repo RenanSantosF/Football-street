@@ -558,27 +558,27 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 		if ball_distance() < 0.42:
 			_tap(want, pv, 0.0)
 		return
+	var off := ball_offset()
+	var d := off.length()
+	var speed := pv.length()
+	var ref := pv.normalized() if speed > 0.5 else player.facing
+	var w := want.normalized() if want.length() >= 0.15 else ref
+	var turn_ang := ref.signed_angle_to(w, Vector3.UP)
+	var turning := want.length() >= 0.15 and absf(turn_ang) > deg_to_rad(20.0)
+	var preferred_foot := _choose_conduction_foot(w, ref, turn_ang, off)
 	# 1. Se o pé da animação já encostou na bola, dispara o contato imediato com IK.
 	for sd in [1.0, -1.0]:
 		if _foot_hits_ball(sd, bv):
-			var w_dir := want.normalized() if want.length() >= 0.15 else (pv.normalized() if pv.length() > 0.3 else player.facing)
-			var mode_hit := _select_conduction_mode(sd, w_dir, pv)
+			var mode_hit := _select_conduction_mode(sd, w, pv)
 			_foot_side = sd
-			foot.begin(sd, w_dir, 0.016, mode_hit, func(): _tap(want, pv, sd), 0.035)
+			foot.begin(sd, w, 0.016, mode_hit, func(): _tap(want, pv, sd), 0.035)
 			return
 	# 2. Alcance ativo sincronizado com a passada: quando a bola está na zona de
 	# condução à frente dos pés (ou quando o jogador pede mudança de direção),
 	# escolhe o pé anatomicamente ideal (alternando os pés na reta, ou usando
 	# chapa do pé de fora / três dedos do pé de dentro nas curvas) e leva o pé até a bola.
-	var off := ball_offset()
-	var d := off.length()
 	if d > 0.56:
 		return
-	var speed := pv.length()
-	var ref := pv.normalized() if speed > 0.5 else player.facing
-	var w := want.normalized() if want.length() >= 0.15 else ref
-	var turn_ang := ref.signed_angle_to(w, Vector3.UP)
-	var turning := want.length() >= 0.15 and absf(turn_ang) > deg_to_rad(18.0)
 	var in_front := off.dot(ref) > -0.06 or (turning and off.dot(player.facing) > -0.05)
 	if not in_front:
 		return
@@ -587,7 +587,7 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 		cadence = 0.14
 	if _since_touch < cadence and d > 0.36:
 		return
-	var chosen_foot := _choose_conduction_foot(w, ref, turn_ang, off)
+	var chosen_foot := preferred_foot
 	var f_dist := foot.foot_distance(chosen_foot)
 	if f_dist > 0.48 and not turning and d > 0.38:
 		return
@@ -605,9 +605,9 @@ func _choose_conduction_foot(w: Vector3, ref: Vector3, turn_ang: float, off: Vec
 		# Curva p/ esquerda: se a bola já está bem à esquerda, usa 3 dedos do pé esquerdo;
 		# caso contrário, usa a chapa do pé direito (pé de fora) para empurrar na nova direção.
 		if turn_left:
-			return -1.0 if lat < -0.10 else 1.0
+			return -1.0 if lat < -0.14 else 1.0
 		else:
-			return 1.0 if lat > 0.10 else -1.0
+			return 1.0 if lat > 0.14 else -1.0
 	if absf(lat) > 0.11:
 		return signf(lat)
 	# Em linha reta: alterna os pés naturalmente se ambos estiverem a alcance similar.
@@ -659,7 +659,7 @@ func _tap(want: Vector3, pv: Vector3, foot_side: float) -> void:
 		var ang := ref.signed_angle_to(w, Vector3.UP) # + = esquerda
 		var left := ang > 0.0
 		var outer := (left and foot_side > 0.0) or (not left and foot_side < 0.0) or foot_side == 0.0
-		var lim := deg_to_rad(72.0) if (outer or absf(ang) < deg_to_rad(20.0)) else deg_to_rad(38.0)
+		var lim := deg_to_rad(75.0) if (outer or absf(ang) < deg_to_rad(20.0)) else deg_to_rad(68.0)
 		var dir := ref.rotated(Vector3.UP, clampf(ang, -lim, lim))
 		if absf(ang) > deg_to_rad(20.0):
 			kind = &"side_touch"

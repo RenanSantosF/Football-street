@@ -10,22 +10,14 @@ extends Node3D
 ## O modelo olha para -Z, como o resto do jogo.
 
 const BASES := {
-	&"superhero": {
-		"path": "res://assets/characters/base/Superhero_Male_FullBody.gltf",
-		"textured": false,
-		"original_skin": false,
-		"body_mesh": "SuperHero_Male",
-		"eyebrows_mesh": "Eyebrows",
-		# Corpo adulto → proporções juvenis atléticas e equilibradas.
-		"bone_scales": {
-			&"Chest": 0.96,
-			&"UpperChest": 0.95,
-			&"LeftUpperArm": 0.98,
-			&"RightUpperArm": 0.98,
-			&"Neck": 0.96,
-			&"Head": 1.08,
-		},
-		"hair_meshes": true,
+	&"teen_01": {
+		"path": "res://assets/characters/teen_01/teen_01.fbx",
+		## Skin enviada pelo autor, usada exatamente como veio (textura original,
+		## sem troca de pele, roupa, cabelo ou altura).
+		"original_skin": true,
+		"skin_ref": Color(0.479, 0.313, 0.227),
+		"bone_scales": {},
+		"hair_meshes": false,
 	},
 	&"ual_mannequin": {
 		"path": "res://assets/animations/ual/AnimationLibrary_Godot_Standard.gltf",
@@ -35,7 +27,9 @@ const BASES := {
 		"hair_meshes": false,
 	},
 }
-const BASE_ORDER: Array[StringName] = [&"superhero", &"ual_mannequin"]
+## Usa teen_01 quando o FBX estiver no disco; caso contrário, usa o esqueleto
+## humanoide padrão da UAL (53 ossos) para manter animações e IK completas.
+const BASE_ORDER: Array[StringName] = [&"teen_01", &"ual_mannequin"]
 
 const HAIR_MODELS: Array[String] = [
 	"res://assets/characters/hair/Hair_SimpleParted.gltf",
@@ -155,6 +149,8 @@ func _build(wanted: StringName) -> void:
 	var scene: PackedScene = null
 	for id in order:
 		var path: String = BASES[id]["path"]
+		if OS.has_feature("editor") and not FileAccess.file_exists(path):
+			continue
 		if ResourceLoader.exists(path):
 			scene = load(path) as PackedScene
 			if scene != null:
