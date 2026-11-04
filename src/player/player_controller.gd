@@ -339,13 +339,12 @@ func _update_move(delta: float) -> void:
 			if along_b < 0.12 and desired.length() > bspeed + 0.8:
 				desired = desired.normalized() * maxf(bspeed + 0.8, 0.8)
 	elif has_ball:
-		# Soltou o analógico: vai até a bola (se ela rolou à frente) e para com ela.
+		# Soltou o analógico: freia firme no lugar e estabiliza o corpo junto à bola.
 		var off := ball_control.ball_offset()
 		var bv := ball.flat_velocity()
-		if off.length() < 0.26 and bv.length() < 0.3:
-			# bola embaixo/encostada no pé: um passinho para trás (o corpo se
-			# ajusta, a bola não é empurrada)
-			desired = -off.normalized() * 0.5 if off.length() > 0.02 else -facing * 0.5
+		if off.length() < 0.32 and bv.length() < 0.35:
+			# bola já dominada junto ao pé: para completamente no lugar sem deslizar para trás
+			desired = Vector3.ZERO
 		elif off.length() > 0.45 and not ball_control.is_trapping():
 			var stop_at := ball.predict_ground_position(0.3) - facing * 0.3
 			var to := stop_at - global_position

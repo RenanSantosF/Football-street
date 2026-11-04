@@ -325,7 +325,87 @@ func _fix_rest_offset() -> void:
 			rest.origin += offset
 			skeleton.set_bone_rest(bone, rest)
 			skeleton.set_bone_pose_position(bone, rest.origin)
+		break
+	_fix_arm_binds()
+
+
+## Quando a malha original foi modelada em A-Pose mas o esqueleto humanoide
+## usa T-Pose para animações compartilhadas, os braços dobram para dentro das
+## costelas. Esta função transforma os vértices dos membros superiores da A-Pose
+## para a T-Pose e atualiza o Skin com a matriz exata de descanso, deixando os
+## braços e mãos 100% perfeitos ao lado do corpo em qualquer animação.
+func _fix_arm_binds() -> void:
+	if body_mesh == null or body_mesh.skin == null or body_mesh.mesh == null:
 		return
+	var skin := body_mesh.skin
+	var mesh := body_mesh.mesh as ArrayMesh
+	if mesh == null:
+		return
+	var bone_xforms: Array[Transform3D] = []
+	var has_diff := false
+	for i in skin.get_bind_count():
+		var bname := skin.get_bind_name(i)
+		var bidx := skeleton.find_bone(bname)
+		if bidx >= 0:
+			var rest := skeleton.get_bone_global_rest(bidx)
+			var bind := skin.get_bind_pose(i)
+			var m := rest * bind
+			bone_xforms.append(m)
+			if (m.origin.length_squared() > 0.0004 or absf(m.basis.get_rotation_quaternion().w - 1.0) > 0.01) \
+					and (String(bname).contains("Arm") or String(bname).contains("Hand") or String(bname).contains("Index") \
+					or String(bname).contains("Middle") or String(bname).contains("Ring") or String(bname).contains("Pinky") \
+					or String(bname).contains("Little") or String(bname).contains("Thumb")):
+				has_diff = true
+		else:
+			bone_xforms.append(Transform3D.IDENTITY)
+	if not has_diff:
+		return
+
+	var arrays := mesh.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+	var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+	var has_normals := normals.size() == verts.size()
+
+	for i in range(0, verts.size()):
+		var v := verts[i]
+		var n := normals[i] if has_normals else Vector3.UP
+		var v_new := Vector3.ZERO
+		var n_new := Vector3.ZERO
+		var total_w := 0.0
+		for j in 4:
+			var b := bones[i * 4 + j]
+			var w := weights[i * 4 + j]
+			if w > 0.0001 and b < bone_xforms.size():
+				var m: Transform3D = bone_xforms[b]
+				v_new += (m * v) * w
+				if has_normals:
+					n_new += (m.basis * n) * w
+				total_w += w
+		if total_w > 0.0001:
+			verts[i] = v_new / total_w
+			if has_normals and n_new.length_squared() > 0.0001:
+				normals[i] = n_new.normalized()
+
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	if has_normals:
+		arrays[Mesh.ARRAY_NORMAL] = normals
+
+	var mat := mesh.surface_get_material(0)
+	var new_mesh := ArrayMesh.new()
+	new_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	if mat != null:
+		new_mesh.surface_set_material(0, mat)
+	body_mesh.mesh = new_mesh
+
+	var new_skin := skin.duplicate() as Skin
+	for i in new_skin.get_bind_count():
+		var bname := new_skin.get_bind_name(i)
+		var bidx := skeleton.find_bone(bname)
+		if bidx >= 0:
+			new_skin.set_bind_pose(i, skeleton.get_bone_global_rest(bidx).affine_inverse())
+	body_mesh.skin = new_skin
 
 
 func _apply_body_variation(a: CharacterAppearance) -> void:

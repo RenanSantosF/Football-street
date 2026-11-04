@@ -205,29 +205,33 @@ func physics_update(delta: float) -> void:
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
 	_signed_turn = lerpf(_signed_turn, signed_ang, 1.0 - exp(-8.0 * delta))
 	var raw_accel := (v.length() - _prev_speed) / maxf(delta, 0.001)
-	_accel_lean = lerpf(_accel_lean, clampf(raw_accel / 8.0, -1.0, 1.0), 1.0 - exp(-8.0 * delta))
-	# (girando parado: passos curtos, sem "andar no lugar")
-	var raw := maxf(v.length(), minf(_turn_rate * 0.12, 0.3)) / k
-	# Passada suave: a velocidade que alimenta a animação muda devagar (sem
-	# pé "teleportando" quando o corpo freia/acelera um pouco).
+	var v_len := v.length()
+	# Girando parado: só afeta a passada se houver deslocamento real ou giro muito rápido,
+	# e nunca aciona o clipe de caminhada completa quando o jogador está estático (elimina o moonwalk).
+	var raw: float = v_len / k
+	if v_len < 0.15:
+		raw = 0.0
+	elif v_len < 0.45 and _turn_rate > 1.8:
+		raw = maxf(raw, 0.35)
+
+	# Passada suave: a velocidade que alimenta a animação muda devagar e de forma contínua
 	_stride = lerpf(_stride, raw, 1.0 - exp(-14.0 * delta))
 	var has_b := player.ball_control.has_ball()
-	var pts: Array = AnimationCatalog.LOCOMOTION_BALL_POINTS if has_b else AnimationCatalog.LOCOMOTION_POINTS
 	var pos := 0.0
 	var time_scale := 1.0
-	if _stride >= 0.06:
-		pos = _pick_stride_clip(pts, _stride)
-		time_scale = clampf(_stride / pos, 0.14, 1.55)
+
+	if _stride > 0.08:
+		# Posição contínua no BlendSpace2D (Godot interpola naturalmente entre idle, walk, jog, run e sprint)
+		pos = clampf(_stride, 0.0, 4.35)
+		# Escala de tempo mantém cadência anatômica natural sem passar em câmera lenta artificial
+		time_scale = clampf(_stride / maxf(pos, 0.8), 0.78, 1.35)
+
 	_clip_x = pos
-	# troca de clipe com mistura curta (~0,1 s)
-	if pos == 0.0 or _blend_pos == 0.0 or _blend_pos < 1.0:
-		_blend_pos = move_toward(_blend_pos, pos, delta * 8.0)
-	else:
-		# troca de clipe em ~0,2 s (sem "estalo" de pose)
-		_blend_pos = lerpf(_blend_pos, pos, 1.0 - exp(-14.0 * delta))
-		if absf(_blend_pos - pos) < 0.01:
-			_blend_pos = pos
-	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-16.0 * delta))
+	_blend_pos = lerpf(_blend_pos, pos, 1.0 - exp(-12.0 * delta))
+	if absf(_blend_pos - pos) < 0.01:
+		_blend_pos = pos
+
+	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-14.0 * delta))
 	var ball_target := 1.0 if has_b else 0.0
 	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))

@@ -133,10 +133,10 @@ const CLIPS := {
 	&"strafe_r_fast": &"m_strafe_r_fast/mixamo_com",
 	&"diag_l": &"m_diag_l/mixamo_com",
 	&"diag_r": &"m_diag_r/mixamo_com",
-	&"pass_short": &"r_side_kick/seg_pass",
+	&"pass_short": &"m_pass_short/mixamo_com",
 	&"pass_long": &"m_pass_long/mixamo_com",
 	&"shoot": &"m_shoot/mixamo_com",
-	&"shoot_power": &"r_power_kick/seg_kick",
+	&"shoot_power": &"m_shoot_power/mixamo_com",
 	&"receive": &"m_receive/mixamo_com",
 	&"receive_ball": &"m_receive_ball/mixamo_com",
 	&"spin": &"m_spin/mixamo_com",
@@ -163,7 +163,7 @@ const CLIPS := {
 	&"gk_dive": &"m_gk_dive/mixamo_com",
 	&"gk_pass": &"m_gk_pass/mixamo_com",
 	&"gk_place": &"m_gk_place/mixamo_com",
-	&"kick_up": &"r_juggling/seg_juggle",
+	&"kick_up": &"m_kick_up/mixamo_com",
 	&"kneeing": &"m_kneeing/mixamo_com",
 	&"warmup": &"m_warmup/mixamo_com",
 	&"scissor_kick": &"m_scissor/mixamo_com",
@@ -192,10 +192,10 @@ const LOOPING: Array[StringName] = [
 ## Instante (s) em que o pé encosta na bola e qual pé (+1 direito, -1 esquerdo).
 ## Conferido quadro a quadro (docs/ETAPA_04.md).
 const CONTACTS := {
-	&"pass_short": [0.55, 1.0],   # passe de chapa (mocap): contato ~1,45 s no take
+	&"pass_short": [0.50, 1.0],
 	&"pass_long": [0.15, -1.0],
 	&"shoot": [0.45, 1.0],
-	&"shoot_power": [0.70, -1.0], # chute forte (mocap, pé esquerdo): contato 2,60 s
+	&"shoot_power": [0.79, 1.0],
 	&"receive": [0.29, 1.0],
 	&"receive_ball": [0.28, 1.0],
 	&"tackle": [0.36, -1.0],
