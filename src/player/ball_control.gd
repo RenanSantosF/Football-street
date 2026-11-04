@@ -567,16 +567,20 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 	var turning := want.length() >= 0.15 and absf(turn_ang) > deg_to_rad(14.0)
 	var preferred_foot := _choose_conduction_foot(w, ref, turn_ang, off)
 	# 1. Se o pé da animação já encostou na bola, dispara o contato imediato com IK.
-	for sd in [1.0, -1.0]:
+	# Quando em curva/corte, prioriza testar o pé preferencial anatomicamente correto.
+	var check_order: Array[float] = [preferred_foot, -preferred_foot] if turning else [1.0, -1.0]
+	for sd in check_order:
 		if _foot_hits_ball(sd, bv):
+			if turning and sd != preferred_foot and foot.foot_distance(preferred_foot) < 0.44:
+				continue # dá preferência para o pé ideal do corte conduzir
 			var mode_hit := _select_conduction_mode(sd, w, pv)
 			_foot_side = sd
 			foot.begin(sd, w, 0.015, mode_hit, func(): _tap(want, pv, sd), 0.032)
 			return
 	# 2. Alcance ativo sincronizado com a passada: quando a bola está na zona de
 	# condução à frente dos pés (ou quando o jogador pede mudança de direção),
-	# escolhe o pé anatomicamente ideal (alternando os pés na reta, ou usando
-	# chapa do pé de fora / três dedos do pé de dentro nas curvas) e leva o pé até a bola.
+	# escolhe o pé anatomicamente ideal (chapa do pé esquerdo para cortar para a direita,
+	# chapa do pé direito para cortar para a esquerda, ou três dedos / sola).
 	if d > 0.64:
 		return
 	var in_front := off.dot(ref) > -0.08 or (turning and off.dot(player.facing) > -0.08)
@@ -600,17 +604,32 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 func _choose_conduction_foot(w: Vector3, ref: Vector3, turn_ang: float, off: Vector3) -> float:
 	var right := ref.cross(Vector3.UP)
 	var lat := off.dot(right)
-	if absf(turn_ang) > deg_to_rad(22.0):
-		var turn_left := turn_ang > 0.0
-		# Curva p/ esquerda: se a bola já está bem à esquerda, usa 3 dedos do pé esquerdo;
-		# caso contrário, usa a chapa do pé direito (pé de fora) para empurrar na nova direção.
-		if turn_left:
-			return -1.0 if lat < -0.14 else 1.0
-		else:
-			return 1.0 if lat > 0.14 else -1.0
-	if absf(lat) > 0.11:
+	# Biomecânica real de futebol:
+	# Ao cortar para a DIREITA (turn_ang < 0):
+	#   O corte natural de futebol é feito com a CHAPA DO PÉ ESQUERDO (-1.0), que vem do lado
+	#   esquerdo da bola e empurra para a direita.
+	#   Se o pé esquerdo estiver muito longe (> 0.48m) e o direito estiver no pé da bola,
+	#   usa o pé direito (que usará três dedos ou sola).
+	if turn_ang < -deg_to_rad(12.0):
+		var d_left := foot.foot_distance(-1.0)
+		var d_right := foot.foot_distance(1.0)
+		if d_left <= d_right + 0.22 or d_left < 0.44:
+			return -1.0
+		return 1.0
+	# Ao cortar para a ESQUERDA (turn_ang > 0):
+	#   O corte natural de futebol é feito com a CHAPA DO PÉ DIREITO (1.0), que vem do lado
+	#   direito da bola e empurra para a esquerda.
+	elif turn_ang > deg_to_rad(12.0):
+		var d_right := foot.foot_distance(1.0)
+		var d_left := foot.foot_distance(-1.0)
+		if d_right <= d_left + 0.22 or d_right < 0.44:
+			return 1.0
+		return -1.0
+
+	# Em condução reta / leve desvio:
+	if absf(lat) > 0.12:
 		return signf(lat)
-	# Em linha reta: alterna os pés naturalmente se ambos estiverem a alcance similar.
+	# Alternância natural das passadas entre pé esquerdo e pé direito
 	var next_alt := -_foot_side
 	var d_alt := foot.foot_distance(next_alt)
 	var d_cur := foot.foot_distance(_foot_side)
@@ -620,14 +639,35 @@ func _choose_conduction_foot(w: Vector3, ref: Vector3, turn_ang: float, off: Vec
 
 
 func _select_conduction_mode(foot_side: float, w: Vector3, pv: Vector3) -> FootContact.Mode:
-	var ref := pv.normalized() if pv.length() > 0.5 else player.facing
+	var speed := pv.length()
+	var ref := pv.normalized() if speed > 0.5 else player.facing
 	var ang := ref.signed_angle_to(w, Vector3.UP)
-	if absf(ang) > deg_to_rad(18.0):
+	# Mudança de direção significativa (corte / curva):
+	if absf(ang) > deg_to_rad(10.0):
 		var turn_left := ang > 0.0
-		var is_inner_foot := (turn_left and foot_side < 0.0) or (not turn_left and foot_side > 0.0)
-		return FootContact.Mode.OUTSIDE if is_inner_foot else FootContact.Mode.INSIDE
-	if pv.length() > 3.6 and player.intent.sprint:
+		if turn_left:
+			# Curva para a ESQUERDA:
+			# - Pé direito (+1.0): bate de CHAPA do lado direito da bola levando para a esquerda.
+			# - Pé esquerdo (-1.0): se velocidade baixa, puxada de SOLA; se alta, TRÊS DEDOS.
+			if foot_side > 0.0:
+				return FootContact.Mode.INSIDE
+			else:
+				return FootContact.Mode.SOLE if speed < 2.8 else FootContact.Mode.OUTSIDE
+		else:
+			# Curva para a DIREITA:
+			# - Pé esquerdo (-1.0): bate de CHAPA do lado esquerdo da bola levando para a direita.
+			# - Pé direito (+1.0): se velocidade baixa, puxada de SOLA; se alta, TRÊS DEDOS.
+			if foot_side < 0.0:
+				return FootContact.Mode.INSIDE
+			else:
+				return FootContact.Mode.SOLE if speed < 2.8 else FootContact.Mode.OUTSIDE
+
+	# Em velocidade alta de corrida: três dedos / peito de pé para conduzir em velocidade
+	if speed > 3.6 and player.intent.sprint:
 		return FootContact.Mode.OUTSIDE
+	# Andando bem devagar ou ajustando ajeitada curta: toque com a sola
+	if speed < 1.4 and absf(ang) > deg_to_rad(6.0):
+		return FootContact.Mode.SOLE
 	return FootContact.Mode.INSIDE
 
 

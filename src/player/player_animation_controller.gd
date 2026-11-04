@@ -205,6 +205,7 @@ func physics_update(delta: float) -> void:
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
 	_signed_turn = lerpf(_signed_turn, signed_ang, 1.0 - exp(-8.0 * delta))
 	var raw_accel := (v.length() - _prev_speed) / maxf(delta, 0.001)
+	_accel_lean = lerpf(_accel_lean, clampf(raw_accel / 4.2, -1.0, 1.0), 1.0 - exp(-10.0 * delta))
 	var v_len := v.length()
 	# Girando parado: só afeta a passada se houver deslocamento real ou giro muito rápido,
 	# e nunca aciona o clipe de caminhada completa quando o jogador está estático (elimina o moonwalk).
@@ -237,7 +238,7 @@ func physics_update(delta: float) -> void:
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
 	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
 	var run_lean := clampf((v.length() - 1.3) / 2.5, 0.0, 1.0)
-	var turn_bank := clampf(_signed_turn * (0.25 + (v.length() / 3.4) * 0.28), -1.0, 1.0)
+	var turn_bank := clampf(_signed_turn * (0.35 + (v.length() / 3.0) * 0.35), -1.2, 1.2)
 	var in_move := Vector3(player.intent.move.x, 0.0, player.intent.move.z)
 	var feint_target := 0.0
 	if in_move.length() > 0.15:
@@ -245,10 +246,10 @@ func physics_update(delta: float) -> void:
 		var body_diff := player.facing.signed_angle_to(w_dir, Vector3.UP)
 		var stick_rate := _prev_want_dir.signed_angle_to(w_dir, Vector3.UP) / maxf(delta, 0.001)
 		_prev_want_dir = w_dir
-		feint_target = clampf(body_diff * 0.65 + stick_rate * 0.07, -1.0, 1.0)
+		feint_target = clampf(body_diff * 0.85 + stick_rate * 0.10, -1.2, 1.2)
 	else:
 		_prev_want_dir = player.facing
-	_feint_lean = lerpf(_feint_lean, feint_target, 1.0 - exp(-14.0 * delta))
+	_feint_lean = lerpf(_feint_lean, feint_target, 1.0 - exp(-15.0 * delta))
 	var gingado := 1.0 if has_b else (0.65 if player.is_marking() else 0.35)
 	if player.visual.has_method("set_posture_dynamics"):
 		player.visual.call("set_posture_dynamics", run_lean, _accel_lean, turn_bank, _feint_lean, gingado)

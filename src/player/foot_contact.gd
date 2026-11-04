@@ -122,24 +122,9 @@ func _ball_flat_dist() -> float:
 		ball.global_position.z - player.global_position.z).length()
 
 
-## Velocidade extra do corpo para ajudar a passada a chegar no ponto ideal do toque.
+## O corpo se move puramente pela física e inércia real (zero impulsos artificiais).
 func body_correction() -> Vector3:
-	if phase != Phase.REACH or mode == Mode.KICK or player.visual == null \
-			or not player.visual.has_method("get_ankle_position"):
-		return Vector3.ZERO
-	var an: Vector3 = _raw_ankle(side)
-	var err := Vector3(_target.x - an.x, 0.0, _target.z - an.z)
-	if err.length() < 0.04 or err.length() > 0.65:
-		return Vector3.ZERO
-	var rem := maxf(_lead - _t, 0.08)
-	var c := (err * 0.45 / rem).limit_length(BODY_ADJUST_SPEED * 0.6)
-	var pv := Vector3(player.velocity.x, 0.0, player.velocity.z)
-	if pv.length() > 2.0 and dir.dot(pv.normalized()) > 0.9:
-		var fw := pv.normalized()
-		var along := fw * clampf(c.dot(fw), -BODY_ADJUST_SPEED * 0.5, 0.25)
-		var lat := (c - along).limit_length(0.22)
-		c = along + lat
-	return c
+	return Vector3.ZERO
 
 
 func update(delta: float) -> void:
@@ -311,14 +296,8 @@ func _apply() -> void:
 	else:
 		_shown[side] = move_toward(_shown[side], _weight * cap, dt * 11.0)
 	_shown[-side] = move_toward(_shown[-side], 0.0, dt * 11.0)
-	var want_shift := Vector3.ZERO
-	var sw := _weight if phase != Phase.IDLE else 0.0
-	if sw > 0.0 and cap > 0.05:
-		var a0: Vector3 = _raw_ankle(side) - _shift
-		var dlt := Vector3(_target.x - a0.x, 0.0, _target.z - a0.z)
-		want_shift = dlt.limit_length(BODY_SHIFT_MAX) * sw
-	_shift = _shift.move_toward(want_shift, dt * 2.2)
-	v.position = player.global_transform.basis.inverse() * _shift
+	if v.position != Vector3.ZERO:
+		v.position = Vector3.ZERO
 	v.call("set_foot_target", side, _target, _shown[side], player.facing, int(mode))
 	v.call("set_foot_target", -side, _last_target[-side], _shown[-side], player.facing, int(mode))
 	_last_target[side] = _target

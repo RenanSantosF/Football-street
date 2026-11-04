@@ -252,13 +252,8 @@ func _physics_process(delta: float) -> void:
 	ball_control.physics_update(delta)
 	_update_body_contest(delta)
 	velocity.y -= _gravity * delta
-	# O CORPO se ajusta para o pé da passada chegar na bola (sem esticar a
-	# perna): um deslocamento pequeno e temporário, a passada acompanha.
-	var adj := ball_control.foot.body_correction() if state == State.MOVE else Vector3.ZERO
-	velocity += adj
-	body_adjust = adj
+	body_adjust = Vector3.ZERO
 	move_and_slide()
-	velocity -= adj
 	_update_facing(delta)
 	_update_stamina(delta)
 	anim_controller.physics_update(delta)

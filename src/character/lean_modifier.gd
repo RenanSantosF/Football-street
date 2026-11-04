@@ -18,12 +18,11 @@ var dribble_gingado := 0.0
 var gaze_weight := 0.0
 var gaze_world_pos := Vector3.ZERO
 
-const ACCEL_SPINE_DEG := 4.2
-const TURN_BANK_DEG := 9.2
-const TURN_YAW_DEG := 12.0
+const ACCEL_SPINE_DEG := 6.5
+const TURN_BANK_DEG := 12.0
+const TURN_YAW_DEG := 14.5
 
-const STANCE_Y_MAX := 0.095
-const MIN_ANKLE_Y := 0.056
+const MIN_ANKLE_Y := 0.035
 
 var _smooth_amount := 0.0
 var _smooth_accel := 0.0
@@ -42,6 +41,8 @@ var _neck := -2
 var _head := -2
 var _finger_bones: Array[int] = []
 
+var _arm_bones := {1.0: -1, -1.0: -1}
+var _forearm_bones := {1.0: -1, -1.0: -1}
 var _hip_bones := {1.0: -1, -1.0: -1}
 var _knee_bones := {1.0: -1, -1.0: -1}
 var _foot_bones := {1.0: -1, -1.0: -1}
@@ -52,12 +53,6 @@ var _ball_target := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
 var _ball_weight := {1.0: 0.0, -1.0: 0.0}
 var _ball_mode := {1.0: 0, -1.0: 0}
 var _ball_forward := {1.0: Vector3.FORWARD, -1.0: Vector3.FORWARD}
-
-## Estado da estabilização firme do pé de apoio no solo (sem deslizar).
-var _planted := {1.0: false, -1.0: false}
-var _plant_world := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
-var _stance_weight := {1.0: 0.0, -1.0: 0.0}
-var _prev_skel_origin := Vector3.ZERO
 
 ## Posições da animação pura (antes da IK) em coordenadas de mundo.
 var _raw_ankle_world := {1.0: Vector3.ZERO, -1.0: Vector3.ZERO}
@@ -128,6 +123,8 @@ func _cache_bones(sk: Skeleton3D) -> void:
 				_finger_bones.append(fb)
 	for side in [1.0, -1.0]:
 		var prefix := "Right" if side > 0.0 else "Left"
+		_arm_bones[side] = sk.find_bone(prefix + "Arm")
+		_forearm_bones[side] = sk.find_bone(prefix + "ForeArm")
 		_hip_bones[side] = sk.find_bone(prefix + "UpperLeg")
 		_knee_bones[side] = sk.find_bone(prefix + "LowerLeg")
 		_foot_bones[side] = sk.find_bone(prefix + "Foot")
@@ -159,6 +156,7 @@ func _process_modification() -> void:
 
 	var tracked_bones := [
 		_hips, _spine, _chest, _upper_chest, _neck, _head,
+		_arm_bones[1.0], _forearm_bones[1.0], _arm_bones[-1.0], _forearm_bones[-1.0],
 		_hip_bones[1.0], _knee_bones[1.0], _foot_bones[1.0], _toe_bones[1.0],
 		_hip_bones[-1.0], _knee_bones[-1.0], _foot_bones[-1.0], _toe_bones[-1.0],
 	]
@@ -195,15 +193,10 @@ func _process_modification() -> void:
 			if _raw_local_poses.has(fb):
 				sk.set_bone_pose(fb, _raw_local_poses[fb])
 
-	# 1. Postura flexível com gingado de futebol de rua, mãos relaxadas e olhar para a bola.
+	# 1. Postura flexível com gingado de futebol de rua, braços dinâmicos e olhar para a bola.
 	_apply_athletic_posture(sk)
 
-	# 2. Guarda as posições da animação antes de aplicar IK das pernas.
-	var teleported := false
-	if is_new_anim:
-		teleported = _prev_skel_origin != Vector3.ZERO and sk_xform.origin.distance_to(_prev_skel_origin) > 0.45
-		_prev_skel_origin = sk_xform.origin
-
+	# 2. Guarda as posições da animação e só aplica IK quando o pé estiver alcançando a bola.
 	for side in [1.0, -1.0]:
 		var f_idx: int = _foot_bones[side]
 		var h_idx: int = _hip_bones[side]
@@ -221,44 +214,13 @@ func _process_modification() -> void:
 			_raw_toe_world[side] = anim_ankle_w
 
 		var bw: float = _ball_weight[side]
-		if is_new_anim:
-			# Estabilização firme do pé de apoio no solo: impede deslize no campo.
-			var in_stance := anim_ankle_w.y < STANCE_Y_MAX and not teleported
-			if teleported or bw > 0.10:
-				_planted[side] = false
-				_stance_weight[side] = move_toward(_stance_weight[side], 0.0, dt * 14.0)
-			elif in_stance:
-				if not _planted[side]:
-					_planted[side] = true
-					_plant_world[side] = anim_ankle_w
-				var drift := Vector2(anim_ankle_w.x - _plant_world[side].x, anim_ankle_w.z - _plant_world[side].z).length()
-				if drift > 0.10:
-					_plant_world[side] = anim_ankle_w.lerp(_plant_world[side], 0.10 / drift)
-				_plant_world[side].y = maxf(anim_ankle_w.y, MIN_ANKLE_Y)
-				_stance_weight[side] = move_toward(_stance_weight[side], 0.48, dt * 12.0)
-			else:
-				_planted[side] = false
-				_stance_weight[side] = move_toward(_stance_weight[side], 0.0, dt * 14.0)
-
-		# 3. Determina o alvo final do tornozelo (combina estabilização de solo e IK da bola).
-		var target_w := anim_ankle_w
-		var total_w := 0.0
-		var mode_use := 0
+		# Aplica IK analítica suave EXCLUSIVAMENTE quando houver toque/contato na bola.
+		# Durante a passada pura, a animação original preserva o pé plano e natural no gramado
+		# (elimina 100% dos pés na ponta dos dedos e o efeito de flutuar/estalar).
 		if bw > 0.001:
-			target_w = anim_ankle_w.lerp(_ball_target[side], bw)
-			total_w = bw
-			mode_use = _ball_mode[side]
-		elif _stance_weight[side] > 0.001:
-			var locked := Vector3(_plant_world[side].x, maxf(anim_ankle_w.y, MIN_ANKLE_Y), _plant_world[side].z)
-			target_w = anim_ankle_w.lerp(locked, _stance_weight[side])
-			total_w = _stance_weight[side]
-		elif anim_ankle_w.y < MIN_ANKLE_Y:
-			target_w.y = MIN_ANKLE_Y
-			total_w = 1.0
-
-		if total_w > 0.001:
+			var target_w: Vector3 = anim_ankle_w.lerp(_ball_target[side], bw)
 			target_w.y = maxf(target_w.y, MIN_ANKLE_Y)
-			_solve_two_bone_leg(sk, sk_inv, side, target_w, bw, mode_use)
+			_solve_two_bone_leg(sk, sk_inv, side, target_w, bw, _ball_mode[side])
 
 	_ik_dirty = false
 	_applying = false
@@ -341,6 +303,22 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 		-share_x - corr_x * 0.45,
 		corr_uc_y * 0.60 + yaw_rad * 0.42 + gingado_torso_yaw * 0.35,
 		corr_uc_z + bank_rad * 0.38 + gingado_torso_roll * 0.35)
+
+	# --- 2.1 Contra-balanço dinâmico dos braços nas fintas e curvas (estilo eFootball) ---
+	# Quando o jogador faz um corte ou curva, o braço do lado oposto ergue lateralmente
+	# para dar equilíbrio ao corpo e proteger a bola, enquanto o outro braço acompanha o embalo.
+	for s in [1.0, -1.0]:
+		var arm_b: int = _arm_bones[s]
+		var fa_b: int = _forearm_bones[s]
+		if arm_b >= 0:
+			var lift := -s * combined_turn * deg_to_rad(13.0)
+			if lift < 0.0:
+				lift *= 0.35
+			var fwd := absf(combined_turn) * deg_to_rad(6.5) + maxf(-_smooth_accel, 0.0) * deg_to_rad(9.0)
+			_rotate_bone_local(sk, arm_b, fwd, 0.0, lift * s)
+			if fa_b >= 0:
+				var elbow := clampf(absf(combined_turn) * deg_to_rad(12.0) + _smooth_gingado * deg_to_rad(6.0), 0.0, deg_to_rad(22.0))
+				_rotate_bone_local(sk, fa_b, elbow, 0.0, 0.0)
 
 	# --- 3. Olhar natural para a bola e nivelamento da cabeça em espaço do esqueleto ---
 	q_hips = sk.get_bone_pose_rotation(_hips)
@@ -468,7 +446,9 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	gp_knee.basis = Basis(q2) * Basis(q1) * gp_knee.basis
 	gp_knee.origin = K_new
 
-	# Posiciona o tornozelo (Foot) e articula com flexibilidade a superfície do pé.
+	# O pé herda a rotação das articulações superiores (coxa + canela) para manter
+	# o alinhamento anatômico natural com a perna (elimina o pé na ponta dos dedos):
+	gp_foot.basis = Basis(q2) * Basis(q1) * gp_foot.basis
 	gp_foot.origin = T_clamped
 	if ball_w > 0.01:
 		var foot_euler := Vector3.ZERO
@@ -487,7 +467,7 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 		gp_foot.basis = gp_foot.basis * rot_mod
 	elif absf(_smooth_turn) > 0.05:
 		# Flexibilidade sutil do tornozelo acompanhando a inclinação de curva na passada
-		var turn_foot_euler := Vector3(0.0, deg_to_rad(5.0 * _smooth_turn), deg_to_rad(4.0 * _smooth_turn))
+		var turn_foot_euler := Vector3(0.0, deg_to_rad(4.0 * _smooth_turn), deg_to_rad(3.0 * _smooth_turn))
 		gp_foot.basis = gp_foot.basis * Basis.from_euler(turn_foot_euler)
 
 	sk.set_bone_global_pose(h_idx, gp_hip)
