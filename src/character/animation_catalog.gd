@@ -30,7 +30,7 @@ const LIBRARY_SOURCES := {
 	&"m_idle_to_sprint": "Idle To Sprint",
 	&"m_dribble": "Dribble",
 	# marcação (andar de lado / de costas)
-	&"m_gk_idle": TEEN_01,
+	&"m_gk_idle": "Soccer Idle",
 	&"m_back": "Run Backward",
 	&"m_strafe_l_jog": "Jog Strafe Left",
 	&"m_strafe_r_jog": "Jog Strafe Right",
@@ -240,34 +240,33 @@ static func getup_duration(logical: StringName) -> float:
 
 
 ## Velocidade natural (m/s) da passada de cada clipe, normalizada para um
-## quadril de 0,93 m (HumanoidCharacter.REF_HIPS_HEIGHT). Medida pelo
-## deslocamento do quadril no clipe original (os clipes do Mixamo andam).
+## quadril de 0,93 m (HumanoidCharacter.REF_HIPS_HEIGHT). Sincronizada com a
+## velocidade real do pé de apoio no solo para eliminar deslizamento (foot skating).
 const LOCOMOTION_POINTS: Array = [
-	# (trote = "Jog Forward": o "Slow Jog" vinha com o quadril torto ~40°)
-	[&"idle", 0.0], [&"walk", 1.64], [&"jog", 2.37], [&"run", 4.04], [&"sprint", 5.65],
+	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
 ]
 const LOCOMOTION_BALL_POINTS: Array = [
-	[&"idle_ball", 0.0], [&"walk", 1.64], [&"dribble", 2.1], [&"run", 4.04], [&"sprint", 5.65],
+	[&"idle_ball", 0.0], [&"walk", 1.35], [&"dribble", 2.05], [&"run", 3.15], [&"sprint", 4.15],
 ]
 ## Marcação: velocidade local (x = para a direita, y = para a frente), m/s.
 const MARK_POINTS: Array = [
 	[&"mark_idle", Vector2(0.0, 0.0)],
-	[&"jog", Vector2(0.0, 2.37)],
+	[&"jog", Vector2(0.0, 2.25)],
 	# ("Run Backward" vem com o corpo virado 180°: misturado aos outros, o quadril
 	#  "estalava". Recuar rápido = virar e correr; ver Player._compute_marking)
-	[&"strafe_l_walk", Vector2(-1.59, 0.0)],
-	[&"strafe_l_jog", Vector2(-2.75, 0.0)],
-	[&"strafe_r_jog", Vector2(2.21, 0.0)],
-	[&"strafe_l_fast", Vector2(-4.15, 0.0)],
-	[&"strafe_r_fast", Vector2(4.15, 0.0)],
-	[&"diag_l", Vector2(-1.79, 1.77)],
-	[&"diag_r", Vector2(1.88, 1.88)],
+	[&"strafe_l_walk", Vector2(-1.45, 0.0)],
+	[&"strafe_l_jog", Vector2(-2.35, 0.0)],
+	[&"strafe_r_jog", Vector2(2.10, 0.0)],
+	[&"strafe_l_fast", Vector2(-3.40, 0.0)],
+	[&"strafe_r_fast", Vector2(3.40, 0.0)],
+	[&"diag_l", Vector2(-1.65, 1.65)],
+	[&"diag_r", Vector2(1.70, 1.70)],
 ]
 ## Mais rápido que isto, a passada acelera (TimeScale).
-const TOP_SPEED := 5.65
+const TOP_SPEED := 4.35
 
 ## Compatibilidade com código antigo (velocidades por nome lógico).
-const LOCOMOTION_SPEEDS := {&"sprint": 5.65}
+const LOCOMOTION_SPEEDS := {&"sprint": 4.35}
 
 const HIPS_POSITION_TRACK := "%GeneralSkeleton:Hips"
 ## Clipes cujo deslocamento do corpo vem da própria animação (root motion):
@@ -361,13 +360,13 @@ static func _build_ual_fallbacks() -> void:
 		&"soccer_idle": ["Idle", 1.0],
 		&"idle_ball": ["Idle", 1.0],
 		&"mark_idle": ["Idle", 1.05],
-		&"walk": ["Walk", 1.38],          # caminhada leve e natural de adolescente
-		&"slow_jog": ["Jog_Fwd", 0.78],
-		&"dribble": ["Jog_Dribble", 0.94], # condução baixa com passadas curtas e próximas ao chão
-		&"jog": ["Jog_Fwd", 0.96],        # trote baixo e fluido (sem salto vertical)
-		&"run": ["Sprint", 0.84],         # corrida cadenciada e rente ao chão
-		&"sprint": ["Sprint", 1.12],      # sprint atlético progressivo
-		&"idle_to_sprint": ["Sprint", 1.10],
+		&"walk": ["Walk", 1.56],          # caminhada firme e natural sincronizada com 1,35 m/s
+		&"slow_jog": ["Jog_Fwd", 0.92],
+		&"dribble": ["Jog_Dribble", 1.08], # condução baixa com passadas próximas ao chão (2,05 m/s)
+		&"jog": ["Jog_Fwd", 1.12],        # trote baixo e fluido sem deslizar no solo (2,25 m/s)
+		&"run": ["Sprint", 0.96],         # corrida cadenciada e rente ao chão (3,35 m/s)
+		&"sprint": ["Sprint", 1.22],      # sprint atlético progressivo e pesado (4,35 m/s)
+		&"idle_to_sprint": ["Sprint", 1.15],
 		&"sad_run": ["Jog_Fwd", 0.82],
 		&"back": ["Walk", 1.18],
 		&"strafe_l_walk": ["Walk", 1.28],
@@ -484,49 +483,49 @@ static func _refine_ual_locomotion(src: Animation, idle_anim: Animation, kind: S
 			idle_rot[bname] = idle_anim.rotation_track_interpolate(i, 0.0)
 
 	var base_hip_y := 0.946
-	var bounce_amp := 0.008
+	var bounce_amp := 0.007
 	var hip_rot_k := 0.65
 	var hip_pitch_corr_deg := 0.0
-	var spine_k := 0.60
-	var uleg_k := 0.65
-	var lleg_k := 0.45
-	var foot_k := 0.72
+	var spine_k := 0.58
+	var uleg_k := 0.80
+	var lleg_k := 0.56
+	var foot_k := 0.80
 	var arm_k := 0.50
 	var hand_k := 0.50
 
 	if kind == &"dribble":
-		base_hip_y = 0.934
-		bounce_amp = 0.009
+		base_hip_y = 0.935
+		bounce_amp = 0.008
 		hip_rot_k = 0.62
 		hip_pitch_corr_deg = -2.0
-		spine_k = 0.58
-		uleg_k = 0.52
-		lleg_k = 0.46
-		foot_k = 0.70
+		spine_k = 0.56
+		uleg_k = 0.72
+		lleg_k = 0.54
+		foot_k = 0.78
 		arm_k = 0.52
 		hand_k = 0.50
 	elif kind == &"jog":
 		base_hip_y = 0.938
-		bounce_amp = 0.011
+		bounce_amp = 0.009
 		hip_rot_k = 0.65
 		hip_pitch_corr_deg = -3.0
-		spine_k = 0.62
-		uleg_k = 0.56
-		lleg_k = 0.50
-		foot_k = 0.72
-		arm_k = 0.58
-		hand_k = 0.55
+		spine_k = 0.60
+		uleg_k = 0.76
+		lleg_k = 0.58
+		foot_k = 0.80
+		arm_k = 0.56
+		hand_k = 0.54
 	elif kind == &"sprint":
 		base_hip_y = 0.934
-		bounce_amp = 0.013
+		bounce_amp = 0.011
 		hip_rot_k = 0.65
 		hip_pitch_corr_deg = -13.0
-		spine_k = 0.68
-		uleg_k = 0.64
-		lleg_k = 0.56
-		foot_k = 0.75
-		arm_k = 0.66
-		hand_k = 0.60
+		spine_k = 0.65
+		uleg_k = 0.80
+		lleg_k = 0.62
+		foot_k = 0.82
+		arm_k = 0.64
+		hand_k = 0.58
 
 	var hp_tr := out.find_track(NodePath(HIPS_POSITION_TRACK), Animation.TYPE_POSITION_3D)
 	if hp_tr >= 0 and out.track_get_key_count(hp_tr) > 0:

@@ -49,18 +49,18 @@ const TURN_SPEED_UP := 1.35
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 3.05
-## Velocidade máxima correndo (CORRER) — cadenciada e natural p/ 14 anos.
-@export var sprint_speed := 5.2
+@export var jog_speed := 2.60
+## Velocidade máxima correndo (CORRER) — cadenciada, pesada e firme no chão.
+@export var sprint_speed := 4.35
 ## Velocidade máxima conduzindo a bola em velocidade.
-@export var speed_dribbling := 4.2
-@export var ball_speed_factor := 0.91
-@export var acceleration := 9.8
-@export var deceleration := 8.2
+@export var speed_dribbling := 3.45
+@export var ball_speed_factor := 0.90
+@export var acceleration := 7.8
+@export var deceleration := 7.2
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 7.6
+@export var turn_speed := 6.6
 ## Mais lento com a bola: dá peso ao girar (lerp_angle).
-@export var turn_speed_with_ball := 4.8
+@export var turn_speed_with_ball := 4.3
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -353,23 +353,23 @@ func _update_move(delta: float) -> void:
 			# acompanha a velocidade da bola e ainda diminui a distância (alcança)
 			desired = (bv + to / 0.35).limit_length(sprint_speed)
 	var hv := get_flat_velocity()
-	# Inércia em curvas rápidas (sem bola): mudar bruscamente de direção em alta
-	# velocidade reduz levemente a velocidade desejada enquanto os pés ajustam o apoio.
-	if not has_ball and input.length() > 0.2 and hv.length() > 2.8:
+	# Inércia pesada em curvas (inspirado em HaxSoccer): mudar de direção em movimento
+	# exige firmeza do pé de apoio e reduz momentaneamente a velocidade de corte.
+	if input.length() > 0.2 and hv.length() > 1.8:
 		var turn_cos := hv.normalized().dot(input.normalized())
-		if turn_cos < 0.7:
-			var curve_damp := lerpf(0.84, 1.0, clampf((turn_cos + 0.3) / 1.0, 0.0, 1.0))
+		if turn_cos < 0.72 and not has_ball:
+			var curve_damp := lerpf(0.78, 1.0, clampf((turn_cos + 0.35) / 1.07, 0.0, 1.0))
 			desired *= curve_damp
 	# Acelera progressivamente; inverter direção passa por uma freada com peso.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
 	if has_ball and ball_control.is_reverse_pulling():
-		rate = 15.0
-	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.2 \
+		rate = 14.0
+	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.0 \
 		and hv.normalized().dot(input.normalized()) < -0.5 \
 		and (ball_control.ball_distance() > 0.36 or ball.flat_velocity().length() > 1.5)
 	if has_ball and reversing_ball and not ball_control.is_reverse_pulling() \
-			and ball_control.ball_offset().dot(facing) > 0.2 and ball_control.ball_distance() < 2.0:
+		and ball_control.ball_offset().dot(facing) > 0.2 and ball_control.ball_distance() < 2.0:
 		# Pediu o lado contrário com a bola à frente (tapa): dá um pique curto
 		# até a bola para pisar nela e voltar (não fica freando atrás dela).
 		var offr := ball_control.ball_offset()
@@ -377,7 +377,7 @@ func _update_move(delta: float) -> void:
 		desired = facing * clampf(bspr + (offr.dot(facing) - 0.3) * 6.0, 0.0, sprint_speed) \
 			+ facing.cross(Vector3.UP) * clampf(offr.dot(facing.cross(Vector3.UP)) * 3.0, -1.2, 1.2)
 		rate = acceleration * 1.3
-	elif has_ball and input.length() < 0.1 and hv.length() > 1.4 and ball_control.ball_distance() < 0.9 \
+	elif has_ball and input.length() < 0.1 and hv.length() > 1.2 and ball_control.ball_distance() < 0.9 \
 			and not ball_control.is_reverse_pulling():
 		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
 		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
@@ -387,7 +387,7 @@ func _update_move(delta: float) -> void:
 		var bsp := ball.flat_velocity().dot(facing)
 		desired = facing * clampf(bsp + (along - 0.3) * 4.0, 0.0, hv.length()) \
 			+ facing.cross(Vector3.UP) * clampf(lat * 2.5, -1.2, 1.2)
-		rate = 6.0
+		rate = 6.2
 	hv = hv.move_toward(desired, rate * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z

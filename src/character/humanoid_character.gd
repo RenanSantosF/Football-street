@@ -92,6 +92,11 @@ func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float)
 		lean.turn_lean = clampf(turn_bank, -1.0, 1.0)
 
 
+func set_ball_gaze(ball_world_pos: Vector3, weight: float) -> void:
+	if lean != null:
+		lean.set_ball_gaze(ball_world_pos, weight)
+
+
 func get_locomotion_scale() -> float:
 	return _hips_rest_height * _model_scale * scale.x / REF_HIPS_HEIGHT
 

@@ -136,8 +136,11 @@ var _ball_blend := 0.0
 var _stride := 0.0
 var _blend_pos := 0.0
 var _time_scale := 1.0
+var _gaze_timer := 1.5
+var _gaze_on := true
+var _gaze_weight := 0.85
 ## Velocidade natural da caminhada (m/s, catálogo).
-const WALK_STRIDE := 1.64
+const WALK_STRIDE := 1.35
 var _rng := RandomNumberGenerator.new()
 
 
@@ -161,6 +164,8 @@ func refresh_model() -> void:
 		playback = anim_tree.get(PARAM_PLAYBACK) as AnimationNodeStateMachinePlayback
 		# Cada jogador começa num ponto diferente do ciclo (ninguém sincronizado).
 		_rng.randomize()
+		_gaze_timer = _rng.randf_range(0.8, 2.6)
+		_gaze_on = _rng.randf() < 0.8
 		anim_tree.advance(_rng.randf_range(0.0, 3.0))
 
 
@@ -198,25 +203,19 @@ func physics_update(delta: float) -> void:
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
 	_signed_turn = lerpf(_signed_turn, signed_ang, 1.0 - exp(-8.0 * delta))
 	var raw_accel := (v.length() - _prev_speed) / maxf(delta, 0.001)
-	_accel_lean = lerpf(_accel_lean, clampf(raw_accel / 10.0, -1.0, 1.0), 1.0 - exp(-8.0 * delta))
+	_accel_lean = lerpf(_accel_lean, clampf(raw_accel / 8.0, -1.0, 1.0), 1.0 - exp(-8.0 * delta))
 	# (girando parado: passos curtos, sem "andar no lugar")
 	var raw := maxf(v.length(), minf(_turn_rate * 0.12, 0.3)) / k
 	# Passada suave: a velocidade que alimenta a animação muda devagar (sem
 	# pé "teleportando" quando o corpo freia/acelera um pouco).
 	_stride = lerpf(_stride, raw, 1.0 - exp(-14.0 * delta))
-	# Devagar NÃO mistura "parado" com "andando" (isso dava passo arrastado,
-	# "tentando andar"): usa a caminhada inteira, mais lenta (TimeScale).
-	# UMA animação de passada por vez (andar / trote / corrida / sprint), com
-	# a velocidade do clipe ajustada EXATAMENTE à do corpo: o pé apoiado não
-	# desliza. (Misturar dois clipes de ritmos diferentes deixava os pés fora
-	# de fase — "patinando" — entre 1,8 e 4 m/s.)
 	var has_b := player.ball_control.has_ball()
 	var pts: Array = AnimationCatalog.LOCOMOTION_BALL_POINTS if has_b else AnimationCatalog.LOCOMOTION_POINTS
 	var pos := 0.0
 	var time_scale := 1.0
-	if _stride >= 0.07:
+	if _stride >= 0.06:
 		pos = _pick_stride_clip(pts, _stride)
-		time_scale = clampf(_stride / pos, 0.12, 1.6)
+		time_scale = clampf(_stride / pos, 0.14, 1.55)
 	_clip_x = pos
 	# troca de clipe com mistura curta (~0,1 s)
 	if pos == 0.0 or _blend_pos == 0.0 or _blend_pos < 1.0:
@@ -227,16 +226,46 @@ func physics_update(delta: float) -> void:
 		if absf(_blend_pos - pos) < 0.01:
 			_blend_pos = pos
 	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-16.0 * delta))
-	var ball_target := 1.0 if player.ball_control.has_ball() else 0.0
+	var ball_target := 1.0 if has_b else 0.0
 	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
 	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
-	var run_lean := clampf((v.length() - 1.6) / 2.6, 0.0, 1.0)
-	var turn_bank := clampf(_signed_turn * (v.length() / 4.0) * 0.22, -1.0, 1.0)
+	var run_lean := clampf((v.length() - 1.3) / 2.5, 0.0, 1.0)
+	var turn_bank := clampf(_signed_turn * (v.length() / 3.6) * 0.22, -1.0, 1.0)
 	if player.visual.has_method("set_posture_dynamics"):
 		player.visual.call("set_posture_dynamics", run_lean, _accel_lean, turn_bank)
 	elif player.visual.has_method("set_run_lean"):
 		player.visual.call("set_run_lean", run_lean)
+
+	# --- Ciclo humano de olhar para a bola ("Gaze Tracking") ---
+	_gaze_timer -= delta
+	if _gaze_timer <= 0.0:
+		_gaze_on = not _gaze_on
+		if _gaze_on:
+			_gaze_timer = _rng.randf_range(1.6, 3.2) # olha para a bola na maior parte do tempo
+		else:
+			_gaze_timer = _rng.randf_range(0.45, 0.95) # rápida olhada para o campo/espaço à frente
+	var want_gaze := 0.0
+	if player.ball != null and player.visual.has_method("set_ball_gaze"):
+		var to_b := player.ball.global_position - player.global_position
+		var dist_b := Vector2(to_b.x, to_b.z).length()
+		var dir_b := Vector3(to_b.x, 0.0, to_b.z).normalized() if dist_b > 0.05 else player.facing
+		var cos_b := player.facing.dot(dir_b)
+		if player.is_kicking() or (player.ball.pass_target == player and player.ball.possessor == null):
+			want_gaze = 1.0 # finalizando, passando ou dominando passe: foco total na bola
+		elif has_b:
+			want_gaze = 0.88 if (_gaze_on or ang > 1.2) else 0.25 # conduzindo: alterna olhar p/ a bola e p/ o jogo
+		elif cos_b > -0.30 and dist_b < 18.0:
+			# Sem bola e bola no hemisfério frontal/lateral (até ~108°): vira o rosto para olhar a bola
+			var fov_k := clampf((cos_b + 0.30) / 0.65, 0.0, 1.0)
+			var dist_k := clampf(1.0 - (dist_b - 10.0) / 9.0, 0.35, 1.0)
+			if player.is_marking() or dist_b < 3.8:
+				want_gaze = 0.95 * fov_k
+			else:
+				want_gaze = (0.88 if _gaze_on else 0.18) * fov_k * dist_k
+		_gaze_weight = lerpf(_gaze_weight, want_gaze, 1.0 - exp(-6.5 * delta))
+		player.visual.call("set_ball_gaze", player.ball.global_position, _gaze_weight)
+
 	# Marcação: velocidade no referencial do corpo (x = direita, y = frente).
 	var right := player.facing.cross(Vector3.UP)
 	# (suave: trocar de passo lateral para trás/frente sem "estalar" o quadril)
@@ -262,11 +291,11 @@ func physics_update(delta: float) -> void:
 	_pending_reaction = &""
 
 	var wanted := _wanted_base()
-	# Ação já terminou na lógica e o jogador está correndo: volta para a
-	# corrida na hora (nada de deslizar com o pé esticado de um clipe parado).
+	# Ação já terminou na lógica e o jogador está andando/correndo: volta para a
+	# locomoção na hora (nada de deslizar com o pé esticado de um clipe parado).
 	if not (current in BASE_STATES) and current != &"Burst" and current != _gesture_state \
 			and not (_action_kind in DOWN_ACTIONS) and not (current in [&"Fallen", &"GetUpFront", &"GetUpBack", &"Trip", &"Tackle"]) \
-			and player.state == Player.State.MOVE and v.length() > 1.2 \
+			and player.state == Player.State.MOVE and v.length() > 0.35 and _time_since_contact > 0.18 \
 			and not (current in [&"Celebrate", &"CelebrateIdle", &"Samba", &"Defeated"]):
 		playback.travel(wanted)
 		_action_state = &""
