@@ -411,9 +411,12 @@ func _fix_arm_binds() -> void:
 
 	var new_skin := skin.duplicate() as Skin
 	for i in new_skin.get_bind_count():
-		var bname := new_skin.get_bind_name(i)
+		var bname := String(new_skin.get_bind_name(i))
 		var bidx := skeleton.find_bone(bname)
-		if bidx >= 0:
+		var is_arm := bname.contains("Arm") or bname.contains("Hand") or bname.contains("Index") \
+			or bname.contains("Middle") or bname.contains("Ring") or bname.contains("Pinky") \
+			or bname.contains("Little") or bname.contains("Thumb")
+		if bidx >= 0 and is_arm:
 			new_skin.set_bind_pose(i, skeleton.get_bone_global_rest(bidx).affine_inverse())
 	body_mesh.skin = new_skin
 

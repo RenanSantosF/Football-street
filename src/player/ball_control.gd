@@ -572,7 +572,7 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 	var preferred_foot := _choose_conduction_foot(w, ref, turn_ang, off)
 	# 1. Se o pé da animação já encostou na bola, dispara o contato imediato com IK.
 	# Quando em curva/corte, prioriza testar o pé preferencial anatomicamente correto.
-	var check_order: Array[float] = [preferred_foot, -preferred_foot] if turning else [1.0, -1.0]
+	var check_order := [preferred_foot, -preferred_foot] if turning else [1.0, -1.0]
 	for sd in check_order:
 		if _foot_hits_ball(sd, bv):
 			if turning and sd != preferred_foot and foot.foot_distance(preferred_foot) < 0.44:

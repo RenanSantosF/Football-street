@@ -243,10 +243,10 @@ static func getup_duration(logical: StringName) -> float:
 ## quadril de 0,93 m (HumanoidCharacter.REF_HIPS_HEIGHT). Sincronizada com a
 ## velocidade real do pé de apoio no solo para eliminar deslizamento (foot skating).
 const LOCOMOTION_POINTS: Array = [
-	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
+	[&"idle", 0.0], [&"walk", 1.25], [&"jog", 1.85], [&"run", 2.55], [&"sprint", 4.20],
 ]
 const LOCOMOTION_BALL_POINTS: Array = [
-	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
+	[&"idle", 0.0], [&"walk", 1.25], [&"jog", 1.85], [&"run", 2.55], [&"sprint", 4.20],
 ]
 ## Marcação: velocidade local (x = para a direita, y = para a frente), m/s.
 const MARK_POINTS: Array = [
@@ -1150,19 +1150,19 @@ static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track:
 
 	if prefix in STEADY_LOCOMOTION_PREFIXES:
 		var base_y := 0.985
-		var amp := 0.006
+		var amp := 0.015
 		if prefix in [&"m_breathing", &"m_soccer_idle", &"m_offensive_idle", &"m_gk_idle", &"m_warmup", &"m_argue"]:
 			base_y = 0.992
-			amp = 0.002
+			amp = 0.004
 		elif prefix in [&"m_walking", &"m_strafe_l_walk", &"m_walk_strafe_l", &"m_start_walk", &"m_walk_stop"]:
 			base_y = 0.988
-			amp = 0.005
+			amp = 0.012
 		elif prefix in [&"m_dribble", &"m_slow_jog", &"m_jog", &"m_strafe_l_jog", &"m_strafe_r_jog", &"m_diag_l", &"m_diag_r"]:
 			base_y = 0.982
-			amp = 0.006
+			amp = 0.015
 		elif prefix in [&"m_run", &"m_sprint", &"m_idle_to_sprint", &"m_strafe_l_fast", &"m_strafe_r_fast"]:
 			base_y = 0.976
-			amp = 0.008
+			amp = 0.019
 		for k in n_k:
 			var v: Vector3 = anim.track_get_key_value(track, k)
 			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)
@@ -1170,7 +1170,7 @@ static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track:
 			anim.track_set_key_value(track, k, v)
 	elif prefix in UPRIGHT_ACTION_PREFIXES:
 		var base_y := 0.984
-		var amp := 0.018
+		var amp := 0.024
 		for k in n_k:
 			var v: Vector3 = anim.track_get_key_value(track, k)
 			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)

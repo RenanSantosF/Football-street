@@ -47,8 +47,14 @@ var _raw_dir := Vector3.ZERO
 var _raw_steady := 0.0
 
 
+var _sprint_hold := -1.0
+var _through_lob_pending := false
+
+
 func _ready() -> void:
 	process_priority = -10 # roda antes dos jogadores
+	if not InputMap.has_action("through_pass"):
+		InputMap.add_action("through_pass")
 
 
 func _physics_process(delta: float) -> void:
@@ -73,28 +79,46 @@ func _physics_process(delta: float) -> void:
 	if Input.is_action_just_pressed("switch_player"):
 		switch_requested.emit()
 	if Input.is_action_just_pressed("dribble"):
-		# Com a bola: DRIBLE. Sem a bola: DESARME (bote com o pé na bola).
+		# Botão dedicado: com a bola = DRIBLE; sem a bola = BOTE / DESARME em pé.
 		_queue(PlayerIntent.Action.DRIBBLE, 1.0)
-	# Sem a bola, CORRER = BUSCAR: corre na bola solta ou no adversário que a
-	# tem. Com um companheiro com a bola, CORRER é só correr (desmarque).
+
+	# Botão CORRER + PASSE EM PROFUNDIDADE (mesmo botão):
+	# - Segurar = CORRER (sprint)
+	# - Com a bola: toque rápido (< 0.28s) ou arrastar (through_pass) = PASSE EM PROFUNDIDADE!
+	if Input.is_action_just_pressed("sprint"):
+		_sprint_hold = 0.0
+		_through_lob_pending = false
+	elif _sprint_hold >= 0.0 and Input.is_action_pressed("sprint"):
+		_sprint_hold += delta
+		if Input.is_action_pressed("through_pass"):
+			_through_lob_pending = true
+	elif _sprint_hold >= 0.0 and not Input.is_action_pressed("sprint"):
+		if has_ball_context() and (_sprint_hold < 0.28 or _through_lob_pending):
+			_queued = PlayerIntent.Action.THROUGH_PASS
+			_queued_power = clampf(0.55 + _sprint_hold * 1.2, 0.55, 1.0)
+			_queued_lofted = _through_lob_pending
+		_sprint_hold = -1.0
+		_through_lob_pending = false
+
+	# Botão TOCAR / BUSCAR A BOLA (mesmo botão PassButton):
+	# - Com a bola: TOCAR (passe rasteiro ou por cima arrastando)
+	# - Sem a bola: BUSCAR A BOLA (corre atrás da bola / pressiona o portador e troca para o defensor mais próximo)
 	chasing = false
 	var loose_mine := current_player != null and current_player.ball != null \
 		and current_player.ball.possessor == null and current_player.ball.pass_target != current_player
-	if (not has_ball_context() or loose_mine) and _sprint and current_player != null and current_player.ball != null:
+	var press_seek := Input.is_action_pressed("pass")
+	if (not has_ball_context() or loose_mine) and press_seek and current_player != null and current_player.ball != null:
 		var b := current_player.ball
 		var chase_ok := b.possessor == null or b.possessor.team != current_player.team
 		var auto := _chase_direction() if chase_ok else Vector3.ZERO
-		# analógico apontando para longe da bola: o jogador quer correr para lá
 		if chase_ok and not (_move.length() > 0.5 and auto.length() > 0.05 and _move.normalized().dot(auto.normalized()) < -0.2):
 			chasing = true
 			if _move.length() > 0.3 and auto.length() > 0.05:
-				# Analógico junto: escolhe por onde chegar (ex.: dar a volta e
-				# pegar o adversário de frente, não por trás).
-				var mix := (auto.normalized() * 0.6 + _move.normalized() * 0.4).normalized()
-				_move = mix * maxf(auto.length(), 0.6)
+				var mix := (auto.normalized() * 0.65 + _move.normalized() * 0.35).normalized()
+				_move = mix * maxf(auto.length(), 0.7)
 			else:
 				_move = auto
-			_sprint = _chase_sprint
+			_sprint = _chase_sprint or Input.is_action_pressed("sprint")
 
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
@@ -104,13 +128,20 @@ func _physics_process(delta: float) -> void:
 		if Input.is_action_pressed("shoot_chip") and _shoot_hold >= 0.0:
 			_chip_pending = true
 	else:
-		# Sem a bola: CHUTE vira CARRINHO e PASSE vira TROCAR de jogador.
+		# Sem a bola: CHUTE vira CARRINHO e o botão de TOCAR vira BUSCAR A BOLA (e seleciona o marcador mais perto ao apertar).
 		_shoot_hold = -1.0
 		_pass_hold = -1.0
 		if Input.is_action_just_pressed("shoot"):
 			_queue(PlayerIntent.Action.SHOOT, 0.0)
 		if Input.is_action_just_pressed("pass"):
-			switch_requested.emit()
+			# Se outro jogador de linha do meu time estiver bem mais perto da bola, assume ele já buscando!
+			if current_player != null and current_player.ball != null:
+				var b_pos := current_player.ball.global_position
+				var my_d := current_player.global_position.distance_to(b_pos)
+				for mate in current_player.get_teammates():
+					if not mate.is_goalkeeper() and mate.global_position.distance_to(b_pos) + 1.2 < my_d:
+						switch_requested.emit()
+						break
 
 	_update_pass_aim()
 	var charge := -1.0
@@ -165,6 +196,9 @@ func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 			intent.set_action(_queued, _queued_power, aim, _pass_target)
 			_pass_target = null
 			_pass_dir = Vector3.ZERO
+		elif _queued == PlayerIntent.Action.THROUGH_PASS:
+			var aim_tp := _raw if _raw.length() > 0.2 else (current_player.facing if current_player != null else Vector3.ZERO)
+			intent.set_action(_queued, _queued_power, aim_tp)
 		else:
 			intent.set_action(_queued, _queued_power, _raw if _raw.length() > 0.2 else Vector3.ZERO)
 		intent.lofted = _queued_lofted

@@ -49,12 +49,12 @@ const TURN_SPEED_UP := 1.35
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 2.60
+@export var jog_speed := 2.85
 ## Velocidade máxima correndo (CORRER) — cadenciada, pesada e firme no chão.
 @export var sprint_speed := 4.35
 ## Velocidade máxima conduzindo a bola em velocidade (praticamente igual a correr sem bola).
-@export var speed_dribbling := 4.25
-@export var ball_speed_factor := 0.98
+@export var speed_dribbling := 4.30
+@export var ball_speed_factor := 0.99
 @export var acceleration := 7.8
 @export var deceleration := 7.2
 ## Velocidade de giro do corpo (rad/s).
@@ -131,6 +131,8 @@ var _kick_mirror := false
 var _pivot_dir := Vector3.ZERO
 var _kick_ik := false
 var _turn_speed_k := TURN_SPEED_UP
+var _auto_tackle_cooldown := 0.0
+var _is_through_pass := false
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -239,6 +241,7 @@ func _physics_process(delta: float) -> void:
 		State.MOVE:
 			_update_move(delta)
 			_update_actions(delta)
+			_try_auto_safe_tackle(delta)
 		State.ACTION:
 			_update_action(delta)
 		State.STUNNED:
@@ -488,13 +491,13 @@ func _update_actions(delta: float) -> void:
 	if _buffer_timer <= 0.0:
 		return
 	_buffer_timer -= delta
-	if _restart_lock and _buffer_action != PlayerIntent.Action.PASS:
+	if _restart_lock and _buffer_action not in [PlayerIntent.Action.PASS, PlayerIntent.Action.THROUGH_PASS]:
 		_buffer_timer = 0.0 # no reinício só vale o passe
 		return
 
 	var done := false
 	match _buffer_action:
-		PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT:
+		PlayerIntent.Action.PASS, PlayerIntent.Action.THROUGH_PASS, PlayerIntent.Action.SHOOT:
 			if ball_control.has_ball() and ball_control.can_kick() and _pivot_dir == Vector3.ZERO and not _restart_lock:
 				# Passe/chute para TRÁS: primeiro gira o corpo com a bola na sola
 				# (passinhos rápidos), depois toca de frente — preciso, sem "cair".
@@ -517,19 +520,14 @@ func _update_actions(delta: float) -> void:
 					if AnimationCatalog.has_clip(&"tackle"):
 						_start_slide(t, d)
 					else:
-						_begin_action(&"tackle", 0.15, 0.45, 0.0, _buffer_aim, null, 0.8)
-						_action_face = d
+						_start_standing_tackle(d)
 					done = true
 		PlayerIntent.Action.DRIBBLE:
 			if not ball_control.has_ball():
-				# DESARME em pé (botão de drible sem a bola).
-				var t2 := ball_control.find_tackle_target(POKE_RANGE + 0.5)
+				# DESARME em pé (botão de drible sem a bola): estica a perna para dar o bote!
+				var t2 := ball_control.find_tackle_target(POKE_RANGE + 0.55)
 				if t2 != null:
-					_begin_action(&"tackle", 0.18, 0.42, 0.0, _buffer_aim, null, 0.8)
-					_action_face = _flat_dir_to(ball.global_position)
-					# o pé vai DE VERDADE na bola com a parte interna (bote controlado)
-					ball_control.foot.begin(ball_control.foot.nearest_foot(), _action_face, 0.18,
-						FootContact.Mode.INSIDE, Callable(), 0.08)
+					_start_standing_tackle(_buffer_aim)
 					_buffer_timer = 0.0
 					_buffer_action = PlayerIntent.Action.NONE
 				return
@@ -550,12 +548,62 @@ func _update_actions(delta: float) -> void:
 		_buffer_action = PlayerIntent.Action.NONE
 
 
+func _start_standing_tackle(aim_dir: Vector3) -> void:
+	var b_dir := _flat_dir_to(ball.global_position) if ball != null else facing
+	_kick_mirror = _choose_kick_foot(b_dir)
+	var t_foot := -1.0 if _kick_mirror else 1.0
+	_begin_action(&"tackle", 0.16, 0.44, 1.0, aim_dir, null, 0.85)
+	_action_face = b_dir
+	# Estica a perna de bote na direção da bola com alcance amplo de IK
+	ball_control.foot.begin(t_foot, _action_face, 0.15, FootContact.Mode.INSIDE, Callable(), 0.12)
+
+
+## Bote automático inteligente e seguro: mesmo sem apertar o botão de bote, quando o
+## jogador defensor está colado na bola com linha limpa e baixo risco de falta, tenta
+## esticar a perna para roubar a bola!
+func _try_auto_safe_tackle(delta: float) -> void:
+	_auto_tackle_cooldown = maxf(_auto_tackle_cooldown - delta, 0.0)
+	if _auto_tackle_cooldown > 0.0 or state != State.MOVE or is_goalkeeper():
+		return
+	if ball == null or not ball.in_play or ball_control.has_ball():
+		return
+	var carrier := ball.possessor
+	if carrier == null or carrier.team == team or carrier.is_jumping():
+		return
+	var me := Vector3(global_position.x, 0.0, global_position.z)
+	var bp := Vector3(ball.global_position.x, 0.0, ball.global_position.z)
+	var cp := Vector3(carrier.global_position.x, 0.0, carrier.global_position.z)
+	var reach := (bp - me).length()
+	var dist_c := (cp - me).length()
+	if reach > 0.94 or dist_c < 0.56 or dist_c > 1.38:
+		return
+	var to_b := (bp - me).normalized() if reach > 0.05 else facing
+	if facing.dot(to_b) < 0.35:
+		return
+	# Verifica se o corpo/perna do adversário está no meio do caminho (evita cometer falta!)
+	var seg := bp - me
+	var tt := clampf((cp - me).dot(seg) / maxf(seg.length_squared(), 0.0001), 0.0, 1.0)
+	var dist_to_seg := (me + seg * tt).distance_to(cp)
+	if dist_to_seg < 0.38 and dist_c < reach + 0.05:
+		return # risco de acertar a perna do adversário -> não dá o bote automático
+	# Verifica se a bola está exposta à frente do adversário
+	var ball_from_c := (bp - cp).length()
+	var frontal := carrier.facing.dot((me - cp).normalized()) > 0.25
+	if ball_from_c < 0.38 and not frontal:
+		return
+	# Tenta o bote seguro algumas vezes quando a oportunidade é clara (~4.5 chances/s na janela ideal)
+	if _rng.randf() < delta * 4.5:
+		_auto_tackle_cooldown = 1.25
+		_start_standing_tackle(to_b)
+
+
 func _is_kick_action() -> bool:
 	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip", &"run_pass"]
 
 
 func _has_pending_kick() -> bool:
 	return _buffer_timer > 0.0 and (_buffer_action == PlayerIntent.Action.PASS \
+		or _buffer_action == PlayerIntent.Action.THROUGH_PASS \
 		or _buffer_action == PlayerIntent.Action.SHOOT)
 
 
@@ -583,7 +631,7 @@ func _kick_direction(a: PlayerIntent.Action, aim: Vector3, target: Node3D) -> Ve
 		kdir = _flat_dir_to(target.global_position)
 	elif a == PlayerIntent.Action.SHOOT and kdir.length() < 0.2:
 		kdir = _flat_dir_to(Field.goal_center(Team.other(team)))
-	elif a == PlayerIntent.Action.PASS and kdir.length() < 0.2:
+	elif a in [PlayerIntent.Action.PASS, PlayerIntent.Action.THROUGH_PASS] and kdir.length() < 0.2:
 		var mate := ball_control.pick_pass_target(facing, 180.0)
 		if mate != null:
 			kdir = _flat_dir_to(mate.global_position)
@@ -614,7 +662,8 @@ func _choose_kick_foot(dir: Vector3) -> bool:
 
 
 func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Node3D, lofted := false) -> void:
-	if a == PlayerIntent.Action.PASS and lofted and not is_human:
+	_is_through_pass = (a == PlayerIntent.Action.THROUGH_PASS)
+	if a in [PlayerIntent.Action.PASS, PlayerIntent.Action.THROUGH_PASS] and lofted and not is_human:
 		power = maxf(power, LONG_PASS_POWER) # passe por cima
 	var kdir := _kick_direction(a, aim, target)
 	_kick_mirror = _choose_kick_foot(kdir)
@@ -632,15 +681,15 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		# Humano: segurar = passe RASTEIRO mais forte; só sobe arrastando o dedo.
 		var long := lofted or (not is_human and power >= LONG_PASS_POWER)
 		# Pequena preparação antes do toque, como no futebol de verdade.
-		var contact := 0.28 if long else 0.2
+		var contact := 0.26 if long else 0.19
 		var kind_p: StringName = &"long_pass" if long else &"pass"
 		var hv0 := get_flat_velocity()
-		if not long and hv0.length() > 2.6 and kdir != Vector3.ZERO and hv0.normalized().dot(kdir) > 0.35 \
+		if not long and hv0.length() > 2.4 and kdir != Vector3.ZERO and hv0.normalized().dot(kdir) > 0.35 \
 				and AnimationCatalog.has_clip(&"shoot"):
 			# CORRENDO: toque de passe na própria passada da corrida (clipe de
 			# chute em corrida) — o corpo segue com o embalo, sem frear seco.
 			kind_p = &"run_pass"
-			contact = 0.18
+			contact = 0.17
 		_begin_action(kind_p, contact, contact + 0.22, power, aim, target, 0.5)
 		if target != null:
 			_action_face = _flat_dir_to(target.global_position)
@@ -855,8 +904,14 @@ func _do_contact() -> void:
 	_action_contact_done = true
 	match _action_kind:
 		&"pass", &"long_pass", &"run_pass":
-			if ball_control.execute_pass(_action_power, _action_aim, _action_target, _action_lofted):
+			var ok := false
+			if _is_through_pass:
+				ok = ball_control.execute_through_pass(_action_power, _action_aim, _action_lofted)
+			else:
+				ok = ball_control.execute_pass(_action_power, _action_aim, _action_target, _action_lofted)
+			if ok:
 				_restart_lock = false
+			_is_through_pass = false
 		&"chip":
 			ball_control.execute_shot(_action_power, _action_aim, _action_precise, true)
 		&"shoot", &"shoot_power":

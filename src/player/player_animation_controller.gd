@@ -250,7 +250,7 @@ func physics_update(delta: float) -> void:
 	else:
 		_prev_want_dir = player.facing
 	_feint_lean = lerpf(_feint_lean, feint_target, 1.0 - exp(-15.0 * delta))
-	var gingado := 0.35
+	var gingado := 0.65
 	if player.visual.has_method("set_posture_dynamics"):
 		player.visual.call("set_posture_dynamics", run_lean, _accel_lean, turn_bank, _feint_lean, gingado)
 	elif player.visual.has_method("set_run_lean"):
