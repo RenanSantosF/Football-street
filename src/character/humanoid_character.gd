@@ -94,6 +94,16 @@ func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float,
 		lean.dribble_gingado = clampf(gingado, 0.0, 1.0)
 
 
+func set_shield_posture(shield_dir_world: Vector3, weight: float) -> void:
+	if lean != null:
+		lean.set_shield_posture(shield_dir_world, weight)
+
+
+func set_action_posture(kind: StringName, phase_ratio: float, power: float, side: float = 1.0) -> void:
+	if lean != null:
+		lean.set_action_posture(kind, phase_ratio, power, side)
+
+
 func set_ball_gaze(ball_world_pos: Vector3, weight: float) -> void:
 	if lean != null:
 		lean.set_ball_gaze(ball_world_pos, weight)
@@ -347,17 +357,17 @@ func _fix_arm_binds() -> void:
 	var bone_xforms: Array[Transform3D] = []
 	var has_diff := false
 	for i in skin.get_bind_count():
-		var bname := skin.get_bind_name(i)
+		var bname := String(skin.get_bind_name(i))
 		var bidx := skeleton.find_bone(bname)
-		if bidx >= 0:
+		var is_arm := bname.contains("Arm") or bname.contains("Hand") or bname.contains("Index") \
+			or bname.contains("Middle") or bname.contains("Ring") or bname.contains("Pinky") \
+			or bname.contains("Little") or bname.contains("Thumb")
+		if bidx >= 0 and is_arm:
 			var rest := skeleton.get_bone_global_rest(bidx)
 			var bind := skin.get_bind_pose(i)
 			var m := rest * bind
 			bone_xforms.append(m)
-			if (m.origin.length_squared() > 0.0004 or absf(m.basis.get_rotation_quaternion().w - 1.0) > 0.01) \
-					and (String(bname).contains("Arm") or String(bname).contains("Hand") or String(bname).contains("Index") \
-					or String(bname).contains("Middle") or String(bname).contains("Ring") or String(bname).contains("Pinky") \
-					or String(bname).contains("Little") or String(bname).contains("Thumb")):
+			if m.origin.length_squared() > 0.0004 or absf(m.basis.get_rotation_quaternion().w - 1.0) > 0.01:
 				has_diff = true
 		else:
 			bone_xforms.append(Transform3D.IDENTITY)
@@ -404,9 +414,12 @@ func _fix_arm_binds() -> void:
 
 	var new_skin := skin.duplicate() as Skin
 	for i in new_skin.get_bind_count():
-		var bname := new_skin.get_bind_name(i)
+		var bname := String(new_skin.get_bind_name(i))
 		var bidx := skeleton.find_bone(bname)
-		if bidx >= 0:
+		var is_arm := bname.contains("Arm") or bname.contains("Hand") or bname.contains("Index") \
+			or bname.contains("Middle") or bname.contains("Ring") or bname.contains("Pinky") \
+			or bname.contains("Little") or bname.contains("Thumb")
+		if bidx >= 0 and is_arm:
 			new_skin.set_bind_pose(i, skeleton.get_bone_global_rest(bidx).affine_inverse())
 	body_mesh.skin = new_skin
 

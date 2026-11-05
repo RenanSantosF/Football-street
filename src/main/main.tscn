@@ -61,7 +61,3 @@ script = ExtResource("10_aim")
 human_input = NodePath("../HumanInput")
 ball = NodePath("../Ball")
 
-[node name="Pedestrians" type="Node3D" parent="."]
-script = ExtResource("11_ped")
-ball_path = NodePath("../Ball")
-

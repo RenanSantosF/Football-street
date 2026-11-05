@@ -6,7 +6,7 @@ extends RefCounted
 ## e consumida pelo Player. Humano e IA usam exatamente a mesma interface,
 ## então os dois obedecem às mesmas regras de movimento, física e animação.
 
-enum Action { NONE, PASS, SHOOT, DRIBBLE }
+enum Action { NONE, PASS, SHOOT, DRIBBLE, THROUGH_PASS }
 
 ## Direção desejada no mundo (plano XZ). Comprimento 0..1 = intensidade.
 var move := Vector3.ZERO

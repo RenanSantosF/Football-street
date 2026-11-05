@@ -61,7 +61,7 @@ offset_bottom = -32.0
 mouse_filter = 2
 script = ExtResource("3_btn")
 action = &"pass"
-label = "PASSE"
+label = "TOCAR"
 color = Color(0.3, 0.6, 0.95, 0.35)
 
 alt_action = &"pass_lob"
@@ -98,6 +98,7 @@ action = &"sprint"
 label = "CORRER"
 color = Color(0.35, 0.85, 0.45, 0.35)
 font_size = 18
+alt_action = &"through_pass"
 
 
 [node name="Score" type="Label" parent="."]

@@ -10,7 +10,7 @@ enum Phase { IDLE, REACH, HOLD, RELEASE }
 ## chute (peito do pé), amortecer (recepção), ou parte externa (três dedos).
 enum Mode { INSIDE = 0, SOLE = 1, KICK = 2, CUSHION = 3, OUTSIDE = 5 }
 
-const ANKLE_HEIGHT := 0.075
+const ANKLE_HEIGHT := 0.096
 const MAX_REACH := 0.88
 const RELEASE_TIME := 0.16
 
@@ -257,23 +257,20 @@ func _target_now(t: float) -> Vector3:
 	var p: Vector3
 	match mode:
 		Mode.SOLE:
-			# Pisada na bola estilo eFootball: sola do pé sobre o topo da bola, levemente à frente
-			p = b - dir * 0.03 + Vector3.UP * 0.082
+			p = b - dir * 0.13 + Vector3.UP * (Ball.RADIUS + 0.095)
 		Mode.KICK:
-			# Chute / finalização: peito do pé centralizado atrás da bola com firmeza mecânica
-			p = b - dir * 0.125 + right * side * 0.015
-			p.y = maxf(b.y - 0.015, ANKLE_HEIGHT)
+			p = b - dir * 0.23 + right * side * 0.025
+			p.y = maxf(b.y, ANKLE_HEIGHT)
 		Mode.CUSHION:
-			# Recepção amortecida: abre a face interna em ângulo receptivo à frente da bola
-			p = b + dir * 0.10 + right * side * 0.035
+			p = b - dir * 0.18 + right * side * 0.055
 			p.y = ANKLE_HEIGHT
 		Mode.OUTSIDE:
-			# Três dedos / parte externa: contato dinâmico lateral
-			p = b - dir * 0.12 - right * side * 0.04
+			# parte externa do pé (três dedos): atrás da bola e levemente por dentro, sem entrar na bola
+			p = b - dir * 0.21 - right * side * 0.055
 			p.y = ANKLE_HEIGHT
 		_:
-			# Passe de chapa / condução interna: face interna envolvente
-			p = b - dir * 0.13 + right * side * 0.038
+			# parte de dentro do pé (chapa): atrás da bola e ao lado da superfície da bola
+			p = b - dir * 0.19 + right * side * 0.065
 			p.y = ANKLE_HEIGHT
 	var v := player.visual
 	_reachable = true

@@ -67,29 +67,33 @@ func _update_button_labels() -> void:
 	var incoming := human_input != null and human_input.current_player != null \
 		and human_input.current_player.ball != null and human_input.current_player.ball.possessor == null \
 		and human_input.current_player.ball.pass_target == human_input.current_player
-	sprint_button.alt_hint = ""
 	if with_ball and incoming:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "de primeira"
-		pass_button.set_label("PASSE")
+		pass_button.set_label("TOCAR")
 		pass_button.alt_hint = "de primeira"
 		dribble_button.set_label("DRIBLE")
 		dribble_button.alt_hint = ""
+		sprint_button.set_label("CORRER")
+		sprint_button.alt_hint = "toque: profundidade"
 	elif with_ball:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "arraste: cavadinha"
-		pass_button.set_label("PASSE")
+		pass_button.set_label("TOCAR")
 		pass_button.alt_hint = "arraste: por cima"
 		dribble_button.set_label("DRIBLE")
 		dribble_button.alt_hint = ""
+		sprint_button.set_label("CORRER")
+		sprint_button.alt_hint = "toque: profundidade"
 	else:
 		shoot_button.set_label("CARRINHO")
 		shoot_button.alt_hint = ""
-		pass_button.set_label("TROCAR")
-		pass_button.alt_hint = ""
-		dribble_button.set_label("DESARME")
-		dribble_button.alt_hint = ""
-		sprint_button.alt_hint = "segure: buscar"
+		pass_button.set_label("BUSCAR")
+		pass_button.alt_hint = "segure: buscar bola"
+		dribble_button.set_label("BOTE")
+		dribble_button.alt_hint = "esticar perna"
+		sprint_button.set_label("CORRER")
+		sprint_button.alt_hint = ""
 
 
 # --- Placar ------------------------------------------------------------------------
@@ -247,7 +251,7 @@ func _build_minimap() -> void:
 
 ## Dica rápida dos controles no começo da partida.
 func _show_hints() -> void:
-	var l := _label("Segure CHUTE e use o analógico para MIRAR  •  Arraste PASSE: toque por cima\nArraste CHUTE: cavadinha  •  Sem a bola: segure CORRER = buscar/cercar, DESARME, CARRINHO, TROCAR", 18, Color(1, 1, 1, 0.95))
+	var l := _label("TOCAR (sem bola = BUSCAR)  •  CORRER (toque com bola = PASSE EM PROFUNDIDADE)\nDRIBLE separado (sem bola = BOTE)  •  Arraste CHUTE: cavadinha", 18, Color(1, 1, 1, 0.95))
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	l.grow_horizontal = Control.GROW_DIRECTION_BOTH
