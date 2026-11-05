@@ -16,9 +16,9 @@ extends RefCounted
 ## Posições dos BlendSpaces = velocidades naturais das passadas (m/s,
 ## AnimationCatalog), então a passada casa com o deslocamento real.
 
-const XFADE_LOCOMOTION := 0.24
-const XFADE_ACTION := 0.18
-const XFADE_ACTION_OUT := 0.28
+const XFADE_LOCOMOTION := 0.35
+const XFADE_ACTION := 0.28
+const XFADE_ACTION_OUT := 0.36
 
 const BASE_STATES: Array[StringName] = [&"Locomotion", &"Mark"]
 

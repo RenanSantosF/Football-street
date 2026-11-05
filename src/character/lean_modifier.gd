@@ -232,7 +232,7 @@ func _process_modification() -> void:
 		_smooth_turn = lerpf(_smooth_turn, turn_lean, smooth_k)
 		_smooth_feint = lerpf(_smooth_feint, feint_lean, 1.0 - exp(-15.0 * dt))
 		_smooth_gingado = lerpf(_smooth_gingado, dribble_gingado, smooth_k)
-		var step_freq := lerpf(1.8, 3.4, clampf(_smooth_amount, 0.0, 1.0))
+		var step_freq := lerpf(1.3, 2.3, clampf(_smooth_amount, 0.0, 1.0))
 		_gingado_phase = wrapf(_gingado_phase + dt * step_freq * TAU, 0.0, TAU)
 		var gaze_k := 1.0 - exp(-8.5 * dt)
 		_smooth_gaze = lerpf(_smooth_gaze, gaze_weight, gaze_k)
@@ -414,21 +414,25 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 		var e_ul_r := q_ul_r.get_euler()
 		var e_ul_l := q_ul_l.get_euler()
 		stride_phase = clampf((e_ul_r.x - e_ul_l.x) / deg_to_rad(50.0), -1.0, 1.0)
-		if _smooth_amount > 0.04 and action_kind == &"":
-			var stride_boost := 0.24 * clampf(_smooth_amount * 1.35, 0.15, 1.0)
-			var neutral_x := deg_to_rad(-11.0)
-			for s_leg in [1.0, -1.0]:
-				var ul_b: int = _hip_bones[s_leg]
-				var ll_b: int = _knee_bones[s_leg]
+		# Postura de pernas abertas atlética e proteção de bola com o corpo:
+		var shield_spread := _smooth_shield * deg_to_rad(7.5)
+		for s_leg in [1.0, -1.0]:
+			var ul_b: int = _hip_bones[s_leg]
+			var ll_b: int = _knee_bones[s_leg]
+			if ul_b >= 0:
 				var e_ul := sk.get_bone_pose_rotation(ul_b).get_euler()
-				var swing_dx := e_ul.x - neutral_x
-				# Amplia tanto o avanço do joelho à frente quanto a extensão traseira da coxa
-				var ext_bonus := deg_to_rad(5.5) * _smooth_amount if swing_dx > 0.0 else deg_to_rad(-2.5) * _smooth_amount
-				var new_ul_x := clampf(neutral_x + swing_dx * (1.0 + stride_boost) + ext_bonus, deg_to_rad(-82.0), deg_to_rad(28.0))
-				sk.set_bone_pose_rotation(ul_b, Quaternion.from_euler(Vector3(new_ul_x, e_ul.y, e_ul.z)))
-				# Quando a coxa está estendida atrás ou à frente, abre levemente a canela para passada fluida
-				if ll_b >= 0 and swing_dx > deg_to_rad(4.0):
-					_rotate_bone_local(sk, ll_b, deg_to_rad(-8.0) * _smooth_amount, 0.0, 0.0)
+				var spread_z := s_leg * shield_spread
+				if _smooth_amount > 0.04 and action_kind == &"":
+					var stride_boost := 0.24 * clampf(_smooth_amount * 1.35, 0.15, 1.0)
+					var neutral_x := deg_to_rad(-11.0)
+					var swing_dx := e_ul.x - neutral_x
+					var ext_bonus := deg_to_rad(5.5) * _smooth_amount if swing_dx > 0.0 else deg_to_rad(-2.5) * _smooth_amount
+					var new_ul_x := clampf(neutral_x + swing_dx * (1.0 + stride_boost) + ext_bonus, deg_to_rad(-82.0), deg_to_rad(28.0))
+					sk.set_bone_pose_rotation(ul_b, Quaternion.from_euler(Vector3(new_ul_x, e_ul.y, e_ul.z + spread_z)))
+					if ll_b >= 0 and swing_dx > deg_to_rad(4.0):
+						_rotate_bone_local(sk, ll_b, deg_to_rad(-8.0) * _smooth_amount, 0.0, 0.0)
+				elif shield_spread > 0.001:
+					sk.set_bone_pose_rotation(ul_b, Quaternion.from_euler(Vector3(e_ul.x, e_ul.y, e_ul.z + spread_z)))
 
 	var e_spine := sk.get_bone_pose_rotation(_spine).get_euler()
 	var e_chest := sk.get_bone_pose_rotation(_chest).get_euler()

@@ -224,15 +224,15 @@ func physics_update(delta: float) -> void:
 	if _stride > 0.08:
 		# Posição contínua no BlendSpace2D (Godot interpola naturalmente entre idle, walk, jog, run e sprint)
 		pos = clampf(_stride, 0.0, 4.35)
-		# Escala de tempo mantém cadência anatômica natural sem passar em câmera lenta artificial
-		time_scale = clampf(_stride / maxf(pos, 0.8), 0.78, 1.35)
+		# Escala de tempo mantém cadência anatômica natural e com peso físico nos pés
+		time_scale = clampf(_stride / maxf(pos, 0.8), 0.65, 0.98)
 
 	_clip_x = pos
-	_blend_pos = lerpf(_blend_pos, pos, 1.0 - exp(-12.0 * delta))
+	_blend_pos = lerpf(_blend_pos, pos, 1.0 - exp(-7.0 * delta))
 	if absf(_blend_pos - pos) < 0.01:
 		_blend_pos = pos
 
-	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-14.0 * delta))
+	_time_scale = lerpf(_time_scale, time_scale, 1.0 - exp(-9.0 * delta))
 	var ball_target := 1.0 if has_b else 0.0
 	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))

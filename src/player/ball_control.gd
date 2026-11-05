@@ -499,13 +499,13 @@ func _conduct(delta: float) -> void:
 	var along := off.dot(move_dir)
 	var lat_err := absf(off.dot(right) - lat_pocket)
 	var turn_ang := move_dir.angle_to(w)
-	# Se a bola está saindo da linha da passada (curva, inversão de direção, atraso na arrancada
-	# ou escapando além de 0.48m), corrige imediatamente a velocidade da bola para o bolso da passada.
-	if along < 0.26 or d > 0.48 or lat_err > 0.14 or turn_ang > deg_to_rad(15.0) or bv.dot(w) < target_speed * 0.78:
-		var guide_vel := w * target_speed + to_ideal * 6.8
-		var blend := clampf(delta * 14.0, 0.0, 1.0)
-		if along < 0.20 or d > 0.55 or turn_ang > deg_to_rad(28.0):
-			blend = clampf(delta * 22.0, 0.0, 1.0)
+	# Condução orgânica sem efeito "ímã": a bola rola solta com física real,
+	# e a assistência suave só atua em limites extremos de desvio (> 0.68m) com blend sutil e imperceptível.
+	if along < 0.18 or d > 0.68 or lat_err > 0.22 or turn_ang > deg_to_rad(24.0):
+		var guide_vel := w * target_speed + to_ideal * 2.2
+		var blend := clampf(delta * 4.5, 0.0, 0.65)
+		if along < 0.12 or d > 0.75 or turn_ang > deg_to_rad(38.0):
+			blend = clampf(delta * 7.5, 0.0, 0.85)
 		var next_bv := bv.lerp(guide_vel, blend)
 		ball.touch(Vector3(next_bv.x, 0.0, next_bv.z), player)
 
@@ -964,6 +964,10 @@ func _header(aim: Vector3, power: float, shot: bool) -> void:
 
 # --- Ações com a bola ------------------------------------------------------------
 
+func execute_through_pass(power: float, aim: Vector3, lofted := false) -> bool:
+	return execute_pass(power, aim, null, lofted)
+
+
 func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -> bool:
 	if not can_kick():
 		return false
@@ -987,20 +991,20 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 		if long:
 			vel = lofted_velocity(from, from + _flat(dest - from) * 0.92, lerpf(32.0, 50.0, power))
 		else:
-			# Passe rasteiro com peso: chega firme no pé do companheiro sem virar um foguete.
-			vel = ground_pass_velocity(from, dest, lerpf(3.4, 5.6, power))
-			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(7.2, 13.2, power), 14.5)
+			# Passe rasteiro com peso e força padrão assertiva desde o toque único
+			vel = ground_pass_velocity(from, dest, lerpf(4.8, 6.8, power))
+			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(11.0, 16.5, power), 18.0)
 	else:
 		# Passe em profundidade (para o espaço): vai quem estiver melhor para chegar.
-		var dest := from + dir * lerpf(6.0, 14.5, power)
+		var dest := from + dir * lerpf(7.0, 16.0, power)
 		dest = Field.clamp_inside(dest, 0.5)
 		receiver = _best_runner_to(dest)
 		if long:
 			vel = lofted_velocity(from, dest, lerpf(34.0, 50.0, power))
 		else:
-			# Para o espaço: a bola tem que MORRER perto do ponto (não sair do campo).
-			vel = ground_pass_velocity(from, dest, lerpf(1.2, 2.5, power))
-			vel = vel.normalized() * clampf(vel.length() * align_k, 4.2, 12.5)
+			# Para o espaço: passe firme na corrida
+			vel = ground_pass_velocity(from, dest, lerpf(2.2, 3.8, power))
+			vel = vel.normalized() * clampf(vel.length() * align_k, 8.5, 14.8)
 	# Precisão: toque curto praticamente no pé; passe forte ou desalinhado um pouco menos.
 	var err := deg_to_rad(0.25 + 0.75 * power)
 	if align_dot < 0.2:
@@ -1038,7 +1042,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 	var from := ball.global_position
 	var ty := _rng.randf_range(0.12, 0.46)
 	var target := Vector3(goal_x, ty, _choose_shot_z(from, goal_x, aim))
-	var speed := lerpf(9.5, 16.2, power)
+	var speed := lerpf(14.2, 22.0, power)
 	var flat_to := _flat(target - from)
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
@@ -1073,7 +1077,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 ## velocidade realista de futebol de rua, sem sair como um foguete).
 func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
 	var from := ball.global_position
-	var speed := lerpf(9.5, 16.2, power)
+	var speed := lerpf(14.2, 22.0, power)
 	var spread := deg_to_rad(lerpf(0.4, 1.8, power))
 	var facing_dot := player.facing.dot(dir)
 	if facing_dot < 0.3:
