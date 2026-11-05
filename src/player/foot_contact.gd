@@ -257,20 +257,23 @@ func _target_now(t: float) -> Vector3:
 	var p: Vector3
 	match mode:
 		Mode.SOLE:
-			p = b - dir * 0.05 + Vector3.UP * 0.09
+			# Pisada na bola estilo eFootball: sola do pé sobre o topo da bola, levemente à frente
+			p = b - dir * 0.03 + Vector3.UP * 0.082
 		Mode.KICK:
-			p = b - dir * 0.13 + right * side * 0.02
-			p.y = maxf(b.y - 0.02, ANKLE_HEIGHT)
+			# Chute / finalização: peito do pé centralizado atrás da bola com firmeza mecânica
+			p = b - dir * 0.125 + right * side * 0.015
+			p.y = maxf(b.y - 0.015, ANKLE_HEIGHT)
 		Mode.CUSHION:
-			p = b + dir * 0.12 + right * side * 0.03
+			# Recepção amortecida: abre a face interna em ângulo receptivo à frente da bola
+			p = b + dir * 0.10 + right * side * 0.035
 			p.y = ANKLE_HEIGHT
 		Mode.OUTSIDE:
-			# parte externa do pé (três dedos): atrás da bola e levemente por dentro
-			p = b - dir * 0.13 - right * side * 0.035
+			# Três dedos / parte externa: contato dinâmico lateral
+			p = b - dir * 0.12 - right * side * 0.04
 			p.y = ANKLE_HEIGHT
 		_:
-			# parte de dentro do pé (chapa): atrás da bola, um pouco do lado do pé
-			p = b - dir * 0.14 + right * side * 0.03
+			# Passe de chapa / condução interna: face interna envolvente
+			p = b - dir * 0.13 + right * side * 0.038
 			p.y = ANKLE_HEIGHT
 	var v := player.visual
 	_reachable = true

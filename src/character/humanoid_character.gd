@@ -186,6 +186,9 @@ func _build(wanted: StringName) -> void:
 	var height := body_mesh.get_aabb().size.y if body_mesh != null else 1.8
 	_model_scale = TARGET_HEIGHT / maxf(height, 0.1)
 	model.scale = Vector3.ONE * _model_scale
+	# Ajuste fino de contato com o solo: assenta a sola do pé rente ao asfalto (Y = 0.0),
+	# eliminando a folga de flutuação sobre a sombra observada nas capturas.
+	model.position.y = -0.042
 
 	if body_mesh != null and not cfg.get("original_skin", false):
 		var original := body_mesh.mesh.surface_get_material(0) as BaseMaterial3D
