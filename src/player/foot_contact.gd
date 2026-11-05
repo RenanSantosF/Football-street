@@ -10,7 +10,7 @@ enum Phase { IDLE, REACH, HOLD, RELEASE }
 ## chute (peito do pé), amortecer (recepção), ou parte externa (três dedos).
 enum Mode { INSIDE = 0, SOLE = 1, KICK = 2, CUSHION = 3, OUTSIDE = 5 }
 
-const ANKLE_HEIGHT := 0.075
+const ANKLE_HEIGHT := 0.096
 const MAX_REACH := 0.88
 const RELEASE_TIME := 0.16
 
@@ -257,20 +257,20 @@ func _target_now(t: float) -> Vector3:
 	var p: Vector3
 	match mode:
 		Mode.SOLE:
-			p = b - dir * 0.05 + Vector3.UP * 0.09
+			p = b - dir * 0.13 + Vector3.UP * (Ball.RADIUS + 0.095)
 		Mode.KICK:
-			p = b - dir * 0.13 + right * side * 0.02
-			p.y = maxf(b.y - 0.02, ANKLE_HEIGHT)
+			p = b - dir * 0.23 + right * side * 0.025
+			p.y = maxf(b.y, ANKLE_HEIGHT)
 		Mode.CUSHION:
-			p = b + dir * 0.12 + right * side * 0.03
+			p = b - dir * 0.18 + right * side * 0.055
 			p.y = ANKLE_HEIGHT
 		Mode.OUTSIDE:
-			# parte externa do pé (três dedos): atrás da bola e levemente por dentro
-			p = b - dir * 0.13 - right * side * 0.035
+			# parte externa do pé (três dedos): atrás da bola e levemente por dentro, sem entrar na bola
+			p = b - dir * 0.21 - right * side * 0.055
 			p.y = ANKLE_HEIGHT
 		_:
-			# parte de dentro do pé (chapa): atrás da bola, um pouco do lado do pé
-			p = b - dir * 0.14 + right * side * 0.03
+			# parte de dentro do pé (chapa): atrás da bola e ao lado da superfície da bola
+			p = b - dir * 0.19 + right * side * 0.065
 			p.y = ANKLE_HEIGHT
 	var v := player.visual
 	_reachable = true

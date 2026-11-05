@@ -246,7 +246,7 @@ const LOCOMOTION_POINTS: Array = [
 	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
 ]
 const LOCOMOTION_BALL_POINTS: Array = [
-	[&"idle_ball", 0.0], [&"walk", 1.35], [&"dribble", 2.05], [&"run", 3.15], [&"sprint", 4.15],
+	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
 ]
 ## Marcação: velocidade local (x = para a direita, y = para a frente), m/s.
 const MARK_POINTS: Array = [
@@ -1118,16 +1118,9 @@ static func _make_in_place(prefix: StringName, source: AnimationLibrary) -> Anim
 				var v: Vector3 = anim.position_track_interpolate(track, minf(i / ROOT_MOTION_FPS, anim.length))
 				curve.append(Vector3(v.x - first.x, 0.0, v.z - first.z))
 			root_curves[key] = curve
-			if contact >= 0.0 or _is_root_motion_prefix(prefix):
-				for k in anim.track_get_key_count(track):
-					var v: Vector3 = anim.track_get_key_value(track, k)
-					anim.track_set_key_value(track, k, Vector3(0.0, v.y, 0.0))
-			else:
-				for k in anim.track_get_key_count(track):
-					var v: Vector3 = anim.track_get_key_value(track, k)
-					var f := anim.track_get_key_time(track, k) / maxf(anim.length, 0.001)
-					var horiz := (v - drift * f) - Vector3(first.x, 0.0, first.z)
-					anim.track_set_key_value(track, k, Vector3(horiz.x * 0.45, v.y, horiz.z * 0.35))
+			for k in anim.track_get_key_count(track):
+				var v: Vector3 = anim.track_get_key_value(track, k)
+				anim.track_set_key_value(track, k, Vector3(0.0, v.y, 0.0))
 			_normalize_hips_vertical(prefix, anim, track)
 			root_motion[String(prefix) + "/" + String(anim_name)] = Vector3(last.x - first.x, 0.0, last.z - first.z)
 		if _is_turn_prefix(prefix):
@@ -1136,10 +1129,9 @@ static func _make_in_place(prefix: StringName, source: AnimationLibrary) -> Anim
 	return lib
 
 
-## Normaliza Hips.y para que todos os clipes de locomoção, condução, espera e
-## toque na bola compartilhem a mesma linha de base anatômica (~0.935m), sem
-## saltos verticais a cada meio segundo quando o BlendSpace2D mistura idle_ball,
-## walk, dribble, run e sprint.
+## Normaliza Hips.y (em unidades de motion_scale, onde 1.0 = altura de descanso
+## com a sola rente ao chão) para que todos os clipes de locomoção, condução e
+## espera mantenham os pés na altura exata do solo sem afundar e sem saltos.
 static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track: int) -> void:
 	var n_k := anim.track_get_key_count(track)
 	if n_k == 0:
@@ -1157,28 +1149,28 @@ static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track:
 	max_dev = maxf(max_dev, 0.001)
 
 	if prefix in STEADY_LOCOMOTION_PREFIXES:
-		var base_y := 0.938
-		var amp := 0.008
+		var base_y := 0.985
+		var amp := 0.006
 		if prefix in [&"m_breathing", &"m_soccer_idle", &"m_offensive_idle", &"m_gk_idle", &"m_warmup", &"m_argue"]:
-			base_y = 0.942
-			amp = 0.003
+			base_y = 0.992
+			amp = 0.002
 		elif prefix in [&"m_walking", &"m_strafe_l_walk", &"m_walk_strafe_l", &"m_start_walk", &"m_walk_stop"]:
-			base_y = 0.940
-			amp = 0.006
+			base_y = 0.988
+			amp = 0.005
 		elif prefix in [&"m_dribble", &"m_slow_jog", &"m_jog", &"m_strafe_l_jog", &"m_strafe_r_jog", &"m_diag_l", &"m_diag_r"]:
-			base_y = 0.934
-			amp = 0.008
+			base_y = 0.982
+			amp = 0.006
 		elif prefix in [&"m_run", &"m_sprint", &"m_idle_to_sprint", &"m_strafe_l_fast", &"m_strafe_r_fast"]:
-			base_y = 0.928
-			amp = 0.010
+			base_y = 0.976
+			amp = 0.008
 		for k in n_k:
 			var v: Vector3 = anim.track_get_key_value(track, k)
 			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)
 			v.y = base_y + norm_dy * amp
 			anim.track_set_key_value(track, k, v)
 	elif prefix in UPRIGHT_ACTION_PREFIXES:
-		var base_y := 0.932
-		var amp := 0.022
+		var base_y := 0.984
+		var amp := 0.018
 		for k in n_k:
 			var v: Vector3 = anim.track_get_key_value(track, k)
 			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)
@@ -1186,7 +1178,7 @@ static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track:
 			anim.track_set_key_value(track, k, v)
 	elif max_y > 1.35:
 		# Clipes de queda/carrinho/salto que vieram com escala residual alta
-		var scale_y := 0.94 / maxf(max_y, 0.94)
+		var scale_y := 0.985 / maxf(max_y, 0.985)
 		for k in n_k:
 			var v: Vector3 = anim.track_get_key_value(track, k)
 			v.y *= scale_y

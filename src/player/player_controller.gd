@@ -35,7 +35,7 @@ const IDLE_TURN_RATE := 1.6
 const KICK_ADJUST_SPEED := 1.6
 ## Giro máximo do corpo (rad/s) andando/correndo.
 const MAX_TURN_RATE := 9.0
-const MAX_TURN_RATE_BALL := 7.0
+const MAX_TURN_RATE_BALL := 8.8
 const DODGE_CHANCE_AI := 0.35
 const DODGE_CHANCE_HUMAN := 0.25
 ## Tempo caído antes de levantar (quando não há clipe de levantar).
@@ -52,15 +52,15 @@ const TURN_SPEED_UP := 1.35
 @export var jog_speed := 2.60
 ## Velocidade máxima correndo (CORRER) — cadenciada, pesada e firme no chão.
 @export var sprint_speed := 4.35
-## Velocidade máxima conduzindo a bola em velocidade.
-@export var speed_dribbling := 3.45
-@export var ball_speed_factor := 0.90
+## Velocidade máxima conduzindo a bola em velocidade (praticamente igual a correr sem bola).
+@export var speed_dribbling := 4.25
+@export var ball_speed_factor := 0.98
 @export var acceleration := 7.8
 @export var deceleration := 7.2
 ## Velocidade de giro do corpo (rad/s).
 @export var turn_speed := 6.6
-## Mais lento com a bola: dá peso ao girar (lerp_angle).
-@export var turn_speed_with_ball := 4.3
+## Giro ágil com a bola: mesma fluidez de correr sem a bola.
+@export var turn_speed_with_ball := 6.5
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -307,87 +307,18 @@ func _update_move(delta: float) -> void:
 		# Chute/passe pedido com a bola um pouco à frente: ir até ela para finalizar.
 		var to_ball := ball_control.ball_offset()
 		desired = to_ball.normalized() * sprint_speed * 1.08 if to_ball.length() > 0.05 else desired
-	elif has_ball and ball_control.is_reverse_pulling():
-		desired = Vector3.ZERO # pé de apoio cravado: freia firme girando por cima da bola
-	elif has_ball and ball_control.is_dragging():
-		# girando com a bola na sola: passos curtos enquanto o corpo vira
-		desired = input.normalized() * minf(max_speed, 0.9) * clampf(facing.dot(input.normalized()) + 0.3, 0.0, 1.0)
-	elif has_ball and input.length() > 0.1:
-		var w := input.normalized()
-		var ap := ball_control.approach_point(w)
-		if ap != Vector3.INF:
-			# A bola não está à frente na nova direção (passada longa, virada):
-			# PRIMEIRO alcança a bola, por trás dela em relação à nova direção,
-			# e só então dá o toque. Nunca larga a bola para trás.
-			var to := ap - global_position
-			to.y = 0.0
-			# acompanha a velocidade da bola (feed-forward) e ainda fecha a distância
-			var bvf := ball.flat_velocity()
-			desired = (bvf + to / 0.22).limit_length(sprint_speed * 1.05) if to.length() > 0.08 else bvf + w * jog_speed * 0.3
-		elif _hold_for_side_touch(w):
-			# TOQUE DE LADO: primeiro o pé (o de fora: para ir à esquerda, a parte
-			# de dentro do pé direito no lado direito da bola), depois o corpo.
-			# Até o pé encostar, o corpo segue reto (sem girar antes da bola).
-			desired = get_flat_velocity()
-		else:
-			# Corre LIVRE atrás da bola: os tapas a mandam à frente e a próxima
-			# passada a alcança. Só acelera além se ela fugiu demais, e só segura
-			# se a bola ficou debaixo do corpo, mais lenta.
-			desired += ball_control.catch_up_velocity(w)
-			var off_b := ball_control.ball_offset()
-			var along_b := off_b.dot(w)
-			var bspeed := ball.flat_velocity().dot(w)
-			if along_b < 0.12 and desired.length() > bspeed + 0.8:
-				desired = desired.normalized() * maxf(bspeed + 0.8, 0.8)
-	elif has_ball:
+	elif has_ball and input.length() <= 0.1:
 		# Soltou o analógico: freia firme no lugar e estabiliza o corpo junto à bola.
-		var off := ball_control.ball_offset()
-		var bv := ball.flat_velocity()
-		if off.length() < 0.32 and bv.length() < 0.35:
-			# bola já dominada junto ao pé: para completamente no lugar sem deslizar para trás
-			desired = Vector3.ZERO
-		elif off.length() > 0.45 and not ball_control.is_trapping():
-			var stop_at := ball.predict_ground_position(0.3) - facing * 0.3
-			var to := stop_at - global_position
-			to.y = 0.0
-			# acompanha a velocidade da bola e ainda diminui a distância (alcança)
-			desired = (bv + to / 0.35).limit_length(sprint_speed)
+		desired = Vector3.ZERO
 	var hv := get_flat_velocity()
-	# Inércia pesada em curvas (inspirado em HaxSoccer): mudar de direção em movimento
-	# exige firmeza do pé de apoio e reduz momentaneamente a velocidade de corte.
 	if input.length() > 0.2 and hv.length() > 1.8:
 		var turn_cos := hv.normalized().dot(input.normalized())
-		if turn_cos < 0.72 and not has_ball:
-			var curve_damp := lerpf(0.78, 1.0, clampf((turn_cos + 0.35) / 1.07, 0.0, 1.0))
+		if turn_cos < 0.72:
+			var curve_damp := lerpf(0.84, 1.0, clampf((turn_cos + 0.35) / 1.07, 0.0, 1.0))
 			desired *= curve_damp
 	# Acelera progressivamente; inverter direção passa por uma freada com peso.
 	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
 	var rate := acceleration if speeding_up else deceleration
-	if has_ball and ball_control.is_reverse_pulling():
-		rate = 14.0
-	var reversing_ball := has_ball and input.length() > 0.1 and hv.length() > 2.0 \
-		and hv.normalized().dot(input.normalized()) < -0.5 \
-		and (ball_control.ball_distance() > 0.36 or ball.flat_velocity().length() > 1.5)
-	if has_ball and reversing_ball and not ball_control.is_reverse_pulling() \
-		and ball_control.ball_offset().dot(facing) > 0.2 and ball_control.ball_distance() < 2.0:
-		# Pediu o lado contrário com a bola à frente (tapa): dá um pique curto
-		# até a bola para pisar nela e voltar (não fica freando atrás dela).
-		var offr := ball_control.ball_offset()
-		var bspr := ball.flat_velocity().dot(facing)
-		desired = facing * clampf(bspr + (offr.dot(facing) - 0.3) * 6.0, 0.0, sprint_speed) \
-			+ facing.cross(Vector3.UP) * clampf(offr.dot(facing.cross(Vector3.UP)) * 3.0, -1.2, 1.2)
-		rate = acceleration * 1.3
-	elif has_ball and input.length() < 0.1 and hv.length() > 1.2 and ball_control.ball_distance() < 0.9 \
-			and not ball_control.is_reverse_pulling():
-		# Freada com a bola: o corpo acompanha a bola uns 0,4 m atrás dela e
-		# vai freando JUNTO (os toques curtos seguram a bola); não passa por cima.
-		var offb := ball_control.ball_offset()
-		var along := offb.dot(facing)
-		var lat := offb.dot(facing.cross(Vector3.UP))
-		var bsp := ball.flat_velocity().dot(facing)
-		desired = facing * clampf(bsp + (along - 0.3) * 4.0, 0.0, hv.length()) \
-			+ facing.cross(Vector3.UP) * clampf(lat * 2.5, -1.2, 1.2)
-		rate = 6.2
 	hv = hv.move_toward(desired, rate * delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
@@ -437,26 +368,14 @@ func _update_facing(delta: float) -> void:
 		target_dir = _flat_dir_to(ball.global_position) # sempre de frente para a bola
 	elif _marking and state == State.MOVE:
 		target_dir = _flat_dir_to(_mark_focus())
-	elif state == State.MOVE and ball_control.has_ball() and hv.length() < 1.9 \
-			and _shield_threat() != Vector3.ZERO and (intent.move.length() < 0.35 or hv.length() < 1.15 \
-			or intent.move.normalized().dot(_shield_threat()) < -0.15):
-		# PROTEÇÃO AUTOMÁTICA: ao desacelerar ou encostar no marcador, coloca o corpo
-		# entre o adversário e a bola (de costas ou perfilado protegendo).
-		var threat_dir := _shield_threat()
-		if intent.move.length() > 0.2:
-			var want_d := Vector3(intent.move.x, 0.0, intent.move.z).normalized()
-			target_dir = (want_d * 0.65 - threat_dir * 0.35).normalized()
-		else:
-			target_dir = -threat_dir
-	elif state == State.MOVE and ball_control.has_ball() and intent.move.length() < 0.2 and hv.length() < 0.6 \
-			and ball_control.ball_distance() > 0.15 and ball_control.ball_offset().normalized().dot(facing) < 0.8 \
-			and ball.flat_velocity().length() < 0.3:
-		# parado: o CORPO se ajusta à bola (olha para ela), não a bola ao corpo
-		target_dir = ball_control.ball_offset().normalized()
-	elif hv.length() > 0.4:
+	elif hv.length() > 0.35:
 		target_dir = hv.normalized()
-	elif intent.move.length() > 0.2:
+	elif intent.move.length() > 0.15:
 		target_dir = Vector3(intent.move.x, 0.0, intent.move.z).normalized()
+	elif state == State.MOVE and ball_control.has_ball() and hv.length() < 0.8 \
+			and _shield_threat() != Vector3.ZERO and intent.move.length() < 0.15:
+		# PROTEÇÃO AUTOMÁTICA: parado/desacelerando sem mexer no analógico e marcador colado
+		target_dir = -_shield_threat()
 	elif ball != null:
 		var to_ball := ball.global_position - global_position
 		to_ball.y = 0.0
@@ -981,6 +900,8 @@ func get_foot_positions() -> Array[Vector3]:
 ## Durante o clipe o corpo gira pela própria animação; no fim aplicamos a nova
 ## direção de uma vez (o clipe termina exatamente virado).
 func _try_animated_turn_or_stop(input: Vector3, delta: float) -> bool:
+	if ball_control.has_ball():
+		return false # Com a bola: giro e condução 100% livres e fluidos (nunca trava em clipe de parada/virada)
 	var hv := get_flat_velocity()
 	var speed := hv.length()
 	var in_len := input.length()
@@ -1328,7 +1249,7 @@ func _shield_threat() -> Vector3:
 
 ## Direção e intensidade (0..1) do jogo de corpo / proteção de bola para o LeanModifier.
 func get_shield_info() -> Dictionary:
-	var best_d := 1.55
+	var best_d := 1.15
 	var threat_dir := Vector3.ZERO
 	for opp in get_opponents():
 		if not opp.active:
@@ -1339,15 +1260,15 @@ func get_shield_info() -> Dictionary:
 		if d < best_d and d > 0.05:
 			best_d = d
 			threat_dir = off / d
-	if threat_dir == Vector3.ZERO:
+	if threat_dir == Vector3.ZERO or get_horizontal_speed() > 1.5:
 		return {"dir": Vector3.ZERO, "weight": 0.0}
 	var has_b := ball_control.has_ball()
-	var near_b := ball != null and ball_control.ball_distance() < 1.5
+	var near_b := ball != null and ball_control.ball_distance() < 1.1
 	if not has_b and not near_b:
 		return {"dir": Vector3.ZERO, "weight": 0.0}
-	var prox := clampf(1.0 - (best_d - 0.52) / 0.95, 0.0, 1.0)
-	var speed_k := clampf(1.0 - (get_horizontal_speed() - 1.4) / 2.6, 0.35, 1.0) if has_b else 0.75
-	return {"dir": threat_dir, "weight": prox * speed_k}
+	var prox := clampf(1.0 - (best_d - 0.50) / 0.65, 0.0, 1.0)
+	var speed_k := clampf(1.0 - get_horizontal_speed() / 1.5, 0.0, 1.0)
+	return {"dir": threat_dir, "weight": prox * speed_k * 0.75}
 
 
 ## Dados da ação atual para inclinação procedural de tronco e braços no LeanModifier.

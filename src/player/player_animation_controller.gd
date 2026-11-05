@@ -250,7 +250,7 @@ func physics_update(delta: float) -> void:
 	else:
 		_prev_want_dir = player.facing
 	_feint_lean = lerpf(_feint_lean, feint_target, 1.0 - exp(-15.0 * delta))
-	var gingado := 1.0 if has_b else (0.65 if player.is_marking() else 0.35)
+	var gingado := 0.35
 	if player.visual.has_method("set_posture_dynamics"):
 		player.visual.call("set_posture_dynamics", run_lean, _accel_lean, turn_bank, _feint_lean, gingado)
 	elif player.visual.has_method("set_run_lean"):
@@ -262,14 +262,14 @@ func physics_update(delta: float) -> void:
 		var act := player.get_action_posture_info()
 		player.visual.call("set_action_posture", act["kind"], act["phase"], act["power"], act["side"])
 
-	# --- Ciclo humano de olhar para a bola ou para o colega no passe ("Gaze Tracking") ---
+	# --- Ciclo humano de olhar para o campo ou para o colega no passe ("Gaze Tracking") ---
 	_gaze_timer -= delta
 	if _gaze_timer <= 0.0:
 		_gaze_on = not _gaze_on
 		if _gaze_on:
-			_gaze_timer = _rng.randf_range(1.6, 3.2) # olha para a bola na maior parte do tempo
+			_gaze_timer = _rng.randf_range(1.6, 3.2)
 		else:
-			_gaze_timer = _rng.randf_range(0.45, 0.95) # rápida olhada para o campo/espaço à frente
+			_gaze_timer = _rng.randf_range(0.45, 0.95)
 	var want_gaze := 0.0
 	if player.ball != null and player.visual.has_method("set_ball_gaze"):
 		var gaze_pos := player.ball.global_position
@@ -277,24 +277,24 @@ func physics_update(delta: float) -> void:
 		if pass_mate != null and is_instance_valid(pass_mate):
 			# Olha para o companheiro durante o passe (vira apenas o rosto/pescoço, sem virar o tronco)
 			gaze_pos = pass_mate.global_position + Vector3(0.0, 0.35, 0.0)
-			want_gaze = 0.96
+			want_gaze = 0.94
+		elif has_b:
+			# Com a bola: cabeça erguida olhando para o campo! Nunca fica cabisbaixo olhando para o pé.
+			want_gaze = 0.0
 		else:
 			var to_b := player.ball.global_position - player.global_position
 			var dist_b := Vector2(to_b.x, to_b.z).length()
 			var dir_b := Vector3(to_b.x, 0.0, to_b.z).normalized() if dist_b > 0.05 else player.facing
 			var cos_b := player.facing.dot(dir_b)
 			if player.is_kicking() or (player.ball.pass_target == player and player.ball.possessor == null):
-				want_gaze = 1.0 # finalizando ou dominando passe: foco total na bola
-			elif has_b:
-				want_gaze = 0.88 if (_gaze_on or ang > 1.2) else 0.32 # conduzindo: alterna olhar p/ a bola e p/ o jogo
-			elif cos_b > -0.30 and dist_b < 18.0:
-				# Sem bola e bola no hemisfério frontal/lateral (até ~108°): vira o rosto para olhar a bola
-				var fov_k := clampf((cos_b + 0.30) / 0.65, 0.0, 1.0)
+				want_gaze = 0.65
+			elif cos_b > -0.15 and dist_b < 16.0:
+				var fov_k := clampf((cos_b + 0.15) / 0.65, 0.0, 1.0)
 				var dist_k := clampf(1.0 - (dist_b - 10.0) / 9.0, 0.35, 1.0)
 				if player.is_marking() or dist_b < 3.8:
-					want_gaze = 0.95 * fov_k
+					want_gaze = 0.72 * fov_k
 				else:
-					want_gaze = (0.88 if _gaze_on else 0.18) * fov_k * dist_k
+					want_gaze = (0.65 if _gaze_on else 0.15) * fov_k * dist_k
 		_gaze_weight = lerpf(_gaze_weight, want_gaze, 1.0 - exp(-8.5 * delta))
 		player.visual.call("set_ball_gaze", gaze_pos, _gaze_weight)
 
