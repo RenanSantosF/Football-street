@@ -567,6 +567,10 @@ static func _refine_ual_locomotion(src: Animation, idle_anim: Animation, kind: S
 			blend_k = lleg_k
 		elif bname in ["LeftFoot", "RightFoot", "LeftToes", "RightToes"]:
 			blend_k = foot_k
+			if bname in ["LeftFoot", "RightFoot"]:
+				extra_q = Quaternion(Vector3.RIGHT, deg_to_rad(-12.0))
+			else:
+				extra_q = Quaternion(Vector3.RIGHT, deg_to_rad(-6.0))
 		elif bname in ["LeftShoulder", "RightShoulder", "LeftUpperArm", "RightUpperArm", "LeftLowerArm", "RightLowerArm"]:
 			blend_k = arm_k
 		elif bname in ["LeftHand", "RightHand"]:

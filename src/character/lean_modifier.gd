@@ -41,6 +41,7 @@ var _neck := -2
 var _head := -2
 var _finger_bones: Array[int] = []
 
+var _shoulder_bones := {1.0: -1, -1.0: -1}
 var _arm_bones := {1.0: -1, -1.0: -1}
 var _forearm_bones := {1.0: -1, -1.0: -1}
 var _hip_bones := {1.0: -1, -1.0: -1}
@@ -123,6 +124,7 @@ func _cache_bones(sk: Skeleton3D) -> void:
 				_finger_bones.append(fb)
 	for side in [1.0, -1.0]:
 		var prefix := "Right" if side > 0.0 else "Left"
+		_shoulder_bones[side] = sk.find_bone(prefix + "Shoulder")
 		_arm_bones[side] = sk.find_bone(prefix + "Arm")
 		_forearm_bones[side] = sk.find_bone(prefix + "ForeArm")
 		_hip_bones[side] = sk.find_bone(prefix + "UpperLeg")
@@ -156,6 +158,7 @@ func _process_modification() -> void:
 
 	var tracked_bones := [
 		_hips, _spine, _chest, _upper_chest, _neck, _head,
+		_shoulder_bones[1.0], _shoulder_bones[-1.0],
 		_arm_bones[1.0], _forearm_bones[1.0], _arm_bones[-1.0], _forearm_bones[-1.0],
 		_hip_bones[1.0], _knee_bones[1.0], _foot_bones[1.0], _toe_bones[1.0],
 		_hip_bones[-1.0], _knee_bones[-1.0], _foot_bones[-1.0], _toe_bones[-1.0],
@@ -214,13 +217,17 @@ func _process_modification() -> void:
 			_raw_toe_world[side] = anim_ankle_w
 
 		var bw: float = _ball_weight[side]
-		# Aplica IK analítica suave EXCLUSIVAMENTE quando houver toque/contato na bola.
-		# Durante a passada pura, a animação original preserva o pé plano e natural no gramado
-		# (elimina 100% dos pés na ponta dos dedos e o efeito de flutuar/estalar).
 		if bw > 0.001:
 			var target_w: Vector3 = anim_ankle_w.lerp(_ball_target[side], bw)
 			target_w.y = maxf(target_w.y, MIN_ANKLE_Y)
 			_solve_two_bone_leg(sk, sk_inv, side, target_w, bw, _ball_mode[side])
+		else:
+			# Correção anatômica biomecânica: elimina flexão plantar excessiva (tiptoe)
+			# das animações retargetadas, nivelando a sola paralela ao solo e impedindo
+			# que a ponta dos dedos afunde no asfalto.
+			_rotate_bone_local(sk, f_idx, deg_to_rad(-14.5), 0.0, 0.0)
+			if t_idx >= 0:
+				_rotate_bone_local(sk, t_idx, deg_to_rad(-7.0), 0.0, 0.0)
 
 	_ik_dirty = false
 	_applying = false
@@ -304,10 +311,16 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 		corr_uc_y * 0.60 + yaw_rad * 0.42 + gingado_torso_yaw * 0.35,
 		corr_uc_z + bank_rad * 0.38 + gingado_torso_roll * 0.35)
 
-	# --- 2.1 Contra-balanço dinâmico dos braços nas fintas e curvas (estilo eFootball) ---
-	# Quando o jogador faz um corte ou curva, o braço do lado oposto ergue lateralmente
-	# para dar equilíbrio ao corpo e proteger a bola, enquanto o outro braço acompanha o embalo.
+	# --- 2.1 Postura atlética dos ombros e contra-balanço dinâmico dos braços ---
+	# Elimina a postura caída/encurvada das clavículas (slumped shoulders),
+	# trazendo os ombros para uma posição ereta, firme e atlética de futebol.
 	for s in [1.0, -1.0]:
+		var sh_b: int = _shoulder_bones[s]
+		if sh_b >= 0:
+			# Eleva sutilmente a clavícula (+5.5° roll) e retrai para trás (-4° pitch),
+			# corrigindo ombros curvados para a frente e braços que caíam demais.
+			_rotate_bone_local(sk, sh_b, deg_to_rad(-4.0), 0.0, deg_to_rad(5.5 * s))
+
 		var arm_b: int = _arm_bones[s]
 		var fa_b: int = _forearm_bones[s]
 		if arm_b >= 0:
