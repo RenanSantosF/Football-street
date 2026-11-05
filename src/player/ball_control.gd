@@ -159,12 +159,36 @@ func physics_update(delta: float) -> void:
 			_conduct(delta)
 		elif ball_distance() > LOSE_RADIUS:
 			ball.release()
+		_keep_ball_outside_body_and_feet()
 	else:
 		_try_gain_control()
 		if not has_ball():
 			# bola solta bate no corpo (desvio calculado: a física da cápsula
 			# empurrava a bola para dentro do chão)
 			_body_contact()
+
+
+## Impede que a bola entre dentro das canelas/corpo do jogador enquanto a
+## exceção de colisão da posse está ativa.
+func _keep_ball_outside_body_and_feet() -> void:
+	if ball == null or ball.global_position.y > 0.55:
+		return
+	var off := ball_offset()
+	var d := off.length()
+	var min_body_dist := 0.24 # raio da canela/corpo + raio da bola (0.11m)
+	if d < min_body_dist:
+		var push_dir := off / d if d > 0.005 else player.facing
+		# Se estiver atrás do corpo, empurra para a frente/lateral
+		if push_dir.dot(player.facing) < -0.25:
+			push_dir = player.facing
+		ball.global_position.x = player.global_position.x + push_dir.x * min_body_dist
+		ball.global_position.z = player.global_position.z + push_dir.z * min_body_dist
+		var bv := ball.velocity_now()
+		var vn := (bv - player.velocity).dot(push_dir)
+		if vn < 0.0:
+			ball.linear_velocity = bv - push_dir * vn
+	if ball.global_position.y < Ball.RADIUS:
+		ball.global_position.y = Ball.RADIUS
 
 
 # --- Consultas ---------------------------------------------------------------
@@ -601,9 +625,15 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 	foot.begin(chosen_foot, w, lead_t, touch_mode, func(): _tap(want, pv, chosen_foot), 0.038)
 
 
-func _choose_conduction_foot(w: Vector3, ref: Vector3, turn_ang: float, off: Vector3) -> float:
+func _choose_conduction_foot(_w: Vector3, ref: Vector3, turn_ang: float, off: Vector3) -> float:
 	var right := ref.cross(Vector3.UP)
 	var lat := off.dot(right)
+	# Protegendo a bola do marcador: usa o pé mais distante do adversário (mantendo o corpo entre o marcador e a bola)
+	var threat := player._shield_threat()
+	if threat != Vector3.ZERO and player.get_horizontal_speed() < 2.3 and absf(turn_ang) < deg_to_rad(25.0):
+		var sh_side := -signf(threat.dot(right))
+		if absf(sh_side) > 0.1 and foot.foot_distance(sh_side) < 0.48:
+			return sh_side
 	# Biomecânica real de futebol:
 	# Ao cortar para a DIREITA (turn_ang < 0):
 	#   O corte natural de futebol é feito com a CHAPA DO PÉ ESQUERDO (-1.0), que vem do lado
@@ -708,9 +738,13 @@ func _tap(want: Vector3, pv: Vector3, foot_side: float) -> void:
 		var lead_dist := tap_lead(v_t) * (0.72 if is_cut else 1.0)
 		var u := sqrt(2.0 * a * lead_dist)
 		vel = dir * (v_t + u)
-		# leva a bola para a linha do corpo (entre os pés) com precisão nas ajeitadas
+		# leva a bola para a linha do corpo (ou para o lado protegido quando sob pressão)
 		var right := dir.cross(Vector3.UP)
-		var lat := ball_offset().dot(right)
+		var target_lat := 0.0
+		var threat := player._shield_threat()
+		if threat != Vector3.ZERO and speed < 2.3:
+			target_lat = -signf(threat.dot(right)) * 0.14
+		var lat := ball_offset().dot(right) - target_lat
 		vel -= right * clampf(lat * (2.6 if is_cut else 1.8), -0.95, 0.95)
 	ball.touch(Vector3(vel.x, 0.0, vel.z), player)
 	_since_touch = 0.0

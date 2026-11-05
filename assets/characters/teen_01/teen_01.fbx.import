@@ -39,7 +39,7 @@ _subresources={
 ,
 "retarget/remove_tracks/unmapped_bones": true,
 "retarget/rest_fixer/fix_silhouette/enable": true,
-"retarget/rest_fixer/fix_silhouette/filter": [&"Neck", &"Head", &"LeftFoot", &"RightFoot", &"LeftToes", &"RightToes"]
+"retarget/rest_fixer/fix_silhouette/filter": [&"Neck", &"Head"]
 }
 }
 }

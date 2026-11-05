@@ -2,13 +2,17 @@ class_name LeanModifier
 extends SkeletonModifier3D
 ## Biomecânica corporal e de membros inferiores:
 ## 1) Postura ereta e atlética de jogador de futebol (remove a curvatura excessiva
-##    do UpperChest nas corridas da UAL sem quebrar a coluna e mantém a cabeça
-##    nivelada olhando para o campo, sem levantar para o céu).
-## 2) Trava do pé de apoio no solo (Stance Foot Lock): impede que o pé plantado
-##    deslize no gramado durante a passada.
-## 3) Cinemática Inversa (IK) analítica de 2 ossos (coxa + canela) com preservação
-##    do plano anatômico de flexão do joelho (zero torção axial) e orientação da
-##    superfície do pé (chapa, peito do pé, parte externa, sola) no contato com a bola.
+##    do UpperChest, adiciona gingado, proteção de bola com o corpo e braço de
+##    proteção contra o marcador, e reação de tronco/braços em chutes, passes,
+##    botes e recepções amortecidas).
+## 2) Nivelamento anatômico dos pés e dedos (Foot & Toe Leveling): elimina o viés
+##    plantar das animações do Mixamo para que a sola e o calcanhar apoiem 100%
+##    planos no asfalto (zero corrida na ponta dos pés).
+## 3) Olhar humano independente do tronco (Head/Neck Gaze): vira apenas o pescoço
+##    e o rosto para olhar a bola ou o companheiro no passe sem girar o tórax.
+## 4) Cinemática Inversa (IK) analítica de 2 ossos (coxa + canela) com preservação
+##    do plano anatômico de flexão do joelho e orientação da superfície do pé
+##    (chapa, três dedos, peito do pé, sola e amortecimento).
 
 var amount := 0.0
 var accel_lean := 0.0
@@ -18,11 +22,19 @@ var dribble_gingado := 0.0
 var gaze_weight := 0.0
 var gaze_world_pos := Vector3.ZERO
 
+var shield_weight := 0.0
+var shield_dir_world := Vector3.ZERO
+
+var action_kind: StringName = &""
+var action_phase := 0.0
+var action_power := 0.0
+var action_side := 1.0
+
 const ACCEL_SPINE_DEG := 6.5
 const TURN_BANK_DEG := 12.0
 const TURN_YAW_DEG := 14.5
 
-const MIN_ANKLE_Y := 0.035
+const MIN_ANKLE_Y := 0.052
 
 var _smooth_amount := 0.0
 var _smooth_accel := 0.0
@@ -32,6 +44,8 @@ var _smooth_gingado := 0.0
 var _gingado_phase := 0.0
 var _smooth_gaze := 0.0
 var _smooth_ball_local := Vector3(0.0, 0.11, 1.2)
+var _smooth_shield := 0.0
+var _smooth_shield_local := Vector3(1.0, 0.0, 0.0)
 
 var _hips := -2
 var _spine := -2
@@ -39,6 +53,7 @@ var _chest := -2
 var _upper_chest := -2
 var _neck := -2
 var _head := -2
+var _shoulder_bones := {1.0: -1, -1.0: -1}
 var _finger_bones: Array[int] = []
 
 var _arm_bones := {1.0: -1, -1.0: -1}
@@ -73,6 +88,18 @@ func notify_animation_applied() -> void:
 func set_ball_gaze(world_pos: Vector3, weight: float) -> void:
 	gaze_world_pos = world_pos
 	gaze_weight = clampf(weight, 0.0, 1.0)
+
+
+func set_shield_posture(dir_world: Vector3, weight: float) -> void:
+	shield_dir_world = dir_world
+	shield_weight = clampf(weight, 0.0, 1.0)
+
+
+func set_action_posture(kind: StringName, phase_ratio: float, power: float, side: float = 1.0) -> void:
+	action_kind = kind
+	action_phase = clampf(phase_ratio, 0.0, 1.0)
+	action_power = clampf(power, 0.0, 1.0)
+	action_side = 1.0 if side >= 0.0 else -1.0
 
 
 func set_foot_ik(side: float, world_pos: Vector3, weight: float, forward: Vector3, mode: int = 0) -> void:
@@ -123,8 +150,13 @@ func _cache_bones(sk: Skeleton3D) -> void:
 				_finger_bones.append(fb)
 	for side in [1.0, -1.0]:
 		var prefix := "Right" if side > 0.0 else "Left"
-		_arm_bones[side] = sk.find_bone(prefix + "Arm")
-		_forearm_bones[side] = sk.find_bone(prefix + "ForeArm")
+		_shoulder_bones[side] = sk.find_bone(prefix + "Shoulder")
+		_arm_bones[side] = sk.find_bone(prefix + "UpperArm")
+		if _arm_bones[side] < 0:
+			_arm_bones[side] = sk.find_bone(prefix + "Arm")
+		_forearm_bones[side] = sk.find_bone(prefix + "LowerArm")
+		if _forearm_bones[side] < 0:
+			_forearm_bones[side] = sk.find_bone(prefix + "ForeArm")
 		_hip_bones[side] = sk.find_bone(prefix + "UpperLeg")
 		_knee_bones[side] = sk.find_bone(prefix + "LowerLeg")
 		_foot_bones[side] = sk.find_bone(prefix + "Foot")
@@ -156,6 +188,7 @@ func _process_modification() -> void:
 
 	var tracked_bones := [
 		_hips, _spine, _chest, _upper_chest, _neck, _head,
+		_shoulder_bones[1.0], _shoulder_bones[-1.0],
 		_arm_bones[1.0], _forearm_bones[1.0], _arm_bones[-1.0], _forearm_bones[-1.0],
 		_hip_bones[1.0], _knee_bones[1.0], _foot_bones[1.0], _toe_bones[1.0],
 		_hip_bones[-1.0], _knee_bones[-1.0], _foot_bones[-1.0], _toe_bones[-1.0],
@@ -180,11 +213,17 @@ func _process_modification() -> void:
 		_smooth_gingado = lerpf(_smooth_gingado, dribble_gingado, smooth_k)
 		var step_freq := lerpf(1.8, 3.3, clampf(_smooth_amount, 0.0, 1.0))
 		_gingado_phase = wrapf(_gingado_phase + dt * step_freq * TAU, 0.0, TAU)
-		var gaze_k := 1.0 - exp(-6.5 * dt)
+		var gaze_k := 1.0 - exp(-8.5 * dt)
 		_smooth_gaze = lerpf(_smooth_gaze, gaze_weight, gaze_k)
 		if gaze_world_pos != Vector3.ZERO:
 			var target_local := sk_inv * gaze_world_pos
-			_smooth_ball_local = _smooth_ball_local.lerp(target_local, 1.0 - exp(-10.0 * dt))
+			_smooth_ball_local = _smooth_ball_local.lerp(target_local, 1.0 - exp(-12.0 * dt))
+		_smooth_shield = lerpf(_smooth_shield, shield_weight, 1.0 - exp(-10.0 * dt))
+		if shield_dir_world.length_squared() > 0.001:
+			var s_loc := (sk_inv.basis * shield_dir_world).normalized()
+			s_loc.y = 0.0
+			if s_loc.length_squared() > 0.001:
+				_smooth_shield_local = _smooth_shield_local.lerp(s_loc.normalized(), 1.0 - exp(-10.0 * dt))
 	else:
 		for b in tracked_bones:
 			if b >= 0 and _raw_local_poses.has(b):
@@ -193,16 +232,20 @@ func _process_modification() -> void:
 			if _raw_local_poses.has(fb):
 				sk.set_bone_pose(fb, _raw_local_poses[fb])
 
-	# 1. Postura flexível com gingado de futebol de rua, braços dinâmicos e olhar para a bola.
+	# 1. Postura flexível com gingado, proteção de bola, ações procedurais e olhar independente.
 	_apply_athletic_posture(sk)
 
-	# 2. Guarda as posições da animação e só aplica IK quando o pé estiver alcançando a bola.
+	# 2. Nivelamento anatômico dos pés (elimina pé na ponta dos dedos) + IK de toque na bola.
 	for side in [1.0, -1.0]:
 		var f_idx: int = _foot_bones[side]
 		var h_idx: int = _hip_bones[side]
 		var t_idx: int = _toe_bones[side]
 		if f_idx < 0 or h_idx < 0:
 			continue
+		# Antes de ler a posição bruta ou aplicar IK, nivela o pé/dedos para remover
+		# a flexão plantar das animações do Mixamo (ponta do pé apontando para baixo).
+		_level_foot_and_toes(sk, f_idx, t_idx, _ball_weight[side])
+
 		var anim_ankle_w := sk_xform * sk.get_bone_global_pose(f_idx).origin
 		var anim_hip_w := sk_xform * sk.get_bone_global_pose(h_idx).origin
 		_raw_ankle_world[side] = anim_ankle_w
@@ -214,9 +257,6 @@ func _process_modification() -> void:
 			_raw_toe_world[side] = anim_ankle_w
 
 		var bw: float = _ball_weight[side]
-		# Aplica IK analítica suave EXCLUSIVAMENTE quando houver toque/contato na bola.
-		# Durante a passada pura, a animação original preserva o pé plano e natural no gramado
-		# (elimina 100% dos pés na ponta dos dedos e o efeito de flutuar/estalar).
 		if bw > 0.001:
 			var target_w: Vector3 = anim_ankle_w.lerp(_ball_target[side], bw)
 			target_w.y = maxf(target_w.y, MIN_ANKLE_Y)
@@ -224,6 +264,41 @@ func _process_modification() -> void:
 
 	_ik_dirty = false
 	_applying = false
+
+
+## Nivela a articulação do tornozelo (Foot) e dos dedos (Toes) em espaço do
+## esqueleto para que o vetor tornozelo->dedos fique horizontal (toe.y == ankle.y)
+## quando o pé apoia no solo, eliminando 100% da corrida/caminhada na ponta do pé.
+func _level_foot_and_toes(sk: Skeleton3D, f_idx: int, t_idx: int, ball_w: float) -> void:
+	if f_idx < 0 or t_idx < 0:
+		return
+	var gp_f := sk.get_bone_global_pose(f_idx)
+	var gp_t := sk.get_bone_global_pose(t_idx)
+	var vec := gp_t.origin - gp_f.origin
+	if vec.length_squared() < 0.0001:
+		return
+	# Se os dedos estão mais baixos que o tornozelo (pé apontando para baixo na ponta do pé)
+	# ou quando o pé está próximo ao solo, rotaciona pelo menor arco até a horizontal.
+	var horiz := Vector3(vec.x, 0.0, vec.z)
+	if horiz.length_squared() < 0.0001:
+		horiz = Vector3(0.0, 0.0, 1.0)
+	var ank_y := gp_f.origin.y
+	# No apoio (ank_y <= 0.09 no espaço do esqueleto, ~14cm no mundo), nivelamento 100% plano.
+	# No balanço aéreo, corrige 85% quando o pé aponta para baixo (vec.y < 0).
+	var ground_k := clampf(1.0 - maxf(ank_y - 0.085, 0.0) / 0.16, 0.0, 1.0)
+	var level_w := 1.0 if vec.y < 0.0 else ground_k * 0.85
+	if ball_w > 0.01:
+		level_w = 1.0 # parte de uma base neutra plana antes de esculpir o ângulo do toque
+	if level_w > 0.001:
+		var q_full := Quaternion(vec.normalized(), horiz.normalized())
+		var q_apply := Quaternion.IDENTITY.slerp(q_full, level_w).normalized()
+		gp_f.basis = Basis(q_apply) * gp_f.basis
+		sk.set_bone_global_pose(f_idx, gp_f)
+		# Mantém os dedos (Toes) alinhados à sola plana, sem dobrar para baixo nem para cima.
+		var q_toe_rest := sk.get_bone_rest(t_idx).basis.get_rotation_quaternion()
+		var q_toe_cur := sk.get_bone_pose_rotation(t_idx)
+		sk.set_bone_pose_rotation(t_idx, q_toe_cur.slerp(q_toe_rest, clampf(level_w * 0.92, 0.0, 1.0)).normalized())
+		sk.force_update_all_bone_transforms()
 
 
 func _apply_athletic_posture(sk: Skeleton3D) -> void:
@@ -245,10 +320,15 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 		var q_anim := sk.get_bone_pose_rotation(fb)
 		sk.set_bone_pose_rotation(fb, q_rest.slerp(q_anim, 0.42).normalized())
 
-	# --- 2. Gingado de futebol de rua, transferência de peso no quadril e finta ---
-	# Quando o jogador conduz a bola ou muda de direção no analógico, o quadril
-	# baixa levemente o centro de gravidade (flexionando os joelhos via IK) e
-	# transfere o peso lateralmente com molejo humano.
+	# --- 1.1 Alinha clavículas/ombros para postura atlética natural (sem ombros caídos) ---
+	for s_sh in [1.0, -1.0]:
+		var sh_b: int = _shoulder_bones[s_sh]
+		if sh_b >= 0:
+			var q_sh_rest := sk.get_bone_rest(sh_b).basis.get_rotation_quaternion()
+			var q_sh_anim := sk.get_bone_pose_rotation(sh_b)
+			sk.set_bone_pose_rotation(sh_b, q_sh_rest.slerp(q_sh_anim, 0.65).normalized())
+
+	# --- 2. Gingado, transferência de peso no quadril, finta e proteção de bola ---
 	var move_factor := clampf(_smooth_amount * 1.4 + _smooth_gingado * 0.65, 0.0, 1.0)
 	var gingado_amp := move_factor * (0.45 + 0.55 * _smooth_gingado)
 	var sway_sin := sin(_gingado_phase)
@@ -258,38 +338,97 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 	var bank_rad := deg_to_rad(TURN_BANK_DEG) * combined_turn
 	var yaw_rad := deg_to_rad(TURN_YAW_DEG) * combined_turn
 
-	# Abaixamento elástico do quadril nos cortes, fintas e freadas (gera flexão real nos joelhos)
+	# Proteção de bola / jogo de corpo contra marcador próximo:
+	# No espaço do esqueleto (+Z = frente, -X = direita, +X = esquerda):
+	# shield_side = +1 quando o marcador está à direita (-X), -1 quando à esquerda (+X).
+	var shield_side := clampf(-_smooth_shield_local.x * 1.6, -1.0, 1.0)
+	var shield_crouch := _smooth_shield * 0.020
+
+	# Modulação procedural durante ações (chutes, passes, botes, recepções):
+	var act_crouch := 0.0
+	var act_pitch := 0.0
+	var act_yaw := 0.0
+	var act_roll := 0.0
+	var act_arm_spread := 0.0
+	if action_kind != &"":
+		var pulse := sin(clampf(action_phase, 0.0, 1.0) * PI)
+		match action_kind:
+			&"pass", &"run_pass":
+				act_crouch = 0.010 * pulse
+				act_pitch = deg_to_rad(3.0) * pulse
+				act_yaw = deg_to_rad(6.5 * action_side) * pulse
+				act_arm_spread = 0.35 * pulse
+			&"long_pass":
+				act_crouch = 0.014 * pulse
+				act_pitch = deg_to_rad(-3.5 if action_phase < 0.45 else 5.0) * pulse
+				act_yaw = deg_to_rad(9.5 * action_side) * pulse
+				act_arm_spread = 0.55 * pulse
+			&"chip":
+				act_crouch = 0.012 * pulse
+				act_pitch = deg_to_rad(-4.5) * pulse
+				act_arm_spread = 0.30 * pulse
+			&"shoot", &"shoot_power":
+				var pwr := clampf(action_power, 0.25, 1.0)
+				if action_kind == &"shoot_power":
+					pwr = maxf(pwr, 0.85)
+				act_crouch = (0.012 + 0.012 * pwr) * pulse
+				# Na preparação (phase < 0.42), abre o peito; na batida, inclina o tronco sobre a bola
+				if action_phase < 0.42:
+					act_pitch = deg_to_rad(-4.0 * pwr) * pulse
+					act_yaw = deg_to_rad(-8.0 * action_side * pwr) * pulse
+				else:
+					act_pitch = deg_to_rad((4.5 + 6.5 * pwr)) * pulse
+					act_yaw = deg_to_rad(10.0 * action_side * pwr) * pulse
+				act_roll = deg_to_rad(-5.0 * action_side * pwr) * pulse
+				act_arm_spread = (0.45 + 0.45 * pwr) * pulse
+			&"tackle":
+				# Bote de perna esticada: baixa a base e projeta o tronco firme à frente
+				act_crouch = 0.026 * pulse
+				act_pitch = deg_to_rad(8.5) * pulse
+				act_yaw = deg_to_rad(7.0 * action_side) * pulse
+				act_arm_spread = 0.60 * pulse
+			&"recv_chest":
+				# Domínio no peito: arqueia o tórax para trás amortecendo a bola e abre os braços
+				act_crouch = 0.012 * pulse
+				act_pitch = deg_to_rad(-9.5) * pulse
+				act_arm_spread = 0.65 * pulse
+			&"recv_knee", &"receive":
+				# Recepção amortecida (coxa, sola ou chapa): absorve o impacto flexionando a base
+				act_crouch = 0.016 * pulse
+				act_pitch = deg_to_rad(3.5) * pulse
+				act_arm_spread = 0.35 * pulse
+
 	var cut_crouch := clampf(
-		absf(combined_turn) * 0.024 + absf(_smooth_feint) * 0.018 + maxf(-_smooth_accel, 0.0) * 0.016 + _smooth_gingado * 0.010,
-		0.0, 0.042
+		absf(combined_turn) * 0.020 + absf(_smooth_feint) * 0.015 + maxf(-_smooth_accel, 0.0) * 0.014
+		+ _smooth_gingado * 0.008 + shield_crouch + act_crouch,
+		0.0, 0.038
 	)
-	var hip_lat_shift := clampf(combined_turn * 0.024 + sway_sin * 0.010 * gingado_amp, -0.036, 0.036)
+	var hip_lat_shift := clampf(
+		combined_turn * 0.022 + sway_sin * 0.009 * gingado_amp + shield_side * _smooth_shield * 0.016,
+		-0.036, 0.036
+	)
 	var hips_pos := sk.get_bone_pose_position(_hips)
 	hips_pos.y = maxf(hips_pos.y - cut_crouch, 0.15)
 	hips_pos.x += hip_lat_shift
 	sk.set_bone_pose_position(_hips, hips_pos)
 
 	# Balanço pélvico (transferência de peso entre as pernas + giro de finta)
-	var hip_roll := sway_sin * deg_to_rad(2.2) * gingado_amp + bank_rad * 0.18
-	var hip_yaw := sway_cos * deg_to_rad(2.5) * gingado_amp + yaw_rad * 0.20
+	var hip_roll := sway_sin * deg_to_rad(2.2) * gingado_amp + bank_rad * 0.18 + act_roll * 0.3
+	var hip_yaw := sway_cos * deg_to_rad(2.5) * gingado_amp + yaw_rad * 0.20 + act_yaw * 0.25
 	_rotate_bone_local(sk, _hips, 0.0, hip_yaw, hip_roll)
 
-	# Compartilha 30% da curvatura local do UpperChest com o Spine (soma líquida = 0)
-	# para eliminar o vinco no UpperChest mantendo a coluna flexível.
 	var share_x := clampf(e_uchest.x * 0.30, deg_to_rad(-8.0), deg_to_rad(8.0))
-
-	# Postura atlética: tronco vivo e flexível (~6° andando/fintando até ~13° na corrida).
 	var raw_torso_x := e_hips.x + e_spine.x + e_chest.x + e_uchest.x
-	var target_max_x := deg_to_rad(6.0 + 7.2 * _smooth_amount) + deg_to_rad(ACCEL_SPINE_DEG) * _smooth_accel + absf(combined_turn) * deg_to_rad(3.0)
+	var target_max_x := deg_to_rad(6.0 + 7.2 * _smooth_amount) + deg_to_rad(ACCEL_SPINE_DEG) * _smooth_accel \
+		+ absf(combined_turn) * deg_to_rad(3.0) + deg_to_rad(5.5) * _smooth_shield + act_pitch
 	var excess_x := maxf(0.0, raw_torso_x - target_max_x)
-	var corr_x := excess_x * 0.80
+	var corr_x := excess_x * 0.80 - act_pitch * 0.65
 
-	# Preserva o balanço natural dos ombros da animação (só amortece excessos extremos)
-	# e soma o contra-balanço de gingado e finta corporal.
 	var corr_uc_y := -e_uchest.y * 0.22 if absf(e_uchest.y) > deg_to_rad(10.0) else 0.0
 	var corr_uc_z := -e_uchest.z * 0.25 if absf(e_uchest.z) > deg_to_rad(5.5) else 0.0
-	var gingado_torso_yaw := -sway_cos * deg_to_rad(3.4) * gingado_amp
-	var gingado_torso_roll := -sway_sin * deg_to_rad(2.6) * gingado_amp
+	var gingado_torso_yaw := -sway_cos * deg_to_rad(3.4) * gingado_amp + act_yaw * 0.75
+	var gingado_torso_roll := -sway_sin * deg_to_rad(2.6) * gingado_amp \
+		+ shield_side * _smooth_shield * deg_to_rad(5.5) + act_roll * 0.70
 
 	_rotate_bone_local(sk, _spine,
 		share_x - corr_x * 0.25,
@@ -304,23 +443,35 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 		corr_uc_y * 0.60 + yaw_rad * 0.42 + gingado_torso_yaw * 0.35,
 		corr_uc_z + bank_rad * 0.38 + gingado_torso_roll * 0.35)
 
-	# --- 2.1 Contra-balanço dinâmico dos braços nas fintas e curvas (estilo eFootball) ---
-	# Quando o jogador faz um corte ou curva, o braço do lado oposto ergue lateralmente
-	# para dar equilíbrio ao corpo e proteger a bola, enquanto o outro braço acompanha o embalo.
-	for s in [1.0, -1.0]:
+	# --- 2.1 Contra-balanço dinâmico dos braços, proteção de bola e equilíbrio em chutes/botes ---
+	for s_val in [1.0, -1.0]:
+		var s: float = s_val
 		var arm_b: int = _arm_bones[s]
 		var fa_b: int = _forearm_bones[s]
 		if arm_b >= 0:
-			var lift := -s * combined_turn * deg_to_rad(13.0)
+			var lift: float = -s * combined_turn * deg_to_rad(12.0)
 			if lift < 0.0:
 				lift *= 0.35
-			var fwd := absf(combined_turn) * deg_to_rad(6.5) + maxf(-_smooth_accel, 0.0) * deg_to_rad(9.0)
+			# Se o marcador está deste lado (s * shield_side > 0), ergue o braço/antebraço
+			# em proteção ("jogo de corpo") para manter o adversário afastado da bola.
+			var is_shield_arm := clampf(s * shield_side, 0.0, 1.0) * _smooth_shield
+			lift += is_shield_arm * deg_to_rad(20.0) + act_arm_spread * deg_to_rad(16.0)
+			var fwd: float = absf(combined_turn) * deg_to_rad(6.0) \
+				+ maxf(-_smooth_accel, 0.0) * deg_to_rad(8.5) \
+				+ is_shield_arm * deg_to_rad(14.0) \
+				+ act_arm_spread * deg_to_rad(10.0 * (-s * action_side))
 			_rotate_bone_local(sk, arm_b, fwd, 0.0, lift * s)
 			if fa_b >= 0:
-				var elbow := clampf(absf(combined_turn) * deg_to_rad(12.0) + _smooth_gingado * deg_to_rad(6.0), 0.0, deg_to_rad(22.0))
+				var elbow: float = clampf(
+					absf(combined_turn) * deg_to_rad(11.0)
+					+ _smooth_gingado * deg_to_rad(6.0)
+					+ is_shield_arm * deg_to_rad(26.0)
+					+ act_arm_spread * deg_to_rad(14.0),
+					0.0, deg_to_rad(38.0)
+				)
 				_rotate_bone_local(sk, fa_b, elbow, 0.0, 0.0)
 
-	# --- 3. Olhar natural para a bola e nivelamento da cabeça em espaço do esqueleto ---
+	# --- 3. Olhar independente do tronco (bola ou companheiro de passe) ---
 	q_hips = sk.get_bone_pose_rotation(_hips)
 	var q_uchest_global := q_hips \
 		* sk.get_bone_pose_rotation(_spine) \
@@ -331,27 +482,24 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 	var q_head_anim_global := q_uchest_global * q_neck_orig * q_head_orig
 	var anim_head_euler := q_head_anim_global.get_euler()
 
-	# Olhar neutro para o horizonte: preserva micro-oscilação natural da animação
-	# mantendo o rosto nivelado (+3,5° para baixo em direção ao gramado, nunca para o céu).
 	var horizon_pitch := clampf(anim_head_euler.x * 0.25 + deg_to_rad(3.5), deg_to_rad(2.0), deg_to_rad(8.0))
 	var horizon_yaw := clampf(anim_head_euler.y * 0.30 + yaw_rad * 0.85, deg_to_rad(-18.0), deg_to_rad(18.0))
 	var horizon_roll := clampf(anim_head_euler.z * 0.20, deg_to_rad(-4.0), deg_to_rad(4.0))
 
-	# Olhar direcionado para a bola (mesmo correndo para a frente, o rosto vira
-	# anatomicamente para acompanhar a bola quando ela está no campo de visão).
+	# Olhar direcionado para o alvo (bola ou companheiro para quem vai tocar,
+	# girando apenas pescoço e rosto até ±48° sem virar o tronco).
 	var head_origin_local := Vector3(0.0, 0.90, 0.04)
-	var to_ball := _smooth_ball_local - head_origin_local
-	var horiz_dist := Vector2(to_ball.x, to_ball.z).length()
-	var ball_yaw := clampf(atan2(to_ball.x, maxf(to_ball.z, 0.22)), deg_to_rad(-38.0), deg_to_rad(38.0))
-	var ball_pitch := clampf(atan2(-to_ball.y, maxf(horiz_dist, 0.42)) * 0.52, deg_to_rad(3.5), deg_to_rad(20.0))
+	var to_target := _smooth_ball_local - head_origin_local
+	var horiz_dist := Vector2(to_target.x, to_target.z).length()
+	var target_yaw := clampf(atan2(to_target.x, maxf(to_target.z, 0.20)), deg_to_rad(-48.0), deg_to_rad(48.0))
+	var target_pitch := clampf(atan2(-to_target.y, maxf(horiz_dist, 0.42)) * 0.52, deg_to_rad(1.5), deg_to_rad(20.0))
 
-	var final_pitch := lerpf(horizon_pitch, ball_pitch, _smooth_gaze)
-	var final_yaw := lerpf(horizon_yaw, ball_yaw, _smooth_gaze)
-	var final_roll := lerpf(horizon_roll, clampf(-final_yaw * 0.08, deg_to_rad(-4.0), deg_to_rad(4.0)), _smooth_gaze)
+	var final_pitch := lerpf(horizon_pitch, target_pitch, _smooth_gaze)
+	var final_yaw := lerpf(horizon_yaw, target_yaw, _smooth_gaze)
+	var final_roll := lerpf(horizon_roll, clampf(-final_yaw * 0.08, deg_to_rad(-4.5), deg_to_rad(4.5)), _smooth_gaze)
 
 	var q_target_head_global := Quaternion.from_euler(Vector3(final_pitch, final_yaw, final_roll))
 	var q_rel_total := (q_uchest_global.inverse() * q_target_head_global).normalized()
-	# Distribui a rotação cervical suavemente: 42% no Neck e 58% na Head.
 	var q_neck_new := Quaternion.IDENTITY.slerp(q_rel_total, 0.42).normalized()
 	var q_head_new := (q_neck_new.inverse() * q_rel_total).normalized()
 	sk.set_bone_pose_rotation(_neck, q_neck_new)
@@ -393,8 +541,6 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	if L1 < 0.05 or L2 < 0.05:
 		return
 
-	# Limita o deslocamento máximo do tornozelo em relação à animação gravada
-	# para que a IK faça apenas correções anatômicas graduais sem deformar a postura.
 	var max_corr := 0.36 if mode == 2 else 0.30
 	var delta_a := T - A
 	if delta_a.length() > max_corr:
@@ -404,8 +550,6 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	var raw_d := to_target.length()
 	if raw_d < 0.01:
 		return
-	# Mantém margem de 2,2 cm abaixo de (L1 + L2) para que o joelho sempre
-	# conserve uma micro-flexão anatômica (~15°) e nunca hiperestenda.
 	var min_d := absf(L1 - L2) + 0.035
 	var max_d := (L1 + L2) - 0.022
 	var d := clampf(raw_d, min_d, max_d)
@@ -416,14 +560,11 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	var old_d := maxf(old_vec.length(), 0.01)
 	var u_old := old_vec / old_d
 
-	# Direção atual do joelho perpendicular ao eixo quadril-tornozelo.
 	var k_perp := (K - H) - u_old * (K - H).dot(u_old)
 	if k_perp.length_squared() < 0.0004:
-		# Perna quase reta: usa +Z (frente do esqueleto) como direção do joelho.
 		k_perp = Vector3(0.0, 0.0, 1.0) - u_old * u_old.z
 	var q_swing := Quaternion(u_old, u_new)
 	var n_knee := (q_swing * k_perp).normalized()
-	# Garante que o joelho sempre aponte naturalmente para a frente (+Z no espaço do modelo).
 	if n_knee.z < 0.12:
 		var fwd_hint := (Vector3(side * -0.06, 0.1, 1.0) - u_new * Vector3(side * -0.06, 0.1, 1.0).dot(u_new))
 		if fwd_hint.length_squared() > 0.001:
@@ -433,43 +574,36 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	var sin_a := sqrt(maxf(0.0, 1.0 - cos_a * cos_a))
 	var K_new := H + u_new * (L1 * cos_a) + n_knee * (L1 * sin_a)
 
-	# Rotaciona coxa (UpperLeg) pelo menor arco (sem torcer o fêmur).
 	var d1_old := (K - H).normalized()
 	var d1_new := (K_new - H).normalized()
 	var q1 := Quaternion(d1_old, d1_new)
 	gp_hip.basis = Basis(q1) * gp_hip.basis
 
-	# Rotaciona canela (LowerLeg) a partir da rotação acumulada da coxa.
 	var d2_after_q1 := (q1 * (A - K)).normalized()
 	var d2_new := (T_clamped - K_new).normalized()
 	var q2 := Quaternion(d2_after_q1, d2_new)
 	gp_knee.basis = Basis(q2) * Basis(q1) * gp_knee.basis
 	gp_knee.origin = K_new
 
-	# O pé herda a rotação das articulações superiores (coxa + canela) para manter
-	# o alinhamento anatômico natural com a perna (elimina o pé na ponta dos dedos):
 	gp_foot.basis = Basis(q2) * Basis(q1) * gp_foot.basis
 	gp_foot.origin = T_clamped
 	if ball_w > 0.01:
 		var foot_euler := Vector3.ZERO
 		match mode:
-			0, 4: # INSIDE / CUSHION (chapa: tornozelo abre bem para mostrar a parte interna do pé)
-				foot_euler = Vector3(deg_to_rad(4.5), deg_to_rad(-21.0 * side), deg_to_rad(10.5 * side))
-			1: # SOLE (sola em cima da bola: ponta do pé levantada com flexibilidade)
-				foot_euler = Vector3(deg_to_rad(-16.0), deg_to_rad(-3.0 * side), 0.0)
-			2: # KICK (peito do pé: ponta esticada firme para baixo no chute)
-				foot_euler = Vector3(deg_to_rad(16.0), 0.0, 0.0)
+			0, 4: # INSIDE (chapa: tornozelo abre mostrando a face interna firme)
+				foot_euler = Vector3(deg_to_rad(2.0), deg_to_rad(-22.0 * side), deg_to_rad(10.0 * side))
+			1: # SOLE (sola em cima da bola: ponta do pé levemente erguida pisando na bola)
+				foot_euler = Vector3(deg_to_rad(12.0), deg_to_rad(-3.0 * side), 0.0)
+			2: # KICK (peito do pé: dorso firme para chute forte / lançamento)
+				foot_euler = Vector3(deg_to_rad(-14.0), 0.0, 0.0)
 			3: # CUSHION (amortecimento macio de recepção)
-				foot_euler = Vector3(deg_to_rad(3.5), deg_to_rad(-18.0 * side), deg_to_rad(9.0 * side))
+				foot_euler = Vector3(deg_to_rad(3.0), deg_to_rad(-18.0 * side), deg_to_rad(8.5 * side))
 			5: # OUTSIDE (três dedos: tornozelo vira para dentro mostrando a face externa)
-				foot_euler = Vector3(deg_to_rad(6.5), deg_to_rad(18.5 * side), deg_to_rad(-9.5 * side))
+				foot_euler = Vector3(deg_to_rad(-4.0), deg_to_rad(19.0 * side), deg_to_rad(-9.5 * side))
 		var rot_mod := Basis.from_euler(foot_euler * clampf(ball_w * 1.12, 0.0, 0.96))
 		gp_foot.basis = gp_foot.basis * rot_mod
-	elif absf(_smooth_turn) > 0.05:
-		# Flexibilidade sutil do tornozelo acompanhando a inclinação de curva na passada
-		var turn_foot_euler := Vector3(0.0, deg_to_rad(4.0 * _smooth_turn), deg_to_rad(3.0 * _smooth_turn))
-		gp_foot.basis = gp_foot.basis * Basis.from_euler(turn_foot_euler)
 
 	sk.set_bone_global_pose(h_idx, gp_hip)
 	sk.set_bone_global_pose(k_idx, gp_knee)
 	sk.set_bone_global_pose(f_idx, gp_foot)
+	sk.force_update_all_bone_transforms()

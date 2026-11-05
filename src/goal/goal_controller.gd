@@ -91,7 +91,7 @@ func _bar(body: StaticBody3D, pos: Vector3, length: float, rot_deg: Vector3, rad
 	mi.rotation_degrees = rot_deg
 	body.add_child(mi)
 	var shape := CylinderShape3D.new()
-	shape.radius = radius
+	shape.radius = maxf(radius, 0.085)
 	shape.height = length
 	var cs := CollisionShape3D.new()
 	cs.shape = shape

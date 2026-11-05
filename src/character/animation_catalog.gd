@@ -952,9 +952,10 @@ static func _position_scale_fix(sk: Skeleton3D) -> float:
 			lowest = minf(lowest, sk.get_bone_global_rest(i).origin.y)
 	if lowest == INF:
 		return 1.0
-	var true_height := hips_y - lowest + 0.02
-	if true_height < 0.1 or sk.motion_scale <= 0.0:
+	var leg_span := hips_y - lowest
+	if leg_span <= 0.00001 or sk.motion_scale <= 0.00001:
 		return 1.0
+	var true_height := leg_span * 1.022
 	return sk.motion_scale / true_height
 
 
@@ -1067,15 +1068,44 @@ static func has_root_yaw(logical: StringName) -> bool:
 	return root_yaw.has(String(clip(logical)))
 
 
+const STEADY_LOCOMOTION_PREFIXES: Array[StringName] = [
+	&"m_breathing", &"m_soccer_idle", &"m_offensive_idle", &"m_gk_idle",
+	&"m_walking", &"m_slow_jog", &"m_jog", &"m_run", &"m_sprint", &"m_idle_to_sprint",
+	&"m_dribble", &"m_back", &"m_strafe_l_jog", &"m_strafe_r_jog", &"m_strafe_l_walk",
+	&"m_strafe_l_fast", &"m_strafe_r_fast", &"m_diag_l", &"m_diag_r",
+	&"m_diag_back_l", &"m_diag_back_r", &"m_walk_strafe_l", &"m_warmup", &"m_argue",
+	&"m_sad_run", &"m_start_walk", &"m_walk_stop", &"m_run_stop",
+	&"m_turn_l", &"m_turn_r", &"m_turn180", &"m_cut_r", &"m_walk_turn180",
+	&"m_stand_turn_r", &"m_cut", &"m_sprint_turn", &"m_run_to_turn", &"m_walk_turn_l",
+]
+
+const UPRIGHT_ACTION_PREFIXES: Array[StringName] = [
+	&"m_pass_short", &"m_pass_long", &"m_shoot", &"m_shoot_power",
+	&"m_receive", &"m_receive_ball", &"m_spin", &"m_chest", &"m_kneeing",
+	&"m_header", &"m_head_ctrl", &"m_gk_pass", &"m_kick_up", &"m_victory", &"m_victory_idle", &"m_defeated", &"m_samba",
+]
+
+
 ## Clipes do Mixamo deslocam o quadril pelo chão (até 4 m). O deslocamento do
 ## corpo no jogo vem da física, então retiramos o movimento horizontal do
-## quadril (o clipe passa a ser "no lugar") e guardamos o total para uso como
-## root motion nas etapas seguintes.
+## quadril (o clipe passa a ser "no lugar") e normalizamos a altura vertical
+## (Hips.y) para eliminar pulos/flutuação entre clipes de escalas distintas.
 static func _make_in_place(prefix: StringName, source: AnimationLibrary) -> AnimationLibrary:
 	var lib := AnimationLibrary.new()
 	for anim_name in source.get_animation_list():
 		var anim := source.get_animation(anim_name).duplicate(true) as Animation
+		# Remove trilhas órfãs de nó raiz (ex.: "Armature" com escala 100x de clipes VRoid)
+		for ti in range(anim.get_track_count() - 1, -1, -1):
+			var tpath := String(anim.track_get_path(ti))
+			if not tpath.begins_with("%GeneralSkeleton:"):
+				anim.remove_track(ti)
+		_ensure_spine_track(anim)
 		var track := anim.find_track(NodePath(HIPS_POSITION_TRACK), Animation.TYPE_POSITION_3D)
+		if track < 0:
+			track = anim.add_track(Animation.TYPE_POSITION_3D)
+			anim.track_set_path(track, NodePath(HIPS_POSITION_TRACK))
+			anim.position_track_insert_key(track, 0.0, Vector3(0.0, 0.938, 0.0))
+			anim.position_track_insert_key(track, maxf(anim.length, 0.1), Vector3(0.0, 0.938, 0.0))
 		if track >= 0 and anim.track_get_key_count(track) > 0:
 			var first: Vector3 = anim.track_get_key_value(track, 0)
 			var last: Vector3 = anim.track_get_key_value(track, anim.track_get_key_count(track) - 1)
@@ -1089,20 +1119,76 @@ static func _make_in_place(prefix: StringName, source: AnimationLibrary) -> Anim
 				curve.append(Vector3(v.x - first.x, 0.0, v.z - first.z))
 			root_curves[key] = curve
 			if contact >= 0.0 or _is_root_motion_prefix(prefix):
-				# Clipes com contato na bola (corrida de aproximação + chute): o
-				# quadril fica centrado na origem do jogador o tempo todo; quem
-				# leva o corpo até a bola é a física (Player._update_action).
 				for k in anim.track_get_key_count(track):
 					var v: Vector3 = anim.track_get_key_value(track, k)
-					anim.track_set_key_value(track, k, Vector3(first.x, v.y, first.z))
+					anim.track_set_key_value(track, k, Vector3(0.0, v.y, 0.0))
 			else:
 				for k in anim.track_get_key_count(track):
-					# Remove só a tendência de avanço; o balanço natural do quadril fica.
 					var v: Vector3 = anim.track_get_key_value(track, k)
 					var f := anim.track_get_key_time(track, k) / maxf(anim.length, 0.001)
-					anim.track_set_key_value(track, k, v - drift * f)
+					var horiz := (v - drift * f) - Vector3(first.x, 0.0, first.z)
+					anim.track_set_key_value(track, k, Vector3(horiz.x * 0.45, v.y, horiz.z * 0.35))
+			_normalize_hips_vertical(prefix, anim, track)
 			root_motion[String(prefix) + "/" + String(anim_name)] = Vector3(last.x - first.x, 0.0, last.z - first.z)
 		if _is_turn_prefix(prefix):
 			_strip_yaw(anim, String(prefix) + "/" + String(anim_name))
 		lib.add_animation(anim_name, anim)
 	return lib
+
+
+## Normaliza Hips.y para que todos os clipes de locomoção, condução, espera e
+## toque na bola compartilhem a mesma linha de base anatômica (~0.935m), sem
+## saltos verticais a cada meio segundo quando o BlendSpace2D mistura idle_ball,
+## walk, dribble, run e sprint.
+static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track: int) -> void:
+	var n_k := anim.track_get_key_count(track)
+	if n_k == 0:
+		return
+	var sum_y := 0.0
+	var min_y := INF
+	var max_y := -INF
+	for k in n_k:
+		var vy := (anim.track_get_key_value(track, k) as Vector3).y
+		sum_y += vy
+		min_y = minf(min_y, vy)
+		max_y = maxf(max_y, vy)
+	var mean_y := sum_y / float(n_k)
+	var max_dev := maxf(max_y - mean_y, mean_y - min_y)
+	max_dev = maxf(max_dev, 0.001)
+
+	if prefix in STEADY_LOCOMOTION_PREFIXES:
+		var base_y := 0.938
+		var amp := 0.008
+		if prefix in [&"m_breathing", &"m_soccer_idle", &"m_offensive_idle", &"m_gk_idle", &"m_warmup", &"m_argue"]:
+			base_y = 0.942
+			amp = 0.003
+		elif prefix in [&"m_walking", &"m_strafe_l_walk", &"m_walk_strafe_l", &"m_start_walk", &"m_walk_stop"]:
+			base_y = 0.940
+			amp = 0.006
+		elif prefix in [&"m_dribble", &"m_slow_jog", &"m_jog", &"m_strafe_l_jog", &"m_strafe_r_jog", &"m_diag_l", &"m_diag_r"]:
+			base_y = 0.934
+			amp = 0.008
+		elif prefix in [&"m_run", &"m_sprint", &"m_idle_to_sprint", &"m_strafe_l_fast", &"m_strafe_r_fast"]:
+			base_y = 0.928
+			amp = 0.010
+		for k in n_k:
+			var v: Vector3 = anim.track_get_key_value(track, k)
+			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)
+			v.y = base_y + norm_dy * amp
+			anim.track_set_key_value(track, k, v)
+	elif prefix in UPRIGHT_ACTION_PREFIXES:
+		var base_y := 0.932
+		var amp := 0.022
+		for k in n_k:
+			var v: Vector3 = anim.track_get_key_value(track, k)
+			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)
+			v.y = base_y + norm_dy * amp
+			anim.track_set_key_value(track, k, v)
+	elif max_y > 1.35:
+		# Clipes de queda/carrinho/salto que vieram com escala residual alta
+		var scale_y := 0.94 / maxf(max_y, 0.94)
+		for k in n_k:
+			var v: Vector3 = anim.track_get_key_value(track, k)
+			v.y *= scale_y
+			anim.track_set_key_value(track, k, v)
+
