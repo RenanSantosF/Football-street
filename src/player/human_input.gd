@@ -119,6 +119,8 @@ func _physics_process(delta: float) -> void:
 			else:
 				_move = auto
 			_sprint = _chase_sprint or Input.is_action_pressed("sprint")
+	else:
+		_sprint = Input.is_action_pressed("sprint")
 
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)

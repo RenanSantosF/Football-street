@@ -49,11 +49,11 @@ const TURN_SPEED_UP := 1.35
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 2.85
+@export var jog_speed := 2.45
 ## Velocidade máxima correndo (CORRER) — cadenciada, pesada e firme no chão.
-@export var sprint_speed := 4.35
-## Velocidade máxima conduzindo a bola em velocidade (praticamente igual a correr sem bola).
-@export var speed_dribbling := 4.30
+@export var sprint_speed := 4.05
+## Velocidade máxima conduzindo a bola em velocidade (cadência de futebol realista).
+@export var speed_dribbling := 3.45
 @export var ball_speed_factor := 0.99
 @export var acceleration := 7.8
 @export var deceleration := 7.2

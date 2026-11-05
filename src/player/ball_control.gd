@@ -494,20 +494,11 @@ func _conduct(delta: float) -> void:
 	var threat := player._shield_threat()
 	if threat != Vector3.ZERO and speed < 2.2:
 		lat_pocket = -signf(threat.dot(right)) * 0.13
-	var ideal_pos := player.global_position + move_dir * lead_pocket + right * lat_pocket
-	var to_ideal := _flat(ideal_pos - ball.global_position)
-	var along := off.dot(move_dir)
-	var lat_err := absf(off.dot(right) - lat_pocket)
-	var turn_ang := move_dir.angle_to(w)
-	# Condução orgânica sem efeito "ímã": a bola rola solta com física real,
-	# e a assistência suave só atua em limites extremos de desvio (> 0.68m) com blend sutil e imperceptível.
-	if along < 0.18 or d > 0.68 or lat_err > 0.22 or turn_ang > deg_to_rad(24.0):
-		var guide_vel := w * target_speed + to_ideal * 2.2
-		var blend := clampf(delta * 4.5, 0.0, 0.65)
-		if along < 0.12 or d > 0.75 or turn_ang > deg_to_rad(38.0):
-			blend = clampf(delta * 7.5, 0.0, 0.85)
-		var next_bv := bv.lerp(guide_vel, blend)
-		ball.touch(Vector3(next_bv.x, 0.0, next_bv.z), player)
+	# Condução 100% orgânica com física pura (zero efeito "ímã"):
+	# A bola NUNCA vira de direção no ar sozinha; qualquer mudança decorre puramente
+	# do toque dos pés via _foot_contact_touch(). A física da bola rola livre no chão.
+	if d > 0.82:
+		ball.release()
 
 
 ## Pés da animação no mundo (posição e velocidade) — para o contato com a bola.
@@ -991,20 +982,20 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 		if long:
 			vel = lofted_velocity(from, from + _flat(dest - from) * 0.92, lerpf(32.0, 50.0, power))
 		else:
-			# Passe rasteiro com peso e força padrão assertiva desde o toque único
-			vel = ground_pass_velocity(from, dest, lerpf(4.8, 6.8, power))
-			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(11.0, 16.5, power), 18.0)
+			# Passe rasteiro com peso e velocidade natural equilibrada
+			vel = ground_pass_velocity(from, dest, lerpf(4.2, 6.0, power))
+			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(9.8, 15.2, power), 16.8)
 	else:
 		# Passe em profundidade (para o espaço): vai quem estiver melhor para chegar.
-		var dest := from + dir * lerpf(7.0, 16.0, power)
+		var dest := from + dir * lerpf(6.5, 15.0, power)
 		dest = Field.clamp_inside(dest, 0.5)
 		receiver = _best_runner_to(dest)
 		if long:
 			vel = lofted_velocity(from, dest, lerpf(34.0, 50.0, power))
 		else:
-			# Para o espaço: passe firme na corrida
-			vel = ground_pass_velocity(from, dest, lerpf(2.2, 3.8, power))
-			vel = vel.normalized() * clampf(vel.length() * align_k, 8.5, 14.8)
+			# Para o espaço: velocidade controlada
+			vel = ground_pass_velocity(from, dest, lerpf(1.8, 3.2, power))
+			vel = vel.normalized() * clampf(vel.length() * align_k, 7.8, 13.8)
 	# Precisão: toque curto praticamente no pé; passe forte ou desalinhado um pouco menos.
 	var err := deg_to_rad(0.25 + 0.75 * power)
 	if align_dot < 0.2:
@@ -1042,7 +1033,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 	var from := ball.global_position
 	var ty := _rng.randf_range(0.12, 0.46)
 	var target := Vector3(goal_x, ty, _choose_shot_z(from, goal_x, aim))
-	var speed := lerpf(14.2, 22.0, power)
+	var speed := lerpf(12.5, 19.5, power)
 	var flat_to := _flat(target - from)
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
@@ -1077,7 +1068,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 ## velocidade realista de futebol de rua, sem sair como um foguete).
 func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
 	var from := ball.global_position
-	var speed := lerpf(14.2, 22.0, power)
+	var speed := lerpf(12.5, 19.5, power)
 	var spread := deg_to_rad(lerpf(0.4, 1.8, power))
 	var facing_dot := player.facing.dot(dir)
 	if facing_dot < 0.3:
@@ -1182,8 +1173,9 @@ func execute_tackle() -> bool:
 	else:
 		poke = poke.rotated(Vector3.UP, _rng.randf_range(-0.45, 0.45))
 		ball.kick(poke * _rng.randf_range(1.8, 2.9), Vector3.ZERO, player, 0.05)
-	carrier.stumble(0.38)
-	GameEvents.ball_kicked.emit(player, &"tackle", 0.5)
+	carrier.stumble(0.48)
+	player.notify_touch(&"tackle")
+	GameEvents.ball_kicked.emit(player, &"tackle", 0.6)
 	return true
 
 
