@@ -56,6 +56,7 @@ const ACTION_CLIPS := {
 	&"HeadControl": &"head_control",
 	&"HeaderJump": &"header_jump",
 	&"StandTackle": &"stand_tackle",
+	&"StandTackleAlt": &"stand_tackle_alt",
 	&"StandTackleL": &"stand_tackle_m",
 }
 ## estado -> [nome lógico, volta sozinho para a locomoção no fim?]

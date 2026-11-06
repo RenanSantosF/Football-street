@@ -552,7 +552,10 @@ func _start_standing_tackle(aim_dir: Vector3) -> void:
 	var b_dir := _flat_dir_to(ball.global_position) if ball != null else facing
 	_kick_mirror = _choose_kick_foot(b_dir)
 	var t_foot := -1.0 if _kick_mirror else 1.0
-	_begin_action(&"tackle", 0.16, 0.44, 1.0, aim_dir, null, 0.85)
+	var act := &"tackle"
+	if _rng.randf() < 0.5 and AnimationCatalog.has_clip(&"stand_tackle_alt"):
+		act = &"tackle"
+	_begin_action(act, 0.16, 0.44, 1.0, aim_dir, null, 0.85)
 	_action_face = b_dir
 	# Estica a perna de bote na direção da bola com alcance amplo de IK
 	ball_control.foot.begin(t_foot, _action_face, 0.15, FootContact.Mode.INSIDE, Callable(), 0.12)

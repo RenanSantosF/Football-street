@@ -16,17 +16,16 @@ const LOSE_TEAMMATE_DIST := 2.4
 ## Desaceleração ao rolar nos bloquinhos (m/s²): piso irregular segura a bola.
 ## Bola de rua pesada + bloquinhos com atrito: rola menos e para com firmeza.
 @export var rolling_resistance := 2.22
-## Bola no pé de alguém (conduzindo): rola menos, como na grama — o jogador
-## tem mais domínio e a bola não "foge" entre os toques.
-@export var possessed_rolling_factor := 1.28
+## Bola no pé de alguém (conduzindo): rolagem orgânica sem atrito exagerado
+@export var possessed_rolling_factor := 1.15
 
 
 func current_rolling() -> float:
 	return rolling_resistance * (possessed_rolling_factor if possessor != null else 1.0)
-## Arrasto do ar (quadrático): a = k * v².
-@export var air_drag := 0.016
-## Efeito Magnus (curva por rotação).
-@export var magnus_strength := 0.0025
+## Arrasto do ar (quadrático): a = k * v² (calibrado conforme Striker 3D).
+@export var air_drag := 0.022
+## Efeito Magnus (curva por rotação física em chutes colocados e passes com efeito).
+@export var magnus_strength := 0.0055
 ## Quanto a rotação converge para a rolagem sem deslizar quando no chão.
 @export var roll_alignment := 9.0
 

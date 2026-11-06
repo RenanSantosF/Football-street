@@ -487,13 +487,6 @@ func _conduct(delta: float) -> void:
 		_foot_contact_touch(want, pv, bv)
 	# 2) Guia contínua de condução próxima: mantém a bola sempre no bolso da passada à frente
 	#    do jogador (~0.34m a 0.44m à frente), acompanhando curvas e arrancadas sem jamais escapar!
-	var speed := pv.length()
-	var target_speed := maxf(want.length() * _top_speed_with_ball(), speed)
-	var lead_pocket := clampf(0.34 + speed * 0.024, 0.34, 0.44)
-	var lat_pocket := _foot_side * 0.045
-	var threat := player._shield_threat()
-	if threat != Vector3.ZERO and speed < 2.2:
-		lat_pocket = -signf(threat.dot(right)) * 0.13
 	# Condução 100% orgânica com física pura (zero efeito "ímã"):
 	# A bola NUNCA vira de direção no ar sozinha; qualquer mudança decorre puramente
 	# do toque dos pés via _foot_contact_touch(). A física da bola rola livre no chão.
@@ -581,10 +574,12 @@ func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
 	var in_front := off.dot(ref) > -0.08 or (turning and off.dot(player.facing) > -0.08)
 	if not in_front:
 		return
-	var cadence := clampf(0.18 - speed * 0.012, 0.11, 0.18)
+	# Cadência de toques adaptativa: toques frequentes e suaves no passo lento/andar (0.12s)
+	# e mais espaçados na corrida reta, garantindo que o pé conduza a bola organicamente.
+	var cadence := clampf(0.14 - speed * 0.010, 0.09, 0.14)
 	if turning:
-		cadence = 0.09
-	if _since_touch < cadence and d > 0.32 and not turning:
+		cadence = 0.08
+	if _since_touch < cadence and d > 0.28 and not turning:
 		return
 	var chosen_foot := preferred_foot
 	var f_dist := foot.foot_distance(chosen_foot)
