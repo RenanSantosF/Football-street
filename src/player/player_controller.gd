@@ -34,8 +34,10 @@ const IDLE_TURN_RATE := 1.6
 ## Correção máxima do corpo na aproximação do chute/passe (m/s).
 const KICK_ADJUST_SPEED := 1.6
 ## Giro máximo do corpo (rad/s) andando/correndo.
-const MAX_TURN_RATE := 9.0
-const MAX_TURN_RATE_BALL := 8.8
+const MAX_TURN_RATE := 7.5
+const MAX_TURN_RATE_BALL := 7.3
+## Giro máximo do corpo marcando (rad/s).
+const MARK_TURN_RATE := 3.4
 const DODGE_CHANCE_AI := 0.35
 const DODGE_CHANCE_HUMAN := 0.25
 ## Tempo caído antes de levantar (quando não há clipe de levantar).
@@ -49,18 +51,18 @@ const TURN_SPEED_UP := 1.35
 @export var shirt_number := 0
 
 @export_group("Movimento")
-@export var jog_speed := 2.60
+@export var jog_speed := 2.25
 ## Velocidade máxima correndo (CORRER) — cadenciada, pesada e firme no chão.
-@export var sprint_speed := 4.35
+@export var sprint_speed := 3.85
 ## Velocidade máxima conduzindo a bola em velocidade (praticamente igual a correr sem bola).
-@export var speed_dribbling := 4.25
+@export var speed_dribbling := 3.70
 @export var ball_speed_factor := 0.98
-@export var acceleration := 7.8
-@export var deceleration := 7.2
+@export var acceleration := 5.8
+@export var deceleration := 6.0
 ## Velocidade de giro do corpo (rad/s).
-@export var turn_speed := 6.6
+@export var turn_speed := 5.4
 ## Giro ágil com a bola: mesma fluidez de correr sem a bola.
-@export var turn_speed_with_ball := 6.5
+@export var turn_speed_with_ball := 5.3
 
 @export_group("Corpo")
 ## Massa do corpo (kg) — adolescente de rua. Define quem ganha a trombada.
@@ -69,8 +71,8 @@ const TURN_SPEED_UP := 1.35
 @export var body_contact_radius := 0.27
 ## Aderência lateral do pé no chão (m/s²): quanto da inércia lateral o corpo
 ## consegue cortar numa curva (parado alto, correndo forte bem menos).
-@export var lateral_grip := 13.5
-@export var lateral_grip_sprint := 8.0
+@export var lateral_grip := 11.5
+@export var lateral_grip_sprint := 6.8
 
 var intent := PlayerIntent.new()
 var controller: Node = null
@@ -96,6 +98,8 @@ var _action_aim := Vector3.ZERO
 var _action_target: Node3D = null
 var _action_precise := false
 var _action_lofted := false
+## Calcanhar: para onde a bola vai (para trás do corpo).
+var _heel_dir := Vector3.ZERO
 var _kick_logical: StringName = &""
 var _kick_seek := 0.0
 var _action_move_factor := 0.4
@@ -298,7 +302,10 @@ func _physics_process(delta: float) -> void:
 		velocity.y -= _gravity * delta
 	body_adjust = Vector3.ZERO
 	move_and_slide()
-	if not is_jumping() and global_position.y > 0.0:
+	if not is_jumping() and global_position.y != 0.0:
+		# Chão plano: o corpo fica exatamente em y = 0. (Antes só corrigia acima
+		# do chão; a gravidade afundava ~2 mm, a colisão devolvia, e o corpo
+		# inteiro vibrava ±1,8 mm a cada quadro — pés e joelhos tremiam junto.)
 		global_position.y = 0.0
 		velocity.y = minf(velocity.y, 0.0)
 	_update_facing(delta)
@@ -448,6 +455,10 @@ func _update_facing(delta: float) -> void:
 			max_rate *= lerpf(1.0, 0.72, hs_factor)
 		if _pivot_dir != Vector3.ZERO or state == State.ACTION or ball_control.is_reverse_pulling():
 			max_rate *= 1.5
+		if _marking and state == State.MOVE:
+			# marcando (passadas laterais): o corpo gira com os passos, devagar —
+			# girar 6 rad/s arrastava os pés e o BlendSpace varria todas as direções
+			max_rate = minf(max_rate, MARK_TURN_RATE)
 		var step := wrapf(a - cur, -PI, PI)
 		a = cur + clampf(step, -max_rate * delta, max_rate * delta)
 		facing = Vector3(-sin(a), 0.0, -cos(a))
@@ -513,6 +524,8 @@ func in_contact_with(other: Player) -> bool:
 ## Recebeu um impulso de [param dv] m/s (direção [param dir] = do outro para
 ## mim, vindo de [param other]): perde equilíbrio; trombada forte = tropeço / bola solta.
 func receive_body_impact(dv: float, dir: Vector3, other: Player) -> void:
+	if dv > 0.7:
+		GameEvents.body_contact.emit(self, dv)
 	balance = clampf(balance - dv * 0.2, 0.0, 1.0)
 	imbalance_dir = dir
 	if state != State.MOVE or _impact_cooldown > 0.0 or is_jumping():
@@ -687,11 +700,15 @@ func _update_actions(delta: float) -> void:
 				# Passe/chute para TRÁS: primeiro gira o corpo com a bola na sola
 				# (passinhos rápidos), depois toca de frente — preciso, sem "cair".
 				var kd := _kick_direction(_buffer_action, _buffer_aim, _buffer_target)
-				if kd != Vector3.ZERO and facing.angle_to(kd) > deg_to_rad(100.0):
+				var heel := _buffer_action == PlayerIntent.Action.PASS and not _buffer_through \
+					and not _buffer_lofted and _heel_eligible(kd)
+				if kd != Vector3.ZERO and facing.angle_to(kd) > deg_to_rad(100.0) and not heel:
 					_pivot_dir = kd
 					return
 			if _pivot_dir != Vector3.ZERO:
 				return # ainda girando
+			if _ball_coming_in_air():
+				return # bola vindo pelo alto: o pedido vira voleio/cabeceio na chegada
 			if ball_control.can_kick() or ball_control.can_start_kick_on_run() or _first_time_ready():
 				_start_kick(_buffer_action, _buffer_power, _buffer_aim, _buffer_target, _buffer_lofted, _buffer_through)
 				_action_precise = _buffer_precise
@@ -737,7 +754,7 @@ func _update_actions(delta: float) -> void:
 
 
 func _is_kick_action() -> bool:
-	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_b", &"shoot_power", &"chip", &"run_pass", &"through", &"touch_pass", &"firm_pass"]
+	return _action_kind in [&"pass", &"long_pass", &"shoot", &"shoot_b", &"shoot_power", &"chip", &"run_pass", &"through", &"touch_pass", &"firm_pass", &"heel_pass"]
 
 
 func _has_pending_kick() -> bool:
@@ -747,6 +764,25 @@ func _has_pending_kick() -> bool:
 
 ## De primeira: a bola (sem dono) está chegando e vai estar no pé no
 ## instante do contato do passe/chute.
+## A bola vem pelo ALTO na minha direção (vai ser voleio, domínio no ar ou
+## cabeceio) — não começar um chute rasteiro antes dela chegar.
+func _ball_coming_in_air() -> bool:
+	if ball == null or ball.possessor != null or not ball.in_play or ball_control.has_ball():
+		return false
+	if ball.global_position.y < 0.36 and ball.velocity_now().y <= 0.5:
+		return false
+	var rel := ball.global_position - global_position
+	rel.y = 0.0
+	var v := ball.flat_velocity()
+	if v.length() < 1.5 or rel.length() > 7.0:
+		return false
+	var t := -rel.dot(v) / v.length_squared()
+	if t < 0.0 or (rel + v * t).length() > 1.0:
+		return false
+	var h := ball.global_position.y + ball.velocity_now().y * t - 0.5 * _gravity * t * t
+	return h > 0.36
+
+
 func _first_time_ready() -> bool:
 	if ball == null or ball.possessor != null or not ball.in_play or not ball.can_be_kicked_by(self):
 		return false
@@ -774,6 +810,22 @@ func _kick_direction(a: PlayerIntent.Action, aim: Vector3, target: Node3D) -> Ve
 		if mate != null:
 			kdir = _flat_dir_to(mate.global_position)
 	return kdir.normalized() if kdir.length() > 0.1 else Vector3.ZERO
+
+
+## Passe de CALCANHAR (Etapa 27): o alvo está atrás e a bola à frente do
+## corpo, ao alcance e no chão — em vez de girar com a bola para tocar, o pé
+## passa pela bola e toca de volta com o calcanhar.
+func _heel_eligible(kdir: Vector3) -> bool:
+	if kdir == Vector3.ZERO or not ball_control.has_ball() or ball == null:
+		return false
+	if _restart_lock or ball.restricted_player == self or ball.held:
+		return false # cobrança/saída: passe normal
+	if facing.dot(kdir) > -0.6 or get_horizontal_speed() > 3.2 or ball.global_position.y > 0.3:
+		return false
+	var off := ball_control.ball_offset()
+	var along := off.dot(facing)
+	var lat := absf(off.dot(facing.cross(Vector3.UP)))
+	return along > 0.08 and along < 0.72 and lat < 0.35
 
 
 ## No meio do chute/passe (antes do pé encostar na bola)?
@@ -837,7 +889,14 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		var hv0 := get_flat_velocity()
 		var move_f := 0.5
 		var length_extra := 0.22
-		if not long and hv0.length() > 2.2 and power < 0.65 and not is_goalkeeper():
+		if not long and _heel_eligible(kdir):
+			# CALCANHAR: o alvo está atrás e a bola à frente — o pé passa pela
+			# bola e toca de volta com o calcanhar, sem girar o corpo.
+			kind_p = &"heel_pass"
+			contact = 0.2
+			move_f = 0.45
+			length_extra = 0.2
+		elif not long and hv0.length() > 2.2 and power < 0.65 and not is_goalkeeper():
 			# CORRENDO, passe fraco/médio: TOQUE LEVE na própria passada — a
 			# corrida continua (sem clipe de chute) e só a perna vai na bola com a
 			# parte de dentro, pé na diagonal (IK + rotação no quadril).
@@ -871,6 +930,9 @@ func _start_kick(a: PlayerIntent.Action, power: float, aim: Vector3, target: Nod
 		if kind_p == &"touch_pass":
 			# no toque leve o tronco quase não gira: só o pé abre na diagonal
 			_action_face = _rotate_flat(facing, _action_face, deg_to_rad(25.0))
+		elif kind_p == &"heel_pass":
+			_heel_dir = kdir if kdir != Vector3.ZERO else -facing
+			_action_face = facing # de calcanhar o corpo segue de frente
 	_setup_kick_root_motion()
 
 
@@ -960,10 +1022,30 @@ func _update_action(delta: float) -> void:
 			_action_precise = _buffer_action == PlayerIntent.Action.SHOOT
 			_buffer_timer = 0.0
 			action_started.emit(&"header")
+		# ...e o domínio de coxa/peito vira VOLEIO (bola entre joelho e cintura)
+		elif _action_kind in [&"recv_knee", &"recv_chest"] and _buffer_timer > 0.0 \
+				and _buffer_action in [PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT] \
+				and _aerial_height >= 0.4 and _aerial_height <= 1.15 \
+				and _action_contact - _action_time > 0.12 and AnimationCatalog.has_clip(&"shoot"):
+			_action_kind = &"volley"
+			_action_aim = _buffer_aim
+			_action_power = _buffer_power
+			_action_precise = _buffer_action == PlayerIntent.Action.SHOOT
+			_buffer_timer = 0.0
+			var to_t := _kick_direction(PlayerIntent.Action.SHOOT if _action_precise else PlayerIntent.Action.PASS, _action_aim, null)
+			if to_t != Vector3.ZERO:
+				_action_face = to_t
+			action_started.emit(&"volley")
 		var remaining := maxf(_action_contact - _action_time, 0.05)
 		var to := _aerial_point - global_position
 		to.y = 0.0
 		hv = hv.move_toward((to / remaining).limit_length(sprint_speed), acceleration * 3.0 * delta)
+		if _action_kind == &"volley" and not _kick_ik and remaining <= 0.16:
+			# a perna sobe até a bola, na altura dela (IK do voleio)
+			_kick_ik = true
+			var lat := (ball.global_position - global_position).dot(facing.cross(Vector3.UP))
+			var vf := signf(lat) if absf(lat) > 0.05 else (-1.0 if _kick_mirror else 1.0)
+			ball_control.foot.begin(vf, _action_face, remaining, FootContact.Mode.VOLLEY, Callable(), 0.06)
 	elif not _action_contact_done and _action_kind == &"tackle":
 		# BOTE: o pé de apoio planta ao lado/atrás da bola e a outra perna
 		# estica até ela (o corpo não "entra" na bola nem no adversário).
@@ -999,7 +1081,12 @@ func _update_action(delta: float) -> void:
 			var right_f := facing.cross(Vector3.UP)
 			var lat_kd := kd.dot(right_f)
 			var k_mode := FootContact.Mode.KICK
-			if _action_kind in [&"pass", &"run_pass", &"through", &"touch_pass", &"firm_pass"]:
+			if _action_kind == &"heel_pass":
+				k_mode = FootContact.Mode.HEEL
+				kd = _heel_dir
+				var lat_b := ball_control.ball_offset().dot(right_f)
+				kf = signf(lat_b) if absf(lat_b) > 0.05 else kf
+			elif _action_kind in [&"pass", &"run_pass", &"through", &"touch_pass", &"firm_pass"]:
 				# Se o alvo sai para o lado de fora do pé de batida, usa três dedos (OUTSIDE); senão chapa (INSIDE).
 				if lat_kd * kf < -0.14:
 					k_mode = FootContact.Mode.OUTSIDE
@@ -1123,6 +1210,9 @@ func _do_contact() -> void:
 		&"pass", &"long_pass", &"run_pass", &"touch_pass", &"firm_pass":
 			if ball_control.execute_pass(_action_power, _action_aim, _action_target, _action_lofted):
 				_restart_lock = false
+		&"heel_pass":
+			if ball_control.execute_heel_pass(_action_power, _heel_dir, _action_target):
+				_restart_lock = false
 		&"through":
 			if ball_control.execute_through_pass(_action_power, _action_aim, _action_target, _action_lofted):
 				_restart_lock = false
@@ -1145,6 +1235,8 @@ func _do_contact() -> void:
 			ball_control.release_after_skill()
 		&"recv_chest", &"recv_knee", &"head_control", &"header", &"header_jump":
 			ball_control.aerial_touch(_action_kind, _aerial_height, _action_aim, _action_power, _action_precise)
+		&"volley":
+			ball_control.volley(_action_aim, _action_power, _action_precise, _aerial_height)
 
 
 ## O pé não alcançou a bola no passe/chute: sai da ação sem chutar no ar e
@@ -1390,7 +1482,7 @@ func _receive_run_dir(bdir: Vector3) -> Vector3:
 	return bdir
 
 
-const AERIAL_KINDS: Array[StringName] = [&"recv_chest", &"recv_knee", &"header", &"head_control", &"header_jump"]
+const AERIAL_KINDS: Array[StringName] = [&"recv_chest", &"recv_knee", &"header", &"head_control", &"header_jump", &"volley"]
 var _aerial_point := Vector3.ZERO
 var _aerial_height := 0.0
 
@@ -1423,7 +1515,9 @@ func _try_aerial_reception() -> bool:
 		return false # rasteira (domínio normal) ou alta demais
 	var kind: StringName
 	var pending := _buffer_timer > 0.0 and _buffer_action in [PlayerIntent.Action.PASS, PlayerIntent.Action.SHOOT]
-	if h < 0.75:
+	if pending and h >= 0.4 and h <= 1.15 and AnimationCatalog.has_clip(&"shoot"):
+		kind = &"volley" # bola entre o joelho e a cintura + botão: de primeira
+	elif h < 0.75:
 		kind = &"recv_knee"
 	elif h < 1.35:
 		kind = &"recv_chest"
@@ -1431,15 +1525,27 @@ func _try_aerial_reception() -> bool:
 		kind = &"header" if pending else &"head_control"
 	else:
 		kind = &"header_jump"
-	if not AnimationCatalog.has_clip(kind):
+	var clip_kind: StringName = &"shoot" if kind == &"volley" else kind
+	if not AnimationCatalog.has_clip(clip_kind):
 		return false
-	var lead := AnimationCatalog.contact_time(kind) / PlayerAnimationController.ACTION_SPEED
+	var lead := AnimationCatalog.contact_time(clip_kind) / PlayerAnimationController.ACTION_SPEED
 	if t > lead + 0.03:
 		return false # ainda cedo: o Player segue indo ao encontro (recepção normal)
 	_begin_action(kind, t, t + 0.45, 1.0, Vector3.ZERO, null, 0.3)
 	_action_face = -v.normalized()
 	_aerial_point = global_position + closest - v.normalized() * 0.12
 	_aerial_height = h
+	if kind == &"volley":
+		_action_aim = _buffer_aim
+		_action_power = _buffer_power
+		_action_precise = _buffer_action == PlayerIntent.Action.SHOOT
+		_buffer_timer = 0.0
+		var to_t := _kick_direction(PlayerIntent.Action.SHOOT if _action_precise else PlayerIntent.Action.PASS, _action_aim, null)
+		if to_t != Vector3.ZERO:
+			_action_face = to_t
+		# o ponto de apoio fica um pouco antes e ao lado da bola (a perna estica até ela)
+		_aerial_point = global_position + closest - v.normalized() * 0.32
+		return true
 	if kind in [&"header", &"header_jump"] and pending:
 		_action_aim = _buffer_aim
 		_action_power = _buffer_power

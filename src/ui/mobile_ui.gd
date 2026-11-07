@@ -73,7 +73,13 @@ func _update_button_labels() -> void:
 	sprint_button.alt_hint = ""
 	# Botão contextual: PROFUNDIDADE com a bola (ou chegando nela). A
 	# proteção de bola é automática (sem botão).
-	through_button.visible = with_ball
+	# (com retenção de 0,4 s: a posse oscilando não faz o botão piscar)
+	if with_ball:
+		_through_hold_t = 0.4
+	else:
+		_through_hold_t = maxf(_through_hold_t - get_process_delta_time(), 0.0)
+	through_button.visible = with_ball or _through_hold_t > 0.0
+	through_button.alt_hint = "arraste: por cima" if with_ball and not incoming else ""
 	if with_ball and incoming:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "de primeira"
@@ -277,6 +283,7 @@ func _build_fps() -> void:
 	add_child(_fps_label)
 
 
+var _through_hold_t := 0.0
 var _fade_rect: ColorRect
 var _fade_tween: Tween
 

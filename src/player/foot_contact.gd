@@ -8,7 +8,7 @@ extends RefCounted
 enum Phase { IDLE, REACH, HOLD, RELEASE }
 ## Como o pé encosta: parte de dentro (chapa), sola por cima da bola,
 ## chute (peito do pé), amortecer (recepção), ou parte externa (três dedos).
-enum Mode { INSIDE = 0, SOLE = 1, KICK = 2, CUSHION = 3, OUTSIDE = 5 }
+enum Mode { INSIDE = 0, SOLE = 1, KICK = 2, CUSHION = 3, OUTSIDE = 5, HEEL = 6, VOLLEY = 7 }
 
 const ANKLE_HEIGHT := 0.096
 const MAX_REACH := 0.88
@@ -197,9 +197,12 @@ func _ik_cap() -> float:
 	elif mode in [Mode.INSIDE, Mode.OUTSIDE]:
 		full = 0.38
 		mx = 0.64
-	elif mode == Mode.KICK:
+	elif mode in [Mode.KICK, Mode.HEEL]:
 		full = 0.44
 		mx = 0.74
+	elif mode == Mode.VOLLEY:
+		full = 0.55
+		mx = 0.9
 	return clampf(1.0 - (disp - full) / maxf(mx - full, 0.05), 0.0, 0.92)
 
 
@@ -264,6 +267,15 @@ func _target_now(t: float) -> Vector3:
 		Mode.CUSHION:
 			p = b - dir * 0.18 + right * side * 0.055
 			p.y = ANKLE_HEIGHT
+		Mode.HEEL:
+			# calcanhar: o pé passa pela bola e bate DE VOLTA com o calcanhar
+			# (dir = para onde a bola vai, para trás do corpo)
+			p = b - dir * 0.17
+			p.y = ANKLE_HEIGHT + 0.035
+		Mode.VOLLEY:
+			# voleio: peito do pé atrás da bola, NA ALTURA dela (no ar)
+			p = b - dir * 0.2 + right * side * 0.04
+			p.y = maxf(b.y - 0.03, ANKLE_HEIGHT)
 		Mode.OUTSIDE:
 			# parte externa do pé (três dedos): atrás da bola e levemente por dentro, sem entrar na bola
 			p = b - dir * 0.21 - right * side * 0.055

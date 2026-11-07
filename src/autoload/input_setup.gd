@@ -18,6 +18,7 @@ const KEYS := {
 	"pass_lob": [KEY_U],      # passe por cima (no toque: arrastar o botão de passe)
 	"shoot_chip": [KEY_I],    # cavadinha (no toque: arrastar o botão de chute)
 	"through_pass": [KEY_H],  # passe em profundidade (botão PROFUNDIDADE)
+	"through_lob": [KEY_Y],   # profundidade POR CIMA (no toque: arrastar o botão PROFUNDIDADE)
 }
 
 const JOY_BUTTONS := {

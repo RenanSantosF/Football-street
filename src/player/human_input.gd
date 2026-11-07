@@ -39,6 +39,8 @@ var _last_charge := -1.0
 var _aim := Vector3.ZERO
 var _aiming := false
 var _lob_pending := false
+## Profundidade arrastada: a bola vai POR CIMA (Etapa 27).
+var _through_lob_pending := false
 var _chip_pending := false
 var _queued_lofted := false
 ## Segurando CORRER sem a bola (BUSCAR): o jogador corre sozinho atrás da bola
@@ -107,6 +109,8 @@ func _physics_process(delta: float) -> void:
 		_through_hold = _update_charge("through_pass", _through_hold, delta, PlayerIntent.Action.PASS, true)
 		if Input.is_action_pressed("pass_lob") and _pass_hold >= 0.0:
 			_lob_pending = true
+		if Input.is_action_pressed("through_lob") and _through_hold >= 0.0:
+			_through_lob_pending = true
 		if Input.is_action_pressed("shoot_chip") and _shoot_hold >= 0.0:
 			_chip_pending = true
 	else:
@@ -218,12 +222,23 @@ func _update_charge(action: StringName, hold: float, delta: float, kind: PlayerI
 		if hold >= MAX_CHARGE_TIME:
 			_queue(kind, 1.0)
 			_queued_through = through
+			_through_lofted(through)
 			return -1.0
 	if hold >= 0.0 and not Input.is_action_pressed(action):
 		_queue(kind, clampf(hold / MAX_CHARGE_TIME, 0.0, 1.0))
 		_queued_through = through
+		_through_lofted(through)
 		return -1.0
 	return hold
+
+
+## Profundidade com o dedo arrastado: vai pelo alto.
+func _through_lofted(through: bool) -> void:
+	if not through:
+		return
+	if _through_lob_pending or Input.is_action_pressed("through_lob"):
+		_queued_lofted = true
+	_through_lob_pending = false
 
 
 func _queue(a: PlayerIntent.Action, power: float) -> void:

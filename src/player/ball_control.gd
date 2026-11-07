@@ -349,6 +349,14 @@ func possession_steer(input: Vector3, desired: Vector3, max_speed: float) -> Vec
 	var lat := rel.dot(right)
 	var out := desired
 	if _is_reverse_case(w):
+		# Etapa 27: se a bola ainda está FUGINDO à frente (o toque saiu logo
+		# antes da inversão), o corpo acompanha um ou dois passos até a sola
+		# alcançar a bola — antes freava na hora e a bola escapava.
+		var fwd := player.facing
+		var b_f := ball.flat_velocity().dot(fwd)
+		var ahead := rel.dot(fwd)
+		if b_f - pv.dot(fwd) > 0.15 and ahead > 0.18:
+			return fwd * clampf(b_f + (ahead - 0.22) * 1.6, 0.0, maxf(max_speed, pv.length()))
 		return desired # inversão: o corpo freia e gira por cima da bola (puxada de sola)
 	if _since_reverse < 0.8 and along < 0.2:
 		# Logo após a puxada: o corpo segura em cima do pé de apoio e deixa a
@@ -376,9 +384,12 @@ func possession_steer(input: Vector3, desired: Vector3, max_speed: float) -> Vec
 	if along > expected:
 		# correu mais que o toque previa: o corpo acelera um pouco para alcançar
 		out += w * clampf((along - expected) * 2.2, 0.0, 1.4)
-	if along > -0.05 and absf(lat) > 0.08:
-		# alinha a passada com a linha da bola (ela fica entre os pés)
-		out += right * clampf(lat * 3.0, -1.4, 1.4)
+	# alinha a passada com a linha da bola (ela fica entre os pés). Entrada
+	# SUAVE (Etapa 27): o liga/desliga em |lat| = 8 cm fazia a velocidade
+	# alternar a cada quadro e o corpo tremia.
+	var align_k := smoothstep(0.04, 0.12, absf(lat)) * clampf((along + 0.1) / 0.1, 0.0, 1.0)
+	if align_k > 0.0:
+		out += right * clampf(lat * 3.0, -1.4, 1.4) * align_k
 	return out.limit_length(maxf(player.sprint_speed * 1.06, max_speed))
 
 
@@ -1147,6 +1158,77 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 	ball.pass_target = receiver
 	player.notify_touch(&"pass")
 	GameEvents.ball_kicked.emit(player, &"long_pass" if long else &"pass", power)
+	return true
+
+
+## PASSE DE CALCANHAR (Etapa 27): toque curto para trás, sem girar o corpo.
+## Sai mais fraco e menos preciso que o passe de chapa (o calcanhar é uma
+## superfície pequena e o jogador não vê o alvo).
+func execute_heel_pass(power: float, back_dir: Vector3, target: Node3D) -> bool:
+	var off := ball_offset()
+	if off.length() > 0.95 or ball.global_position.y > 0.4 or not ball.can_be_claimed_by(player):
+		return false
+	var from := ball.global_position
+	var dir := _flat(back_dir).normalized() if _flat(back_dir).length() > 0.1 else -player.facing
+	var mate := target as Player
+	if mate == null:
+		mate = pick_pass_target(dir, 55.0)
+	var vel: Vector3
+	if mate != null:
+		var dest := _lead_target(mate, from)
+		vel = ground_pass_velocity(from, dest, lerpf(2.5, 3.8, power))
+		vel = vel.normalized() * clampf(vel.length(), 4.5, lerpf(8.0, 10.5, power))
+	else:
+		vel = dir * lerpf(4.5, 8.0, power)
+	var err := deg_to_rad(3.0 + 3.0 * power) * (1.0 + (1.0 - player.balance) * 2.0)
+	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err)) * _rng.randf_range(0.93, 1.03)
+	player.set_meta("last_pass_ms", Time.get_ticks_msec())
+	ball.kick(vel, _roll_spin(vel), player, kick_cooldown)
+	ball.pass_target = mate
+	player.notify_touch(&"pass")
+	GameEvents.ball_kicked.emit(player, &"heel", power)
+	return true
+
+
+## VOLEIO (Etapa 27): a bola chega no ar entre o joelho e a cintura e o
+## jogador bate de primeira com o peito do pé — chute (rumo ao gol) ou passe.
+## É difícil: sai mais torto que o chute com a bola no chão.
+func volley(aim: Vector3, power: float, shot: bool, expected_h: float) -> bool:
+	var off := ball_offset()
+	var h := ball.global_position.y
+	if off.length() > 1.15 or absf(h - expected_h) > 0.6 or not ball.can_be_claimed_by(player):
+		return false # a bola não veio onde esperado: furou
+	var from := ball.global_position
+	var g: float = ProjectSettings.get_setting("physics/3d/default_gravity", 9.8)
+	var vel: Vector3
+	var receiver: Player = null
+	if shot:
+		var goal_x := Field.goal_line_x(Team.other(player.team))
+		var target := Vector3(goal_x, lerpf(0.45, 0.9, _rng.randf()), _choose_shot_z(from, goal_x, aim))
+		var flat := _flat(target - from)
+		var speed := lerpf(15.0, 22.0, power)
+		var t := flat.length() / speed
+		vel = flat.normalized() * speed + Vector3.UP * ((target.y - from.y) / t + 0.5 * g * t)
+	else:
+		var dir := _aim_dir(aim)
+		receiver = pick_pass_target(dir)
+		if receiver == null and _flat(aim).length() < 0.2:
+			receiver = pick_pass_target(dir, 180.0)
+		var dest := _lead_target(receiver, from) if receiver != null else from + dir * 7.0
+		var flat := _flat(dest - from)
+		var speed := clampf(flat.length() * 1.15, 7.0, lerpf(10.0, 14.0, power))
+		var t := flat.length() / speed
+		vel = flat.normalized() * speed + Vector3.UP * ((0.2 - from.y) / t + 0.5 * g * t)
+	# altura da bola e equilíbrio pesam na precisão
+	var err := deg_to_rad(2.5 + 3.5 * power + absf(h - 0.75) * 4.0) * (1.0 + (1.0 - player.balance) * 2.5)
+	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err))
+	vel.y *= _rng.randf_range(0.88, 1.12)
+	_since_aerial = 0.0
+	_since_touch = 0.0
+	ball.kick(vel, Vector3.ZERO, player, kick_cooldown)
+	ball.pass_target = receiver
+	player.notify_touch(&"shoot" if shot else &"pass")
+	GameEvents.ball_kicked.emit(player, &"volley" if shot else &"pass", power)
 	return true
 
 
