@@ -256,6 +256,10 @@ const LOCOMOTION_BALL_POINTS: Array = [
 const MARK_POINTS: Array = [
 	[&"mark_idle", Vector2(0.0, 0.0)],
 	[&"jog", Vector2(0.0, 2.25)],
+	# (Etapa 27) correndo para a frente enquanto marca: antes extrapolava o
+	# trote e a passada não casava com a velocidade (pé "brigando" com o IK)
+	[&"run", Vector2(0.0, 3.35)],
+	[&"sprint", Vector2(0.0, 4.35)],
 	# ("Run Backward" vem com o corpo virado 180°: misturado aos outros, o quadril
 	#  "estalava". Recuar rápido = virar e correr; ver Player._compute_marking)
 	[&"strafe_l_walk", Vector2(-1.45, 0.0)],
@@ -325,7 +329,202 @@ static func get_libraries() -> Dictionary:
 		_build_ual_fallbacks()
 		_apply_loops()
 		_add_mirrored()
+		_sync_cycles()
+		_relax_stop_arms()
+		_smooth_interpolation()
 	return _libraries
+
+
+## O clipe "Run To Stop" termina com os DOIS braços esticados para a frente na
+## horizontal (pose de "zumbi" ao frear). Os braços desses clipes vão, ao
+## longo da parada, para os braços relaxados da respiração parada (o freio
+## continua no corpo e nas pernas; só os braços ficam naturais).
+const STOP_CLIPS: Array[StringName] = [&"run_stop", &"walk_stop"]
+const ARM_TRACK_BONES: Array[String] = ["LeftShoulder", "LeftUpperArm", "LeftLowerArm", "LeftHand",
+	"RightShoulder", "RightUpperArm", "RightLowerArm", "RightHand"]
+
+
+static func _relax_stop_arms() -> void:
+	if not has_clip(&"idle"):
+		return
+	var ip := String(clip(&"idle")).split("/")
+	var idle: Animation = (_libraries[StringName(ip[0])] as AnimationLibrary).get_animation(StringName(ip[1]))
+	for logical in STOP_CLIPS:
+		if not has_clip(logical):
+			continue
+		var parts := String(clip(logical)).split("/")
+		var lib: AnimationLibrary = _libraries.get(StringName(parts[0]))
+		if lib == null or not lib.has_animation(StringName(parts[1])):
+			continue
+		var a := lib.get_animation(StringName(parts[1]))
+		for bone in ARM_TRACK_BONES:
+			var path := NodePath("%GeneralSkeleton:" + bone)
+			var ti := a.find_track(path, Animation.TYPE_ROTATION_3D)
+			var ri := idle.find_track(path, Animation.TYPE_ROTATION_3D)
+			if ti < 0 or ri < 0:
+				continue
+			var q_rest: Quaternion = idle.rotation_track_interpolate(ri, 0.0)
+			for k in a.track_get_key_count(ti):
+				var t := a.track_get_key_time(ti, k)
+				var w := clampf(0.35 + 0.55 * t / maxf(a.length, 0.01), 0.0, 0.9)
+				var q: Quaternion = a.track_get_key_value(ti, k)
+				a.track_set_key_value(ti, k, q.slerp(q_rest, w).normalized())
+
+
+## --- Ciclos de passada em FASE (Etapa 27) ------------------------------------
+## Os clipes de passada têm ciclos de durações diferentes (andar 1,23 s, trote
+## 0,83 s, sprint 0,53 s, laterais 0,67–0,93 s) e o BlendSpace os misturava com
+## fases desencontradas: entre duas velocidades uma perna de um clipe estava à
+## frente enquanto a do outro estava atrás → pé "tremendo"/flutuando. Aqui
+## cada clipe cíclico é reamostrado para o MESMO ciclo (SYNC_LEN) e alinhado
+## pelo instante em que o pé direito pisa (medido no esqueleto). As poses não
+## mudam; a cadência natural de cada velocidade passa a vir da escala de tempo
+## (cycle_frequency()).
+const CYCLE_SYNC: Array[StringName] = [&"walk", &"jog", &"run", &"sprint",
+	&"strafe_l_walk", &"strafe_l_jog", &"strafe_r_jog", &"strafe_l_fast", &"strafe_r_fast",
+	&"diag_l", &"diag_r"]
+const SYNC_LEN := 1.0
+const SYNC_KEYS := 60
+## Fração da oscilação vertical original do quadril mantida na passada.
+const BOB_KEEP := 0.45
+## nome lógico -> duração natural do ciclo (s), antes da reamostragem
+static var cycle_lengths := {}
+static var _fk_skel: Skeleton3D
+
+
+## Escala de tempo do BlendSpace de passadas na posição [param x] (m/s):
+## interpola a FREQUÊNCIA natural entre os clipes vizinhos; parado volta a 1.
+static func loco_cycle_mult(x: float) -> float:
+	var pts: Array = []
+	for p in LOCOMOTION_POINTS:
+		var fq := cycle_frequency(p[0])
+		if float(p[1]) > 0.0 and fq > 0.0:
+			pts.append([float(p[1]), fq * SYNC_LEN])
+	if pts.is_empty():
+		return 1.0
+	if x <= pts[0][0]:
+		return lerpf(1.0, pts[0][1], clampf(x / pts[0][0], 0.0, 1.0))
+	for i in range(1, pts.size()):
+		if x <= pts[i][0]:
+			var w: float = (x - pts[i - 1][0]) / (pts[i][0] - pts[i - 1][0])
+			return lerpf(pts[i - 1][1], pts[i][1], w)
+	return pts[-1][1]
+
+
+## Frequência natural do ciclo (ciclos/s) do clipe [param logical].
+static func cycle_frequency(logical: StringName) -> float:
+	var l: float = cycle_lengths.get(logical, 0.0)
+	return 1.0 / l if l > 0.05 else 0.0
+
+
+static func _sync_cycles() -> void:
+	if _fk_skel == null:
+		return
+	var done := {}
+	for logical in CYCLE_SYNC:
+		if not has_clip(logical):
+			continue
+		var cpath := String(clip(logical))
+		if done.has(cpath):
+			cycle_lengths[logical] = done[cpath]
+			continue
+		var parts := cpath.split("/")
+		var lib: AnimationLibrary = _libraries.get(StringName(parts[0]))
+		if lib == null or not lib.has_animation(StringName(parts[1])):
+			continue
+		var a := lib.get_animation(StringName(parts[1]))
+		if a.length < 0.3 or a.length > 2.5:
+			continue
+		var plant := _right_plant_time(a)
+		if plant < 0.0:
+			continue
+		done[cpath] = a.length
+		cycle_lengths[logical] = a.length
+		_resample_cycle(a, plant / a.length)
+
+
+## Instante (s) em que o pé direito chega ao chão (início do apoio), por
+## cinemática direta das trilhas do clipe no esqueleto de referência.
+static func _right_plant_time(a: Animation) -> float:
+	var sk := _fk_skel
+	var foot := sk.find_bone("RightFoot")
+	if foot < 0:
+		return -1.0
+	var tracks: Array = []
+	for i in a.get_track_count():
+		var ty := a.track_get_type(i)
+		if ty != Animation.TYPE_ROTATION_3D and ty != Animation.TYPE_POSITION_3D:
+			continue
+		var bone := sk.find_bone(String(a.track_get_path(i).get_concatenated_subnames()))
+		if bone >= 0:
+			tracks.append([i, bone, ty])
+	sk.reset_bone_poses()
+	var n := 120
+	var ys: Array[float] = []
+	for k in n:
+		var t := a.length * k / n
+		for tr in tracks:
+			if tr[2] == Animation.TYPE_ROTATION_3D:
+				sk.set_bone_pose_rotation(tr[1], a.rotation_track_interpolate(tr[0], t))
+			else:
+				sk.set_bone_pose_position(tr[1], a.position_track_interpolate(tr[0], t))
+		ys.append(sk.get_bone_global_pose(foot).origin.y)
+	var ymin: float = ys.min()
+	var ymax: float = ys.max()
+	var thr := ymin + (ymax - ymin) * 0.12
+	for k in n:
+		var prev := ys[(k - 1 + n) % n]
+		if ys[k] <= thr and prev > thr:
+			return a.length * k / n
+	return 0.0
+
+
+## Reamostra o clipe (todas as trilhas) para SYNC_LEN com SYNC_KEYS chaves
+## uniformes, começando na fase [param phase] (0..1) do ciclo original.
+static func _resample_cycle(a: Animation, phase: float) -> void:
+	var l := a.length
+	var data: Array = []
+	for i in a.get_track_count():
+		var ty := a.track_get_type(i)
+		var vals: Array = []
+		var ok := true
+		for k in SYNC_KEYS:
+			var t := fposmod(float(k) / SYNC_KEYS + phase, 1.0) * l
+			match ty:
+				Animation.TYPE_ROTATION_3D:
+					vals.append(a.rotation_track_interpolate(i, t))
+				Animation.TYPE_POSITION_3D:
+					vals.append(a.position_track_interpolate(i, t))
+				Animation.TYPE_SCALE_3D:
+					vals.append(a.scale_track_interpolate(i, t))
+				_:
+					ok = false
+		data.append(vals if ok else null)
+	for i in a.get_track_count():
+		if data[i] == null:
+			continue
+		while a.track_get_key_count(i) > 0:
+			a.track_remove_key(i, 0)
+		var vals: Array = data[i]
+		for k in SYNC_KEYS:
+			a.track_insert_key(i, SYNC_LEN * k / SYNC_KEYS, vals[k])
+	a.length = SYNC_LEN
+
+
+## Os clipes chegam a 30 quadros/s com interpolação LINEAR: a velocidade de
+## cada osso muda de repente a cada 33 ms e, a 60 quadros/s, o pé e a mão
+## "tremem" (zigue-zague). Interpolação cúbica passa uma curva suave pelas
+## MESMAS poses (nenhuma pose muda), só some o solavanco entre elas.
+static func _smooth_interpolation() -> void:
+	for prefix in _libraries:
+		var lib: AnimationLibrary = _libraries[prefix]
+		for n in lib.get_animation_list():
+			var a := lib.get_animation(n)
+			for i in a.get_track_count():
+				var ty := a.track_get_type(i)
+				if ty == Animation.TYPE_ROTATION_3D or ty == Animation.TYPE_POSITION_3D or ty == Animation.TYPE_SCALE_3D:
+					if a.track_get_key_count(i) >= 3:
+						a.track_set_interpolation_type(i, Animation.INTERPOLATION_CUBIC)
 
 
 ## Quando os arquivos .fbx do Mixamo/Rohr não estão no disco (ex.: clone limpo
@@ -930,6 +1129,11 @@ static func _extract_library(path: String) -> AnimationLibrary:
 	if player != null and player.has_animation_library(&""):
 		lib = player.get_animation_library(&"")
 		var sk := inst.find_child("GeneralSkeleton", true, false) as Skeleton3D
+		if _fk_skel == null and sk != null and path.contains("mixamo"):
+			_fk_skel = sk.duplicate(0) as Skeleton3D
+			for c in _fk_skel.get_children():
+				_fk_skel.remove_child(c)
+				c.free()
 		var fix := _position_scale_fix(sk)
 		if absf(fix - 1.0) > 0.1:
 			lib = _rescale_hips(lib, fix)
@@ -1167,10 +1371,19 @@ static func _normalize_hips_vertical(prefix: StringName, anim: Animation, track:
 		elif prefix in [&"m_run", &"m_sprint", &"m_idle_to_sprint", &"m_strafe_l_fast", &"m_strafe_r_fast"]:
 			base_y = 0.976
 			amp = 0.008
+		# Etapa 27: o quadril volta a subir e descer com a passada (PESO). Fica
+		# 45% da oscilação do PRÓPRIO clipe, na fase dele (coerente com as
+		# pernas): ~2 cm andando, ~4 cm no trote. Antes era achatada (±0,6 cm)
+		# e o corpo "flutuava".
+		var own := (max_y - min_y) * 0.5
+		var bob_k := BOB_KEEP if own > 0.004 else 0.0
 		for k in n_k:
 			var v: Vector3 = anim.track_get_key_value(track, k)
 			var norm_dy := clampf((v.y - mean_y) / max_dev, -1.0, 1.0)
-			v.y = base_y + norm_dy * amp
+			if bob_k > 0.0 and not prefix in [&"m_breathing", &"m_soccer_idle", &"m_offensive_idle", &"m_gk_idle", &"m_warmup", &"m_argue"]:
+				v.y = base_y + clampf((v.y - mean_y) * bob_k, -0.03, 0.03)
+			else:
+				v.y = base_y + norm_dy * amp
 			anim.track_set_key_value(track, k, v)
 	elif prefix in UPRIGHT_ACTION_PREFIXES:
 		var base_y := 0.984

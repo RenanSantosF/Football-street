@@ -47,6 +47,10 @@ var imbalance_dir_world := Vector3.ZERO
 ## Estilo individual (variação entre jogadores): amplitude do balanço dos
 ## braços (0,85..1) e postura do tronco (graus extras de inclinação).
 var style_arm := 1.0
+## Inércia dos braços (pêndulo): ângulo máximo (graus) e estado da mola.
+const ARM_INERTIA_MAX := 11.0
+var _arm_swing := Vector2.ZERO
+var _arm_swing_v := Vector2.ZERO
 var style_torso_deg := 0.0
 ## Abertura da base (proteção de bola): 0..1.
 var stance_wide := 0.0
@@ -273,6 +277,17 @@ func _process_modification() -> void:
 		_smooth_lean = _smooth_lean.lerp(lean_target, 1.0 - exp(-7.0 * dt))
 		_smooth_imb = lerpf(_smooth_imb, imbalance, 1.0 - exp(-6.0 * dt))
 		_smooth_wide = lerpf(_smooth_wide, stance_wide, 1.0 - exp(-6.0 * dt))
+		# Braços com INÉRCIA (Etapa 27): cada braço é um pêndulo amortecido
+		# (~1,6 Hz). Arrancando, ele fica para trás; freando, vai à frente;
+		# na curva, abre para fora — e balança um pouco antes de assentar.
+		var a_sk := sk_inv.basis * body_accel_world
+		var arm_target := Vector2(
+			clampf(-a_sk.z * deg_to_rad(1.6), -deg_to_rad(ARM_INERTIA_MAX), deg_to_rad(ARM_INERTIA_MAX)),
+			clampf(-a_sk.x * deg_to_rad(1.3), -deg_to_rad(ARM_INERTIA_MAX), deg_to_rad(ARM_INERTIA_MAX)))
+		var w0 := TAU * 1.6
+		var acc2 := (arm_target - _arm_swing) * (w0 * w0) - _arm_swing_v * (2.0 * 0.32 * w0)
+		_arm_swing_v += acc2 * dt
+		_arm_swing += _arm_swing_v * dt
 		if shield_dir_world.length_squared() > 0.001:
 			var s_loc := (sk_inv.basis * shield_dir_world).normalized()
 			s_loc.y = 0.0
@@ -650,7 +665,10 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 			# os dois braços abrem para segurar o corpo (sem exagero)
 			lift += clampf(_smooth_lean.x * s * 0.9, 0.0, deg_to_rad(10.0))
 			lift += _smooth_imb * deg_to_rad(18.0)
-			var fwd: float = absf(combined_turn) * deg_to_rad(4.0) \
+			# inércia: abre para fora da curva (para dentro, pouco: não entra no tronco)
+			var in_roll := _arm_swing.y * s
+			lift += in_roll if in_roll > 0.0 else in_roll * 0.3
+			var fwd: float = _arm_swing.x + absf(combined_turn) * deg_to_rad(4.0) \
 				+ is_shield_arm * deg_to_rad(10.0) \
 				+ act_arm_spread * deg_to_rad(8.0 * (-s * action_side))
 			_rotate_bone_local(sk, arm_b, fwd, 0.0, lift * s)
@@ -733,7 +751,7 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 	if L1 < 0.05 or L2 < 0.05:
 		return
 
-	var max_corr := 0.34 if mode == 2 else 0.28
+	var max_corr := 0.34 if mode == 2 else (0.52 if mode == 7 else 0.28)
 	var delta_a := T - A
 	if delta_a.length() > max_corr:
 		T = A + delta_a.normalized() * max_corr

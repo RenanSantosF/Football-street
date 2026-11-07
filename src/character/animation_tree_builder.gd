@@ -168,6 +168,8 @@ static func _blend_2d(points: Array) -> AnimationNodeBlendTree:
 	bs.min_space = Vector2(-6.0, -6.0)
 	bs.max_space = Vector2(6.0, 6.0)
 	bs.blend_mode = AnimationNodeBlendSpace2D.BLEND_MODE_INTERPOLATED
+	# todos avançam juntos: as passadas foram alinhadas em fase (AnimationCatalog)
+	bs.sync = true
 	for p in points:
 		if AnimationCatalog.has_clip(p[0]):
 			var anim := AnimationNodeAnimation.new()

@@ -24,6 +24,7 @@ const ACTION_STATES := {
 	&"long_pass": &"PassLong",
 	&"through": &"PassLong",
 	&"firm_pass": &"PassLong",
+	&"volley": &"Shoot",
 	&"shoot_b": &"PassLong",
 	&"shoot": &"Shoot",
 	&"shoot_power": &"ShootPower",
@@ -64,6 +65,7 @@ const ACTION_LOGICAL := {
 	&"long_pass": &"pass_long",
 	&"through": &"pass_long",
 	&"firm_pass": &"pass_long",
+	&"volley": &"shoot",
 	&"shoot_b": &"pass_long",
 	&"shoot": &"shoot",
 	&"shoot_power": &"shoot_power",
@@ -137,6 +139,9 @@ var _turn_rate := 0.0
 var _pending_reaction: StringName = &""
 var _clip_x := 0.0
 var _mark_pos := Vector2.ZERO
+var _mark_running := false
+const MARK_RUN_ENTER := 2.1
+const MARK_RUN_EXIT := 1.6
 var _gesture_state: StringName = &""
 var _ball_blend := 0.0
 var _stride := 0.0
@@ -254,7 +259,7 @@ func physics_update(delta: float) -> void:
 	var ball_target := 1.0 if has_b else 0.0
 	_ball_blend = move_toward(_ball_blend, ball_target, delta * 6.0)
 	anim_tree.set("parameters/Locomotion/Speed/blend_position", Vector2(_blend_pos, _ball_blend))
-	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale)
+	anim_tree.set("parameters/Locomotion/Scale/scale", _time_scale * _loco_cycle_mult(_blend_pos))
 	var run_lean := clampf((v.length() - 1.3) / 2.5, 0.0, 1.0)
 	var turn_bank := clampf(_signed_turn * (0.35 + (v.length() / 3.0) * 0.35), -1.2, 1.2)
 	var in_move := Vector3(player.intent.move.x, 0.0, player.intent.move.z)
@@ -328,6 +333,7 @@ func physics_update(delta: float) -> void:
 	var mk := Vector2(v.dot(right), v.dot(player.facing)) / k
 	_mark_pos = _mark_pos.move_toward(mk, delta * 9.0)
 	anim_tree.set("parameters/Mark/Dir/blend_position", _mark_pos)
+	anim_tree.set("parameters/Mark/Scale/scale", _mark_cycle_mult(_mark_pos))
 
 	var current := playback.get_current_node()
 	_time_since_contact += delta
@@ -426,6 +432,33 @@ func physics_update(delta: float) -> void:
 	_prev_speed = v.length()
 
 
+## Cadência natural (Etapa 27): os clipes de passada foram reamostrados para o
+## mesmo ciclo (AnimationCatalog.SYNC_LEN) e alinhados em fase; a escala de
+## tempo devolve a cadência de cada velocidade, interpolando a FREQUÊNCIA entre
+## os clipes vizinhos. Parado (x→0) a escala volta a 1 (respiração normal).
+func _loco_cycle_mult(x: float) -> float:
+	return AnimationCatalog.loco_cycle_mult(x)
+
+
+func _mark_cycle_mult(p: Vector2) -> float:
+	var wsum := 0.0
+	var fsum := 0.0
+	var first_r := INF
+	for mp in AnimationCatalog.MARK_POINTS:
+		var fq := AnimationCatalog.cycle_frequency(mp[0])
+		var pos: Vector2 = mp[1]
+		if fq <= 0.0 or pos.length() < 0.1:
+			continue
+		first_r = minf(first_r, pos.length())
+		var w := 1.0 / (p.distance_squared_to(pos) + 0.05)
+		wsum += w
+		fsum += w * fq * AnimationCatalog.SYNC_LEN
+	if wsum <= 0.0:
+		return 1.0
+	var f := fsum / wsum
+	return lerpf(1.0, f, clampf(p.length() / first_r, 0.0, 1.0))
+
+
 ## Clipe de passada (posição no BlendSpace) para a velocidade [param stride],
 ## com histerese (não fica trocando de clipe na fronteira).
 func _pick_stride_clip(pts: Array, stride: float) -> float:
@@ -447,7 +480,15 @@ func _pick_stride_clip(pts: Array, stride: float) -> float:
 
 func _wanted_base() -> StringName:
 	if player.is_marking() and _has_state(&"Mark"):
-		return &"Mark"
+		# Marcando EM VELOCIDADE o defensor corre de verdade (a mistura das
+		# passadas laterais em alta velocidade fazia o pé tremer); com histerese.
+		var sp := player.get_horizontal_speed()
+		if _mark_running:
+			_mark_running = sp > MARK_RUN_EXIT
+		else:
+			_mark_running = sp > MARK_RUN_ENTER
+		if not _mark_running:
+			return &"Mark"
 	return &"Locomotion"
 
 
