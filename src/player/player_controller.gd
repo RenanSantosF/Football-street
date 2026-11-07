@@ -62,6 +62,16 @@ const TURN_SPEED_UP := 1.35
 ## Giro ágil com a bola: mesma fluidez de correr sem a bola.
 @export var turn_speed_with_ball := 6.5
 
+@export_group("Corpo")
+## Massa do corpo (kg) — adolescente de rua. Define quem ganha a trombada.
+@export var body_mass := 54.0
+## Raio do tronco/ombros no plano (m) para o contato corpo a corpo.
+@export var body_contact_radius := 0.27
+## Aderência lateral do pé no chão (m/s²): quanto da inércia lateral o corpo
+## consegue cortar numa curva (parado alto, correndo forte bem menos).
+@export var lateral_grip := 13.5
+@export var lateral_grip_sprint := 8.0
+
 var intent := PlayerIntent.new()
 var controller: Node = null
 var match_manager: MatchManager = null
@@ -131,6 +141,16 @@ var _kick_mirror := false
 var _pivot_dir := Vector3.ZERO
 var _kick_ik := false
 var _turn_speed_k := TURN_SPEED_UP
+## Equilíbrio corporal (0..1): trombadas tiram, o tempo devolve. Com pouco
+## equilíbrio o jogador acelera e corta menos e tropeça mais fácil.
+var balance := 1.0
+## Carrinho/queda/pulo: atravessa os outros (sem contato corpo a corpo).
+var _ghost := false
+## Último contato corpo a corpo (para proteção de bola e disputa).
+var _contact_with: Player = null
+var _contact_dir := Vector3.ZERO
+var _contact_time := 10.0
+var _impact_cooldown := 0.0
 
 @onready var ball_control: BallControl = $BallControl
 @onready var ai: AIController = $AIController
@@ -249,8 +269,10 @@ func _physics_process(delta: float) -> void:
 		State.FROZEN:
 			_brake(delta, deceleration)
 
+	balance = move_toward(balance, 1.0, 0.75 * delta)
+	_contact_time += delta
+	_impact_cooldown = maxf(_impact_cooldown - delta, 0.0)
 	ball_control.physics_update(delta)
-	_update_body_contest(delta)
 	if not is_jumping():
 		velocity.y = minf(velocity.y, 0.0) - _gravity * delta
 	else:
@@ -316,10 +338,11 @@ func _update_move(delta: float) -> void:
 		if turn_cos < 0.72:
 			var curve_damp := lerpf(0.84, 1.0, clampf((turn_cos + 0.35) / 1.07, 0.0, 1.0))
 			desired *= curve_damp
-	# Acelera progressivamente; inverter direção passa por uma freada com peso.
-	var speeding_up := desired.length() > hv.length() and hv.dot(desired) >= 0.0
-	var rate := acceleration if speeding_up else deceleration
-	hv = hv.move_toward(desired, rate * delta)
+	if has_ball and not _has_pending_kick():
+		# O CORPO se adapta à bola (não o contrário): alcança a bola que correu
+		# à frente, alinha a passada com ela e, parado, chega até ela.
+		desired = ball_control.possession_steer(input, desired, max_speed)
+	hv = _locomote(hv, desired, delta)
 	velocity.x = hv.x
 	velocity.z = hv.z
 
@@ -413,38 +436,119 @@ func _update_facing(delta: float) -> void:
 	rotation.y = atan2(-facing.x, -facing.z)
 
 
-## Disputa física ombro a ombro e separação anatômica entre jogadores: impede que
-## partes de um jogador entrem dentro de outro e aplica carga de ombro realista.
-func _update_body_contest(delta: float) -> void:
-	if is_goalkeeper() and state != State.MOVE:
+# --- Corpo a corpo (PlayerContactSolver) ----------------------------------------
+
+func is_body_solid() -> bool:
+	return active and not _ghost and state != State.FROZEN
+
+
+func body_radius() -> float:
+	return body_contact_radius
+
+
+## Massa efetiva no contato vindo da direção [param contact_dir] (do outro
+## para mim). Base firme e protegendo a bola = mais difícil de deslocar;
+## no meio do chute, desequilibrado, muito mais fácil.
+func effective_mass(contact_dir: Vector3) -> float:
+	var m := body_mass
+	var speed := get_horizontal_speed()
+	if state == State.MOVE and ball_control.has_ball() and speed < 2.4:
+		# proteção: base aberta, corpo entre o marcador e a bola
+		var to_ball := ball_control.ball_offset()
+		if to_ball.length() > 0.05 and to_ball.normalized().dot(contact_dir) > -0.2:
+			m *= 1.35
+	elif state == State.MOVE and speed < 0.6:
+		m *= 1.15 # parado, apoiado nos dois pés
+	if state == State.ACTION and _is_kick_action():
+		m *= 0.8 # num pé só
+	elif state == State.STUNNED:
+		m *= 0.7
+	return m * lerpf(0.65, 1.0, balance)
+
+
+## Desloca o corpo (separação do contato) respeitando paredes e meio-fio.
+func push_body(offset: Vector3) -> void:
+	offset.y = 0.0
+	if offset.length_squared() < 0.0000001:
 		return
-	var all_others: Array[Player] = []
-	all_others.append_array(get_opponents())
-	all_others.append_array(get_teammates())
-	for other in all_others:
-		if other == null or other == self or not other.active:
-			continue
-		var diff := global_position - other.global_position
-		diff.y = 0.0
-		var dist := diff.length()
-		var min_sep := 0.54
-		if dist < 0.001 or dist > 0.72:
-			continue
-		var n := diff / dist
-		# Separação horizontal firme para evitar interpenetração de malhas
-		if dist < min_sep and not is_jumping() and not other.is_jumping():
-			var overlap := min_sep - dist
-			global_position += n * (overlap * 0.52)
-		if other.team != team and state == State.MOVE and other.state == State.MOVE:
-			var near_ball := ball != null and (ball_control.ball_distance() < 1.9 or other.ball_control.ball_distance() < 1.9)
-			if near_ball:
-				var rel_v := other.get_flat_velocity() - get_flat_velocity()
-				var closing := rel_v.dot(n)
-				if closing > 0.15:
-					var resist := 0.32 if ball_control.has_ball() else 0.48
-					var push := n * minf(closing * resist, 2.0) * delta * 12.0
-					velocity.x += push.x
-					velocity.z += push.z
+	var col := move_and_collide(offset)
+	if col != null:
+		# encostado na parede: escorrega ao longo dela
+		var rem := col.get_remainder().slide(col.get_normal())
+		rem.y = 0.0
+		if rem.length_squared() > 0.0000001:
+			move_and_collide(rem)
+
+
+func note_body_contact(other: Player, dir_from_other: Vector3) -> void:
+	_contact_with = other
+	_contact_dir = dir_from_other
+	_contact_time = 0.0
+
+
+## Em contato físico com [param other] agora (último ~0,15 s)?
+func in_contact_with(other: Player) -> bool:
+	return _contact_with == other and _contact_time < 0.15
+
+
+## Recebeu um impulso de [param dv] m/s (direção [param dir] = do outro para
+## mim, vindo de [param other]): perde equilíbrio; trombada forte = tropeço / bola solta.
+func receive_body_impact(dv: float, dir: Vector3, other: Player) -> void:
+	balance = clampf(balance - dv * 0.2, 0.0, 1.0)
+	if state != State.MOVE or _impact_cooldown > 0.0 or is_jumping():
+		return
+	var threshold := 1.25 + 1.75 * balance
+	if dv < threshold:
+		if ball_control.has_ball() and dv > 1.3:
+			ball_control.unsettle(dir, dv) # toque sai torto, mas ainda é dele
+		return
+	_impact_cooldown = 0.6
+	var had_ball := ball_control.has_ball()
+	if had_ball:
+		ball_control.knock_loose(dir, dv)
+	stumble(clampf(0.25 + dv * 0.08, 0.3, 0.6))
+	# Trombada por trás em quem tinha a bola = falta.
+	if had_ball and other != null and other.team != team and match_manager != null and dv > 2.6:
+		var from_other := other.global_position - global_position
+		from_other.y = 0.0
+		if from_other.length() > 0.01 and from_other.normalized().dot(facing) < -0.35:
+			match_manager.award_free_kick(team, global_position)
+
+
+func _balance_k() -> float:
+	return lerpf(0.55, 1.0, balance)
+
+
+## Passo de locomoção com PESO: a velocidade é separada em "na direção
+## desejada" e "lateral". A lateral (inércia da curva) só é cortada pela
+## aderência do pé; a da frente segue uma curva força-velocidade (arranque
+## forte, fim de aceleração suave) e frear contra o embalo exige plantar o pé.
+func _locomote(hv: Vector3, desired: Vector3, delta: float) -> Vector3:
+	var dlen := desired.length()
+	var bk := _balance_k()
+	if dlen < 0.05:
+		return hv.move_toward(Vector3.ZERO, deceleration * delta * (0.75 + 0.25 * bk))
+	var dir := desired / dlen
+	var along := hv.dot(dir)
+	var lat := hv - dir * along
+	var speed := hv.length()
+	var grip := lerpf(lateral_grip, lateral_grip_sprint, clampf((speed - 1.0) / maxf(sprint_speed - 1.0, 0.1), 0.0, 1.0))
+	lat = lat.move_toward(Vector3.ZERO, grip * bk * delta)
+	var rate: float
+	if along < 0.0:
+		rate = deceleration * 1.25 # plantando o pé para inverter
+	elif along < dlen:
+		var top := maxf(sprint_speed, dlen)
+		rate = acceleration * lerpf(1.25, 0.55, clampf(along / top, 0.0, 1.0)) * bk
+		if _contact_time < 0.15 and _contact_with != null and dir.dot(-_contact_dir) > 0.4:
+			# DISPUTA DE ESPAÇO: empurrar alguém custa força — quem empurra
+			# acelera bem menos (o outro, firme no chão, segura a carga).
+			var hold := 0.3 if _contact_with.ball_control.has_ball() else 0.42
+			rate *= hold
+	else:
+		rate = deceleration
+	along = move_toward(along, dlen, rate * delta)
+	return dir * along + lat
 
 
 static func _rotate_flat(from: Vector3, to: Vector3, max_angle: float) -> Vector3:
@@ -845,8 +949,8 @@ func _update_action(delta: float) -> void:
 	if state == State.ACTION and (_action_kind == &"run_stop" or _action_kind == &"walk_stop") and \
 			((_action_time > 0.25 and intent.move.length() > 0.5) or (_action_time > 0.1 and _has_pending_kick())):
 		state = State.MOVE
-	if state != State.ACTION and collision_mask != 3:
-		collision_mask = 3
+	if state != State.ACTION and _ghost:
+		_ghost = false
 
 
 ## Momento em que o pé encosta na bola. Na Etapa 3 a animação chama
@@ -1159,7 +1263,7 @@ func set_active(value: bool) -> void:
 	visible = value
 	set_physics_process(value)
 	collision_layer = 2 if value else 0
-	collision_mask = 3 if value else 0
+	collision_mask = 1 if value else 0
 	if not value:
 		global_position = Vector3(0.0, -30.0, 0.0)
 		velocity = Vector3.ZERO
@@ -1313,8 +1417,9 @@ func _start_root_action(kind: StringName, logical: StringName, lead: float, face
 	_begin_action(kind, contact_t, length, 1.0, face, null, 1.0)
 	_action_logical = logical
 	_action_seek = seek
-	# Carrinho, queda e pulo passam por baixo/por cima de quem está perto.
-	collision_mask = 1
+	# Carrinho, queda e pulo passam por baixo/por cima de quem está perto
+	# (viradas e paradas continuam sólidas: ninguém atravessa ninguém).
+	_ghost = kind in [&"slide", &"trip", &"jump"]
 	_action_face = Vector3(face.x, 0.0, face.z).normalized()
 
 
@@ -1364,7 +1469,7 @@ func on_animation_contact() -> void:
 
 ## Desequilíbrio (desarme sofrido, bote errado). Animação: "Stumble".
 func stumble(time: float) -> void:
-	collision_mask = 3
+	_ghost = false
 	state = State.STUNNED
 	_stun_timer = time
 	_buffer_timer = 0.0

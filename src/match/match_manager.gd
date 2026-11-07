@@ -62,6 +62,12 @@ func _ready() -> void:
 	GameEvents.ball_kicked.connect(_on_ball_kicked)
 	camera.ball = ball
 	_spawn_players()
+	# Contato corpo a corpo: resolvido depois que todos os jogadores se moveram.
+	var solver := PlayerContactSolver.new()
+	solver.name = "PlayerContactSolver"
+	solver.match_manager = self
+	solver.process_physics_priority = 50
+	add_child(solver)
 	var cfg := ConfigFile.new()
 	if not autoplay and cfg.load(SETTINGS_PATH) == OK and cfg.get_value("game", "training", false):
 		_apply_training(true)

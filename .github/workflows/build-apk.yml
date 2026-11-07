@@ -2,7 +2,7 @@ name: Build Android APK (Godot 4.3)
 
 on:
   push:
-    branches: [ main, master, "main-*" ]
+    branches: [ main, master, "main-*", "ccr-*" ]
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -65,9 +65,21 @@ jobs:
       - name: Importar recursos e validar suíte de testes
         run: |
           godot --headless --import
-          godot --headless --fixed-fps 60 --path . res://tests/contact_test.tscn
-          godot --headless --fixed-fps 60 --path . res://tests/receive_test.tscn
-          godot --headless --fixed-fps 60 --path . res://tests/dribble_test.tscn
+          mkdir -p build/test-logs
+          fail=0
+          for t in contact receive dribble body_contact; do
+            echo "::group::teste $t"
+            timeout 600 godot --headless --fixed-fps 60 --path . "res://tests/${t}_test.tscn" 2>&1 \
+              | grep -vE 'Parameter "m" is null|mesh_storage.h' | tee "build/test-logs/${t}.log"
+            echo "::endgroup::"
+            # Erro de script (função abortada em tempo de execução) reprova o build.
+            if grep -q "SCRIPT ERROR" "build/test-logs/${t}.log"; then
+              echo "::error::SCRIPT ERROR no teste ${t}"
+              grep -A1 "SCRIPT ERROR" "build/test-logs/${t}.log" | head -20
+              fail=1
+            fi
+          done
+          exit $fail
 
       - name: Exportar APK Android (build/rua10.apk)
         run: |

@@ -3,11 +3,15 @@ extends Node
 ## Interação jogador ↔ bola: domínio, condução por toques, passe, chute,
 ## drible básico, desarme e desvios no corpo.
 ##
-## CONDUÇÃO: a bola não fica grudada. O jogador dá toques periódicos que a
-## empurram alguns palmos à frente (distância varia com a velocidade e com um
-## pouco de aleatoriedade); entre os toques ela rola livre. Se o jogador muda
-## de direção, o próximo toque já sai na nova direção. Se a bola escapa além do
-## alcance, a posse é perdida e qualquer um pode pegá-la.
+## CONDUÇÃO HÍBRIDA (estilo eFootball): o jogador só controla o corpo; o
+## sistema decide QUANDO e COM QUAL PÉ tocar. Cada toque é um contato real do
+## pé (FootContact/IK) que dá UM impulso calculado: a bola rola livre (atrito
+## dos bloquinhos) e volta ao alcance do pé na passada certa. Mais rápido =
+## toque mais longo; desacelerando = toques curtos e mais frequentes; parado =
+## sola na bola. Entre os toques só existe uma correção lateral mínima e com
+## aceleração limitada (o "jeito" do pé), nunca um ímã. O corpo é que se
+## adapta à bola (possession_steer). A posse só se perde por desarme, trombada
+## forte, domínio ruim, bola que escapa do alcance ou ação intencional.
 
 const CONTROL_RADIUS := 0.75
 const GK_CONTROL_RADIUS := 1.05
@@ -32,6 +36,14 @@ const KICK_FOOT_OFFSET := 0.13
 ## Condução: espera até um pé da animação chegar perto da bola para tocar.
 const FOOT_TOUCH_RADIUS := 0.32
 const MAX_TOUCH_WAIT := 0.3
+## Condução: alcance do pé a partir do centro do corpo para agendar um toque.
+const DRIBBLE_REACH := 0.66
+## Intervalo mínimo entre dois toques de condução (s).
+const MIN_TOUCH_GAP := 0.13
+## Antecedência do pé até a bola em cada toque (s).
+const DRIBBLE_LEAD := 0.07
+## Correção lateral máxima entre toques (m/s²): o "jeito" do pé, não um ímã.
+const ASSIST_ACCEL := 2.2
 
 @export_group("Condução e Chute")
 ## Tempo entre os toques na bola na corrida (um toque a cada ~passada).
@@ -65,6 +77,10 @@ var _touch_count := 0
 ## Puxada de sola na inversão de direção (o corpo gira por cima da bola).
 var _reverse_pull := false
 var _carry_frame := 0
+var _reverse_timer := 0.0
+var _since_reverse := 10.0
+## Toque desajeitado (trombada leve): o próximo impulso sai com mais erro.
+var _unsettle := 0.0
 ## O pé que vai até a bola em cada toque (IK). Nenhum toque sem o pé encostar.
 var foot := FootContact.new()
 ## Tempo entre decidir o toque e o pé encostar na bola.
@@ -159,7 +175,7 @@ func physics_update(delta: float) -> void:
 			_conduct(delta)
 		elif ball_distance() > LOSE_RADIUS:
 			ball.release()
-		_keep_ball_outside_body_and_feet()
+		_possessor_contact(delta)
 	else:
 		_try_gain_control()
 		if not has_ball():
@@ -168,59 +184,57 @@ func physics_update(delta: float) -> void:
 			_body_contact()
 
 
-## Impede que a bola entre dentro das canelas/corpo ou dentro dos pés do jogador
-## enquanto a exceção de colisão da posse está ativa.
-func _keep_ball_outside_body_and_feet() -> void:
-	if ball == null or ball.global_position.y > 0.55:
+## Quem conduz não tem colisão de cápsula com a bola: aqui o corpo e os pés
+## agem como superfícies FÍSICAS (só velocidade, nunca teletransporte):
+##  - canela/corpo: a bola que entra no corpo recebe a velocidade normal do
+##    corpo (é empurrada para fora, como num contato real);
+##  - pés da animação: se o pé vem NA bola, transfere a velocidade dele.
+func _possessor_contact(delta: float) -> void:
+	if ball == null or ball.global_position.y > 0.55 or ball.held:
 		return
 	var off := ball_offset()
 	var d := off.length()
-	var min_body_dist := 0.28 # raio da canela/corpo + raio da bola (0.11m)
-	if d < min_body_dist:
-		var push_dir := off / d if d > 0.005 else player.facing
-		# Se estiver atrás do corpo, empurra para a frente/lateral
-		if push_dir.dot(player.facing) < -0.10:
-			push_dir = player.facing
-		ball.global_position.x = player.global_position.x + push_dir.x * min_body_dist
-		ball.global_position.z = player.global_position.z + push_dir.z * min_body_dist
-		var bv := ball.velocity_now()
-		var vn := (bv - player.velocity).dot(push_dir)
-		if vn < 0.0:
-			ball.linear_velocity = bv - push_dir * vn
-	# Anti-penetração pé ↔ bola: garante que a superfície do pé (tornozelo → ponta do pé)
-	# nunca atravesse o volume da bola (raio 0.11m + margem do pé 0.05m = 0.16m).
+	var pv := _flat(player.velocity)
+	var bv := ball.velocity_now()
+	var min_body := 0.27
+	if d < min_body:
+		var n := off / d if d > 0.005 else player.facing
+		var rel_n := (_flat(bv) - pv).dot(n)
+		# separação: velocidade relativa para fora proporcional à penetração
+		var want_n := (min_body - d) * 12.0
+		if rel_n < want_n:
+			var nb := bv + n * (want_n - rel_n)
+			ball.touch(Vector3(nb.x, minf(bv.y, 0.0), nb.z), player)
+			bv = ball.velocity_now()
 	var v := player.visual
-	if v != null and v.has_method("get_toe_position"):
-		var b_pos := ball.global_position
-		var min_foot_dist := Ball.RADIUS + 0.052
-		for sd in [1.0, -1.0]:
-			var an: Vector3 = v.call("get_ankle_position", sd)
-			var tp: Vector3 = v.call("get_toe_position", sd)
-			if minf(an.y, tp.y) > b_pos.y + 0.08:
-				continue # pé por cima da bola (sola): não empurra horizontalmente
-			var seg_x := tp.x - an.x
-			var seg_z := tp.z - an.z
-			var seg_len_sq := seg_x * seg_x + seg_z * seg_z
-			var t_seg := 0.0
-			if seg_len_sq > 0.0001:
-				t_seg = clampf(((b_pos.x - an.x) * seg_x + (b_pos.z - an.z) * seg_z) / seg_len_sq, 0.0, 1.0)
-			var near_x := an.x + seg_x * t_seg
-			var near_z := an.z + seg_z * t_seg
-			var dx := b_pos.x - near_x
-			var dz := b_pos.z - near_z
-			var dist_xz := sqrt(dx * dx + dz * dz)
-			if dist_xz < min_foot_dist:
-				var f_dir := Vector3(dx, 0.0, dz)
-				if f_dir.length() < 0.005 or f_dir.dot(player.facing) < -0.2:
-					f_dir = player.facing
-				else:
-					f_dir = f_dir.normalized()
-				b_pos.x = near_x + f_dir.x * min_foot_dist
-				b_pos.z = near_z + f_dir.z * min_foot_dist
-				ball.global_position.x = b_pos.x
-				ball.global_position.z = b_pos.z
-	if ball.global_position.y < Ball.RADIUS:
-		ball.global_position.y = Ball.RADIUS
+	if v == null or not v.has_method("get_toe_position") or foot.busy() \
+			or _flat(player.intent.move).length() < 0.15:
+		return # freando/parado: quem segura a bola é o toque de amortecer/sola
+	var b_pos := ball.global_position
+	var min_foot := Ball.RADIUS + 0.045
+	for sd in [1.0, -1.0]:
+		var an: Vector3 = v.call("get_ankle_position", sd)
+		var tp: Vector3 = v.call("get_toe_position", sd)
+		if minf(an.y, tp.y) > b_pos.y + 0.06:
+			continue # pé por cima da bola
+		var seg := Vector3(tp.x - an.x, 0.0, tp.z - an.z)
+		var tt := clampf(Vector3(b_pos.x - an.x, 0.0, b_pos.z - an.z).dot(seg) / maxf(seg.length_squared(), 0.0001), 0.0, 1.0)
+		var near := an + seg * tt
+		var nf := Vector3(b_pos.x - near.x, 0.0, b_pos.z - near.z)
+		var dist := nf.length()
+		if dist >= min_foot or dist < 0.005:
+			continue
+		nf /= dist
+		var fv: Vector3 = _ank_vel[sd]
+		var rel := (Vector3(fv.x, 0.0, fv.z) - _flat(bv)).dot(nf)
+		if rel > 0.05:
+			# Pé da passada roçando a bola (não é um toque programado): contato
+			# macio — a bola é afastada do pé, sem herdar a velocidade toda do
+			# balanço da perna (o pé de balanço anda ~2x a velocidade do corpo).
+			var push := minf(rel * 0.45, 0.9) + minf((min_foot - dist) / maxf(delta, 0.001) * 0.2, 0.4)
+			var nb := bv + nf * push
+			ball.touch(Vector3(nb.x, minf(bv.y, 0.0), nb.z), player)
+			bv = ball.velocity_now()
 
 
 # --- Consultas ---------------------------------------------------------------
@@ -261,39 +275,86 @@ func find_tackle_target(max_range := TACKLE_RANGE) -> Player:
 	return carrier
 
 
-## Condução com virada: se a bola NÃO está à frente na direção desejada,
-## devolve o deslocamento (plano) até o ponto atrás dela nessa direção, de
-## onde o jogador puxa a bola para o novo lado. ZERO = bola já está à frente.
-func turn_approach_point(dir: Vector3) -> Vector3:
-	if not has_ball():
-		return Vector3.ZERO
-	var off := ball_offset()
-	if off.length() < 0.25 or off.length() > LOSE_RADIUS:
-		return Vector3.ZERO
-	if off.normalized().dot(dir) > 0.35:
-		return Vector3.ZERO
-	return off - dir * 0.35
+## Velocidade desejada do CORPO com a bola (o jogador corre e gira livre; o
+## corpo é que acompanha a bola): alcança a bola que correu à frente, alinha a
+## passada com ela e, com o analógico solto, dá os passos até ela.
+func possession_steer(input: Vector3, desired: Vector3, max_speed: float) -> Vector3:
+	if not has_ball() or ball.global_position.y > 0.4:
+		return desired
+	if _trapping and _sole_on:
+		return desired # sola na bola: o corpo para junto
+	var pv := _flat(player.velocity)
+	var look := 0.15
+	var rel := _flat(ball.predict_ground_position(look) - (player.global_position + pv * look))
+	var d := rel.length()
+	if input.length() < 0.1:
+		# Analógico solto: o jogador não abandona a bola — dá mais uma ou duas
+		# passadas até ela (no ritmo dela) e só então pisa/amortece e para junto.
+		if d > 0.44 and d < LOSE_RADIUS:
+			var dir_b := rel / d
+			var b_along := maxf(ball.flat_velocity().dot(dir_b), 0.0)
+			var spd := b_along + (d - 0.36) * 2.6
+			if b_along < 0.4:
+				spd = clampf((d - 0.34) * 2.6, 0.3, 1.8) # bola parada: passinhos
+			# alcança sem disparar: no máximo um trote um pouco mais rápido que a bola
+			var cap := maxf(pv.length(), minf(b_along + 0.8, player.jog_speed))
+			cap = maxf(cap, 1.8)
+			return dir_b * clampf(spd, 0.0, cap)
+		return desired
+	var w := input.normalized()
+	var right := w.cross(Vector3.UP)
+	var along := rel.dot(w)
+	var lat := rel.dot(right)
+	var out := desired
+	if _is_reverse_case(w):
+		return desired # inversão: o corpo freia e gira por cima da bola (puxada de sola)
+	if _since_reverse < 0.8 and along < 0.2:
+		# Logo após a puxada: o corpo segura em cima do pé de apoio e deixa a
+		# bola passar por ele; só então arranca junto com ela.
+		var b_along := ball.flat_velocity().dot(w)
+		return w * clampf(b_along - 0.7, 0.0, max_speed)
+	if along < -0.12:
+		# A bola ficou para trás/de lado na nova direção: contorna por fora até
+		# ficar atrás dela (sem atravessar a bola) e segue.
+		var side := signf(-lat) if absf(lat) > 0.05 else 1.0
+		var ap := rel - w * 0.3 - right * side * 0.32
+		var spd := clampf(ap.length() * 3.0, 1.2, maxf(max_speed, 1.2))
+		return ap.normalized() * spd
+	var v_t := input.length() * _top_speed_with_ball()
+	var expected := _contact_pocket(v_t) + _peak_extra(v_t) + 0.22
+	if along > expected:
+		# correu mais que o toque previa: o corpo acelera um pouco para alcançar
+		out += w * clampf((along - expected) * 2.2, 0.0, 1.4)
+	if along > -0.05 and absf(lat) > 0.08:
+		# alinha a passada com a linha da bola (ela fica entre os pés)
+		out += right * clampf(lat * 3.0, -1.4, 1.4)
+	return out.limit_length(maxf(player.sprint_speed * 1.06, max_speed))
 
 
-## Velocidade extra para o jogador alcançar a bola que rolou à frente.
-func catch_up_velocity(dir: Vector3) -> Vector3:
-	if not has_ball():
-		return Vector3.ZERO
+## Pediu o sentido contrário com a bola à frente do corpo e ao alcance:
+## puxada de sola (o corpo gira por cima da bola), em vez de contornar.
+func _is_reverse_case(w: Vector3) -> bool:
+	if _since_reverse < 0.65:
+		return false # acabou de puxar: agora o corpo gira e segue com ela
 	var off := ball_offset()
-	var along := off.dot(dir)
-	var right := dir.cross(Vector3.UP)
-	var v := Vector3.ZERO
-	# a bola fugiu além do tapa normal: o corpo acelera para alcançá-la
-	var v_t := player.intent.move.length() * _top_speed_with_ball()
-	var lead_max := 0.45 + tap_lead(v_t) + 0.3
-	if along > lead_max:
-		v += dir * clampf((along - lead_max) * 1.5, 0.0, 1.0)
-	# alinha o corpo com a bola (ela fica entre os pés, na linha da passada):
-	# acompanha o deslize lateral dela e ainda fecha a diferença
-	if along > -0.1:
-		var blat := ball.flat_velocity().dot(right)
-		v += right * clampf(blat + off.dot(right) * 4.0, -1.8, 1.8)
-	return v
+	return w.dot(player.facing) < -0.3 and off.dot(player.facing) > -0.05 and off.length() < 0.62
+
+
+## Trombada leve com a bola no pé: o próximo toque sai menos preciso.
+func unsettle(_dir: Vector3, dv: float) -> void:
+	_unsettle = clampf(_unsettle + dv * 0.25, 0.0, 1.0)
+
+
+## Trombada forte: a bola espirra do pé (posse perdida de forma coerente).
+func knock_loose(dir: Vector3, dv: float) -> void:
+	if not has_ball() or ball_distance() > 1.2:
+		return
+	foot.cancel()
+	var bv := ball.flat_velocity()
+	var side := dir.cross(Vector3.UP) * _rng.randf_range(-1.0, 1.0)
+	var out := bv * 0.5 + (dir * 0.6 + side).normalized() * clampf(dv * 0.7, 1.0, 3.2)
+	ball.kick(Vector3(out.x, 0.0, out.z), Vector3.ZERO, player, 0.35)
+	player.notify_touch(&"body")
 
 
 # --- Domínio, condução e contato -------------------------------------------------
@@ -393,6 +454,18 @@ func _first_touch() -> void:
 	else:
 		var keep := player.global_position + player.facing * 0.38
 		settle = pv * 0.8 + _flat(keep - ball.global_position) * 3.0
+	if not player.is_goalkeeper():
+		# ERRO DE DOMÍNIO: bola forte, marcador colado ou corpo desequilibrado
+		# deixam o primeiro toque mais longo/torto (pode até espirrar).
+		var rel_in := _flat(ball.velocity_now() - player.velocity).length()
+		var err := clampf((rel_in - 7.5) / 9.0, 0.0, 0.55)
+		if player._shield_threat() != Vector3.ZERO:
+			err += 0.12
+		err += (1.0 - player.balance) * 0.3
+		if err > 0.02:
+			var sd := settle.normalized() if settle.length() > 0.2 else player.facing
+			settle += sd.cross(Vector3.UP) * _rng.randf_range(-1.0, 1.0) * err * 2.4 \
+				+ sd * _rng.randf_range(0.0, err * 2.0)
 	ball.touch(Vector3(settle.x, minf(ball.velocity_now().y, 0.0), settle.z), player)
 	_since_touch = 0.0
 
@@ -456,58 +529,196 @@ func _conduct(delta: float) -> void:
 	var pv := _flat(player.velocity)
 	var bv := _flat(ball.velocity_now())
 	_dragging = false
-	_reverse_pull = false
+	_reverse_timer = maxf(_reverse_timer - delta, 0.0)
+	_since_reverse += delta
+	_reverse_pull = _reverse_timer > 0.0
+	_unsettle = move_toward(_unsettle, 0.0, delta * 0.8)
 	if want.length() >= 0.15 and _trapping:
 		_trapping = false
 		_sole_on = false
 		if foot.mode == FootContact.Mode.SOLE and foot.phase == FootContact.Phase.HOLD:
 			foot.cancel()
 	if want.length() < 0.15:
-		# Soltou o analógico: traz a bola suavemente para a frente do pé e pisa quando parar.
+		# Soltou o analógico: toques de amortecimento até parar; parado, sola.
 		if pv.length() <= 1.2:
 			_trap(delta, off, d, pv, bv)
 			return
-		var stop_pocket := player.global_position + player.facing * 0.35
-		var to_stop := _flat(stop_pocket - ball.global_position)
-		var brake_v := pv * 0.88 + to_stop * 5.5
-		ball.touch(Vector3(brake_v.x, 0.0, brake_v.z), player)
+		_trapping = false
+		_sole_on = false
+		var dir_b := pv.normalized()
+		if not foot.busy():
+			_schedule_brake_touch(dir_b, pv, bv)
+		_assist(delta, dir_b, pv, bv)
 		return
 	_trapping = false
 	_sole_on = false
 	var w := want.normalized()
-	var move_dir := pv.normalized() if pv.length() > 0.55 else w
-	var right := move_dir.cross(Vector3.UP)
-	# Condução com CONTROLE PRÓXIMO E FLUIDO:
-	# 1) Agenda os toques visuais e anatômicos dos pés (chapa do pé esquerdo para cortar à direita,
-	#    chapa do pé direito para cortar à esquerda, três dedos no sprint, alternância na reta).
 	if foot.busy():
-		if foot.phase == FootContact.Phase.REACH and want.normalized().dot(foot.dir) < 0.35:
-			foot.cancel()
+		if foot.phase == FootContact.Phase.REACH and w.dot(foot.dir) < 0.35 and foot.mode != FootContact.Mode.SOLE:
+			foot.cancel() # mudou de ideia antes do pé chegar: reprograma
 	else:
-		_foot_contact_touch(want, pv, bv)
-	# 2) Guia contínua de condução próxima: mantém a bola sempre no bolso da passada à frente
-	#    do jogador (~0.34m a 0.44m à frente), acompanhando curvas e arrancadas sem jamais escapar!
+		_schedule_dribble_touch(w, pv, bv)
+	_assist(delta, w, pv, bv)
+
+
+## Onde a bola está (à frente do centro do corpo) quando o pé a encontra.
+static func _contact_pocket(v: float) -> float:
+	return clampf(0.31 + v * 0.018, 0.31, 0.40)
+
+
+## Tempo entre toques (≈ passadas): andando curto, correndo mais longo.
+static func _touch_period(v: float) -> float:
+	return lerpf(0.36, 0.74, clampf((v - 0.9) / 3.4, 0.0, 1.0))
+
+
+## Quanto a bola corre à frente do bolso entre dois toques (aprox.).
+func _peak_extra(v: float) -> float:
+	var a := ball.current_rolling() if ball != null else 2.8
+	var T := _touch_period(v)
+	var dv := 0.5 * a * T # v0 - v
+	return dv * dv / (2.0 * a)
+
+
+## Correção lateral mínima entre toques (aceleração limitada).
+func _assist(delta: float, w: Vector3, pv: Vector3, bv: Vector3) -> void:
+	if ball.global_position.y > 0.3 or foot.phase == FootContact.Phase.HOLD:
+		return
+	var off := ball_offset()
+	if off.length() > 1.1 or off.dot(w) < 0.0:
+		return
+	var right := w.cross(Vector3.UP)
+	var lat := off.dot(right)
+	var lat_rel_v := (bv - pv).dot(right)
+	var want_lat_v := -lat * 2.5
+	var dv := clampf(want_lat_v - lat_rel_v, -ASSIST_ACCEL * delta, ASSIST_ACCEL * delta)
+	if absf(dv) < 0.0005:
+		return
+	var nb := ball.velocity_now() + right * dv
+	ball.touch(Vector3(nb.x, minf(ball.velocity_now().y, 0.0), nb.z), player)
+
+
+## Decide se a próxima passada precisa tocar a bola e agenda o pé.
+func _schedule_dribble_touch(w: Vector3, pv: Vector3, bv: Vector3) -> void:
+	if _since_touch < MIN_TOUCH_GAP:
+		return
+	var lead := DRIBBLE_LEAD
+	var p_fut := player.global_position + pv * lead
+	var rel := _flat(ball.predict_ground_position(lead) - p_fut)
+	var dist := rel.length()
+	if dist > DRIBBLE_REACH:
+		return # fora do alcance: o corpo vai até ela (possession_steer)
 	var speed := pv.length()
-	var target_speed := maxf(want.length() * _top_speed_with_ball(), speed)
-	var lead_pocket := clampf(0.34 + speed * 0.024, 0.34, 0.44)
-	var lat_pocket := _foot_side * 0.045
+	var v_t := player.intent.move.length() * _top_speed_with_ball()
+	var along := rel.dot(w)
+	var pocket := _contact_pocket(maxf(speed, v_t))
+	var ball_dir_ok := bv.length() < 0.35 or bv.normalized().dot(w) > 0.94
+	var rel_along_v := (bv - pv).dot(w)
+	var need := false
+	var kind := &"dribble_touch"
+	var reverse := _is_reverse_case(w)
+	if reverse:
+		if speed > 3.6:
+			return # primeiro freia (o pé de apoio planta), depois puxa
+		need = true
+	if along < pocket + 0.05 and along > -0.3:
+		need = true # o corpo alcançou a bola: a passada toca
+	if not ball_dir_ok and along > -0.35:
+		need = true # curva/corte: leva a bola para o novo lado
+		kind = &"side_touch"
+	if rel_along_v < -0.8 and along < pocket + 0.3:
+		need = true # arrancada: a bola ficaria para trás
+	if not need:
+		return
+	var ref := pv.normalized() if speed > 0.5 else player.facing
+	var turn_ang := ref.signed_angle_to(w, Vector3.UP)
+	var f := _choose_conduction_foot(w, ref, turn_ang, ball_offset())
+	var mode := FootContact.Mode.SOLE if reverse else _select_conduction_mode(f, w, pv)
+	if reverse:
+		_reverse_timer = 0.45
+		_since_reverse = 0.0
+		_dragging = true
+		kind = &"drag"
+	foot.begin(f, w, lead, mode, func(): _dribble_impulse(f, kind, reverse), 0.035)
+
+
+## O IMPULSO do toque (no instante do contato): calcula a velocidade para a
+## bola chegar de novo ao bolso do pé daqui a uma passada (T), onde o corpo
+## vai estar com a inércia atual, considerando o atrito real do piso.
+func _dribble_impulse(f: float, kind: StringName, reverse: bool) -> void:
+	var want := _flat(player.intent.move)
+	var w := want.normalized() if want.length() > 0.15 else player.facing
+	var pv := _flat(player.velocity)
+	var v_t := maxf(want.length() * _top_speed_with_ball(), 0.6)
+	var T := _touch_period(v_t)
+	var pocket := _contact_pocket(v_t)
+	var right := w.cross(Vector3.UP)
+	var lat := f * 0.035
+	if reverse:
+		# PUXADA DE SOLA: a bola volta mansa ao lado do pé de apoio (não
+		# atravessa o corpo) enquanto ele gira por cima dela.
+		T = 0.62
+		pocket = 0.12
+		lat = f * 0.24
+	var v_end := pv.move_toward(w * v_t, player.acceleration * 0.85 * T)
+	var disp := (pv + v_end) * 0.5 * T
 	var threat := player._shield_threat()
-	if threat != Vector3.ZERO and speed < 2.2:
-		lat_pocket = -signf(threat.dot(right)) * 0.13
-	var ideal_pos := player.global_position + move_dir * lead_pocket + right * lat_pocket
-	var to_ideal := _flat(ideal_pos - ball.global_position)
-	var along := off.dot(move_dir)
-	var lat_err := absf(off.dot(right) - lat_pocket)
-	var turn_ang := move_dir.angle_to(w)
-	# Se a bola está saindo da linha da passada (curva, inversão de direção, atraso na arrancada
-	# ou escapando além de 0.48m), corrige imediatamente a velocidade da bola para o bolso da passada.
-	if along < 0.26 or d > 0.48 or lat_err > 0.14 or turn_ang > deg_to_rad(15.0) or bv.dot(w) < target_speed * 0.78:
-		var guide_vel := w * target_speed + to_ideal * 6.8
-		var blend := clampf(delta * 14.0, 0.0, 1.0)
-		if along < 0.20 or d > 0.55 or turn_ang > deg_to_rad(28.0):
-			blend = clampf(delta * 22.0, 0.0, 1.0)
-		var next_bv := bv.lerp(guide_vel, blend)
-		ball.touch(Vector3(next_bv.x, 0.0, next_bv.z), player)
+	if threat != Vector3.ZERO and pv.length() < 2.3:
+		lat = -signf(threat.dot(right)) * 0.14 # bola do lado longe do marcador
+	var bp := ball.global_position
+	# perto da linha lateral: toque mais curto para dentro
+	if Field.HALF_WIDTH - absf(bp.z) < 1.0 and signf(w.z) == signf(bp.z):
+		disp.z *= 0.4
+	var goal := player.global_position + disp + w * pocket + right * lat
+	var to := _flat(goal - bp)
+	var s := to.length()
+	var a := ball.current_rolling()
+	var v0 := s / T + 0.5 * a * T
+	if v0 < a * T:
+		v0 = sqrt(2.0 * a * s) # chega e para ali (toque curto)
+	v0 = minf(v0, 2.2 if reverse else v_t + 3.0)
+	var vel := to / s * v0 if s > 0.02 else w * 0.2
+	# Qualidade do toque: erro pequeno, maior em velocidade e desequilibrado.
+	var err := deg_to_rad(1.2 + pv.length() * 0.7) * (1.0 + _unsettle * 3.0 + (1.0 - player.balance) * 2.0)
+	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err)) * _rng.randf_range(0.97, 1.03 + _unsettle * 0.2)
+	ball.touch(Vector3(vel.x, 0.0, vel.z), player)
+	_unsettle *= 0.5
+	_since_touch = 0.0
+	_touch_count += 1
+	_foot_side = f
+	player.notify_touch(kind)
+
+
+## Freando com a bola (analógico solto, ainda correndo): toque de amortecimento
+## para a bola parar onde o corpo vai parar.
+func _schedule_brake_touch(dir: Vector3, pv: Vector3, bv: Vector3) -> void:
+	if _since_touch < MIN_TOUCH_GAP:
+		return
+	var lead := DRIBBLE_LEAD
+	var rel := _flat(ball.predict_ground_position(lead) - (player.global_position + pv * lead))
+	if rel.length() > DRIBBLE_REACH:
+		return
+	var along := rel.dot(dir)
+	if along > 0.58:
+		return # ainda alcançando a bola (possession_steer leva o corpo até ela)
+	var f := foot.nearest_foot()
+	var mode := FootContact.Mode.SOLE if pv.length() < 2.6 else FootContact.Mode.INSIDE
+	foot.begin(f, dir, lead, mode, func(): _brake_impulse(dir, f), 0.05)
+
+
+func _brake_impulse(dir: Vector3, f: float) -> void:
+	var pvn := _flat(player.velocity)
+	var sp := pvn.length()
+	var stop_d := sp * sp / (2.0 * maxf(player.deceleration, 1.0))
+	var goal := player.global_position + dir * (stop_d + 0.36)
+	var to := _flat(goal - ball.global_position)
+	var a := ball.current_rolling()
+	var v0 := sqrt(2.0 * a * maxf(to.dot(dir), 0.0))
+	var right := dir.cross(Vector3.UP)
+	var vel := dir * v0 + right * clampf(to.dot(right) * 2.0, -0.6, 0.6)
+	ball.touch(Vector3(vel.x, 0.0, vel.z), player)
+	_since_touch = 0.0
+	_foot_side = f
+	player.notify_touch(&"dribble_touch")
 
 
 ## Pés da animação no mundo (posição e velocidade) — para o contato com a bola.
@@ -528,81 +739,6 @@ func _track_feet(delta: float) -> void:
 			_ank_vel[sd] = (tp - _toe_prev[sd]) / delta
 		_ank_prev[sd] = an
 		_toe_prev[sd] = tp
-
-
-## O PÉ (tornozelo → ponta, em 3D) está encostando na bola e indo NA bola?
-func _foot_hits_ball(sd: float, bv: Vector3) -> bool:
-	var an: Vector3 = _ank_prev[sd]
-	var tp: Vector3 = _toe_prev[sd]
-	if an == Vector3.ZERO or tp == Vector3.ZERO:
-		return false
-	var b := ball.global_position
-	if minf(an.y, tp.y) > b.y + 0.06:
-		return false # pé por cima da bola (passando/pisando): não é o tapa
-	var seg := tp - an
-	var tt := clampf((b - an).dot(seg) / maxf(seg.length_squared(), 0.0001), 0.0, 1.0)
-	var near := an + seg * tt
-	var dist := b.distance_to(near)
-	if dist > Ball.RADIUS + 0.055:
-		return false
-	var n := Vector3(b.x - near.x, 0.0, b.z - near.z)
-	if n.length() < 0.02:
-		return false # pé em cima da bola (pisando), não é toque de condução
-	n = n.normalized()
-	var vf: Vector3 = _ank_vel[sd]
-	var rel := Vector2(vf.x - bv.x, vf.z - bv.z).dot(Vector2(n.x, n.z))
-	return rel > 0.25 # o pé vem na bola (pé apoiado parado não "toca")
-
-
-func _foot_contact_touch(want: Vector3, pv: Vector3, bv: Vector3) -> void:
-	if _since_touch < TAP_COOLDOWN or foot.busy():
-		return
-	var v := player.visual
-	if v == null or not v.has_method("get_toe_position"):
-		if ball_distance() < 0.42:
-			_tap(want, pv, 0.0)
-		return
-	var off := ball_offset()
-	var d := off.length()
-	var speed := pv.length()
-	var ref := pv.normalized() if speed > 0.5 else player.facing
-	var w := want.normalized() if want.length() >= 0.15 else ref
-	var turn_ang := ref.signed_angle_to(w, Vector3.UP)
-	var turning := want.length() >= 0.15 and absf(turn_ang) > deg_to_rad(14.0)
-	var preferred_foot := _choose_conduction_foot(w, ref, turn_ang, off)
-	# 1. Se o pé da animação já encostou na bola, dispara o contato imediato com IK.
-	# Quando em curva/corte, prioriza testar o pé preferencial anatomicamente correto.
-	var check_order: Array[float] = [preferred_foot, -preferred_foot] if turning else [1.0, -1.0]
-	for sd in check_order:
-		if _foot_hits_ball(sd, bv):
-			if turning and sd != preferred_foot and foot.foot_distance(preferred_foot) < 0.44:
-				continue # dá preferência para o pé ideal do corte conduzir
-			var mode_hit := _select_conduction_mode(sd, w, pv)
-			_foot_side = sd
-			foot.begin(sd, w, 0.015, mode_hit, func(): _tap(want, pv, sd), 0.032)
-			return
-	# 2. Alcance ativo sincronizado com a passada: quando a bola está na zona de
-	# condução à frente dos pés (ou quando o jogador pede mudança de direção),
-	# escolhe o pé anatomicamente ideal (chapa do pé esquerdo para cortar para a direita,
-	# chapa do pé direito para cortar para a esquerda, ou três dedos / sola).
-	if d > 0.64:
-		return
-	var in_front := off.dot(ref) > -0.08 or (turning and off.dot(player.facing) > -0.08)
-	if not in_front:
-		return
-	var cadence := clampf(0.18 - speed * 0.012, 0.11, 0.18)
-	if turning:
-		cadence = 0.09
-	if _since_touch < cadence and d > 0.32 and not turning:
-		return
-	var chosen_foot := preferred_foot
-	var f_dist := foot.foot_distance(chosen_foot)
-	if f_dist > 0.54 and not turning and d > 0.36:
-		return
-	var touch_mode := _select_conduction_mode(chosen_foot, w, pv)
-	var lead_t := clampf((f_dist - 0.12) / 4.2, 0.022, 0.048)
-	_foot_side = chosen_foot
-	foot.begin(chosen_foot, w, lead_t, touch_mode, func(): _tap(want, pv, chosen_foot), 0.038)
 
 
 func _choose_conduction_foot(_w: Vector3, ref: Vector3, turn_ang: float, off: Vector3) -> float:
@@ -639,8 +775,16 @@ func _choose_conduction_foot(_w: Vector3, ref: Vector3, turn_ang: float, off: Ve
 	# Em condução reta / leve desvio:
 	if absf(lat) > 0.12:
 		return signf(lat)
-	# Alternância natural das passadas entre pé esquerdo e pé direito
+	# Passada sincronizada: toca o pé que está VINDO para a frente (perna de
+	# balanço da animação), alternando naturalmente direito/esquerdo.
+	var pv := _flat(player.velocity)
+	var swing_r := (_flat(_ank_vel[1.0]) - pv).dot(ref)
+	var swing_l := (_flat(_ank_vel[-1.0]) - pv).dot(ref)
 	var next_alt := -_foot_side
+	if absf(swing_r - swing_l) > 0.6:
+		var swing := 1.0 if swing_r > swing_l else -1.0
+		if foot.foot_distance(swing) < 0.55:
+			return swing
 	var d_alt := foot.foot_distance(next_alt)
 	var d_cur := foot.foot_distance(_foot_side)
 	if d_alt <= d_cur + 0.14:
@@ -681,55 +825,9 @@ func _select_conduction_mode(foot_side: float, w: Vector3, pv: Vector3) -> FootC
 	return FootContact.Mode.INSIDE
 
 
-## Distância extra que a bola corre à frente do pé a cada toque (m): perto
-## andando, mais longa correndo ("tapas").
-static func tap_lead(v_target: float) -> float:
-	return lerpf(0.07, 0.30, clampf((v_target - 1.1) / 3.2, 0.0, 1.0))
-
-
 func _top_speed_with_ball() -> float:
 	return player.speed_dribbling if (player.intent.sprint and player.stamina > 0.05) \
 		else player.jog_speed * player.ball_speed_factor
-
-
-## O TAPA: o pé encostou na bola — ela sai na direção pedida, na frente do
-## corpo, com a força certa para o jogador alcançá-la na próxima passada.
-func _tap(want: Vector3, pv: Vector3, foot_side: float) -> void:
-	var speed := pv.length()
-	var a := ball.current_rolling()
-	var vel: Vector3
-	var kind := &"dribble_touch"
-	if want.length() < 0.15:
-		# soltou o analógico: toque curto que segura a bola (o corpo freia junto)
-		var bdir := pv.normalized() if speed > 0.3 else player.facing
-		vel = bdir * speed * 0.45
-	else:
-		var w := want.normalized()
-		var ref := pv.normalized() if speed > 0.6 else player.facing
-		var ang := ref.signed_angle_to(w, Vector3.UP) # + = esquerda
-		var left := ang > 0.0
-		var outer := (left and foot_side > 0.0) or (not left and foot_side < 0.0) or foot_side == 0.0
-		var lim := deg_to_rad(88.0) if (outer or absf(ang) < deg_to_rad(20.0)) else deg_to_rad(80.0)
-		var dir := ref.rotated(Vector3.UP, clampf(ang, -lim, lim))
-		var is_cut := absf(ang) > deg_to_rad(18.0)
-		if is_cut:
-			kind = &"side_touch"
-		var v_t := maxf(want.length() * _top_speed_with_ball(), 0.9)
-		var lead_dist := tap_lead(v_t) * (0.72 if is_cut else 1.0)
-		var u := sqrt(2.0 * a * lead_dist)
-		vel = dir * (v_t + u)
-		# leva a bola para a linha do corpo (ou para o lado protegido quando sob pressão)
-		var right := dir.cross(Vector3.UP)
-		var target_lat := 0.0
-		var threat := player._shield_threat()
-		if threat != Vector3.ZERO and speed < 2.3:
-			target_lat = -signf(threat.dot(right)) * 0.14
-		var lat := ball_offset().dot(right) - target_lat
-		vel -= right * clampf(lat * (2.6 if is_cut else 1.8), -0.95, 0.95)
-	ball.touch(Vector3(vel.x, 0.0, vel.z), player)
-	_since_touch = 0.0
-	_touch_count += 1
-	player.notify_touch(kind)
 
 
 ## Soltou o analógico: o jogador PARA A BOLA. Se ela rolou à frente, ele vai
@@ -834,29 +932,6 @@ func approach_point(w: Vector3) -> Vector3:
 			side = 1.0
 		return b + right * side * 0.45 - w * 0.25
 	return b - w * (FOOT_DISTANCE - 0.04)
-
-
-## Micro-correção entre os toques: em curva a bola tende a seguir reta e
-## escapar para o lado. Corrige só a deriva lateral, de leve (o jogador faria
-## isso com toques mínimos), sem mudar a velocidade à frente nem prender a bola.
-func _foot_near_ball(dir := Vector3.ZERO, turn_side := 0.0) -> bool:
-	var feet := player.get_foot_positions()
-	if feet.is_empty():
-		return true # sem modelo animado: toca imediatamente
-	var b := ball.global_position
-	var fwd := player.facing
-	var p := player.global_position
-	var right := dir.cross(Vector3.UP) if dir != Vector3.ZERO else fwd.cross(Vector3.UP)
-	for f in feet:
-		# Pé baixo, perto da bola e à frente do corpo (não toca com o calcanhar).
-		var foot_along := (f - p).dot(fwd)
-		if f.y < 0.35 and Vector2(f.x - b.x, f.z - b.z).length() < FOOT_TOUCH_RADIUS \
-				and foot_along > 0.0 and foot_along <= (b - p).dot(fwd) + 0.04:
-			# Virando: o pé tem que estar do lado de onde a bola sai.
-			if turn_side != 0.0 and (f - b).dot(right) * turn_side > 0.02:
-				continue
-			return true
-	return false
 
 
 ## Toque de condução com CONTROLE PRÓXIMO: a velocidade dada à bola é
@@ -989,7 +1064,7 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 		else:
 			# Passe rasteiro com peso: chega firme no pé do companheiro sem virar um foguete.
 			vel = ground_pass_velocity(from, dest, lerpf(3.4, 5.6, power))
-			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(7.2, 13.2, power), 14.5)
+			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(6.0, 13.0, power), 14.5)
 	else:
 		# Passe em profundidade (para o espaço): vai quem estiver melhor para chegar.
 		var dest := from + dir * lerpf(6.0, 14.5, power)
@@ -1038,7 +1113,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 	var from := ball.global_position
 	var ty := _rng.randf_range(0.12, 0.46)
 	var target := Vector3(goal_x, ty, _choose_shot_z(from, goal_x, aim))
-	var speed := lerpf(9.5, 16.2, power)
+	var speed := lerpf(10.5, 18.8, power)
 	var flat_to := _flat(target - from)
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
@@ -1073,7 +1148,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 ## velocidade realista de futebol de rua, sem sair como um foguete).
 func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
 	var from := ball.global_position
-	var speed := lerpf(9.5, 16.2, power)
+	var speed := lerpf(10.5, 18.8, power)
 	var spread := deg_to_rad(lerpf(0.4, 1.8, power))
 	var facing_dot := player.facing.dot(dir)
 	if facing_dot < 0.3:
