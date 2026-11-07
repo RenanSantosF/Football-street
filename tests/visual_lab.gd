@@ -89,9 +89,14 @@ func _setup() -> void:
 	ball.in_play = true
 	ball.restricted_team = -1
 	ball.restricted_player = null
-	if scn in ["dribble", "curve", "reverse", "shield", "kick", "duel", "runpass"]:
+	if scn in ["dribble", "curve", "reverse", "shield", "kick", "duel", "runpass", "heel"]:
 		ball.place_at(Vector3(-9.6, Ball.RADIUS, 0))
 		ball.claim(me)
+		if scn == "heel":
+			_mate_at(Vector3(-16.0, 0, 0.5))
+	elif scn == "volley":
+		ball.release()
+		ball.place_at(Vector3(-13.0, 0.4, -3.6))
 	else:
 		ball.release()
 		ball.place_at(Vector3(10, Ball.RADIUS, 3.0))
@@ -118,6 +123,15 @@ func _setup() -> void:
 			opp.intent.move = Vector3.ZERO
 
 
+func _mate_at(pos: Vector3) -> void:
+	for p in mm.players:
+		if p != me and p.team == me.team:
+			p.set_physics_process(true)
+			p.set_frozen(false)
+			p.teleport(pos, Vector3.RIGHT)
+			return
+
+
 func _drive(t: int) -> void:
 	match scn:
 		"idle":
@@ -140,6 +154,13 @@ func _drive(t: int) -> void:
 				Input.action_press("move_up", 1.0)
 			if t == 75:
 				Input.action_release("move_right")
+		"brake":
+			if t == 1:
+				Input.action_press("move_right", 1.0)
+				Input.action_press("sprint")
+			if t == 70:
+				Input.action_release("move_right")
+				Input.action_release("sprint")
 		"reverse":
 			if t == 1:
 				Input.action_press("move_right", 1.0)
@@ -191,6 +212,26 @@ func _drive(t: int) -> void:
 				Input.action_press("pass")
 			if t == 53:
 				Input.action_release("pass")
+		"heel":
+			if t == 20:
+				Input.action_press("move_left", 1.0)
+				Input.action_press("pass")
+			if t == 24:
+				Input.action_release("pass")
+			if t == 30:
+				Input.action_release("move_left")
+		"volley":
+			if t == 2:
+				var from := ball.global_position
+				var flat := Vector3(me.global_position.x - from.x, 0, me.global_position.z - from.z)
+				var tt := flat.length() / 9.0
+				var vy: float = (0.8 - from.y) / tt + 0.5 * 9.8 * tt
+				var hv := flat.normalized() * 9.0
+				ball.kick(Vector3(hv.x, vy, hv.z), Vector3.ZERO, null)
+				ball.pass_target = me
+				Input.action_press("shoot")
+			if t == 6:
+				Input.action_release("shoot")
 		"kick":
 			if t == 1:
 				Input.action_press("move_right", 0.8)
