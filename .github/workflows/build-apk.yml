@@ -67,7 +67,7 @@ jobs:
           godot --headless --import
           mkdir -p build/test-logs
           fail=0
-          for t in contact receive dribble body_contact; do
+          for t in contact receive dribble body_contact duel; do
             echo "::group::teste $t"
             timeout 600 godot --headless --fixed-fps 60 --path . "res://tests/${t}_test.tscn" 2>&1 \
               | grep -vE 'Parameter "m" is null|mesh_storage.h' | tee "build/test-logs/${t}.log"

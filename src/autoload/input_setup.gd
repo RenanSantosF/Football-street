@@ -17,6 +17,8 @@ const KEYS := {
 	"switch_player": [KEY_Q],
 	"pass_lob": [KEY_U],      # passe por cima (no toque: arrastar o botão de passe)
 	"shoot_chip": [KEY_I],    # cavadinha (no toque: arrastar o botão de chute)
+	"through_pass": [KEY_H],  # passe em profundidade (botão PROFUNDIDADE)
+	"shield": [KEY_G],        # proteger a bola (segurar o botão PROTEGER)
 }
 
 const JOY_BUTTONS := {
@@ -25,6 +27,12 @@ const JOY_BUTTONS := {
 	"dribble": JOY_BUTTON_X,
 	"switch_player": JOY_BUTTON_LEFT_SHOULDER,
 	"sprint": JOY_BUTTON_RIGHT_SHOULDER,
+	"through_pass": JOY_BUTTON_Y,
+}
+
+## ação -> gatilho analógico (controle Bluetooth)
+const JOY_TRIGGERS := {
+	"shield": JOY_AXIS_TRIGGER_LEFT,
 }
 
 ## ação -> [eixo, direção]
@@ -48,6 +56,12 @@ func _enter_tree() -> void:
 		var jb := InputEventJoypadButton.new()
 		jb.button_index = JOY_BUTTONS[action]
 		InputMap.action_add_event(action, jb)
+	for action: String in JOY_TRIGGERS:
+		_ensure_action(action)
+		var jt := InputEventJoypadMotion.new()
+		jt.axis = JOY_TRIGGERS[action]
+		jt.axis_value = 1.0
+		InputMap.action_add_event(action, jt)
 	for action: String in JOY_AXES:
 		_ensure_action(action)
 		var jm := InputEventJoypadMotion.new()

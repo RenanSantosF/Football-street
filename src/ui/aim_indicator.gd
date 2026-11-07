@@ -57,7 +57,11 @@ func _process(_delta: float) -> void:
 	rotation.y = atan2(-_dir.x, -_dir.z)
 	var length := 1.2 + _power * 2.8
 	_mesh.scale = Vector3(1.0, 1.0, length)
-	if _pass_mode:
+	if _pass_mode and human_input != null and human_input.through_aiming:
+		# PROFUNDIDADE: verde, mais comprida (aponta para o espaço à frente de quem recebe)
+		_mat.albedo_color = Color(0.55, 1.0, 0.35, 0.85)
+		_mesh.scale = Vector3(1.0, 1.0, 2.0 + _power * 4.5)
+	elif _pass_mode:
 		# Passe: azul-claro = assistido (vai no companheiro); branco = em profundidade.
 		_mat.albedo_color = Color(0.35, 0.85, 1.0, 0.8) if _assisted else Color(1, 1, 1, 0.75)
 	else:

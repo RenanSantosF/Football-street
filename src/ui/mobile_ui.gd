@@ -21,6 +21,8 @@ var _fps_label: Label
 @onready var pass_button: TouchButton = $PassButton
 @onready var dribble_button: TouchButton = $DribbleButton
 @onready var sprint_button: TouchButton = $SprintButton
+@onready var through_button: TouchButton = $ThroughButton
+@onready var shield_button: TouchButton = $ShieldButton
 var _charge_kind: StringName = &""
 var _power_panel: Control
 var _power_fill: ColorRect
@@ -68,6 +70,11 @@ func _update_button_labels() -> void:
 		and human_input.current_player.ball != null and human_input.current_player.ball.possessor == null \
 		and human_input.current_player.ball.pass_target == human_input.current_player
 	sprint_button.alt_hint = ""
+	# Botões contextuais: PROFUNDIDADE com a bola (ou chegando nela),
+	# PROTEGER só com a bola no pé.
+	through_button.visible = with_ball
+	shield_button.visible = human_input != null and human_input.current_player != null \
+		and human_input.current_player.ball_control.has_ball()
 	if with_ball and incoming:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "de primeira"
@@ -340,8 +347,9 @@ func _on_charge_changed(value: float, kind: StringName) -> void:
 	charge_bar.visible = false
 	shoot_button.charge = value if kind == &"shoot" else 0.0
 	pass_button.charge = value if kind == &"pass" else 0.0
+	through_button.charge = value if kind == &"through" else 0.0
 	_power_panel.visible = false # a força aparece no anel do próprio jogador
 	if kind != &"":
-		_power_label.text = "FORÇA DO CHUTE" if kind == &"shoot" else "FORÇA DO PASSE"
+		_power_label.text = "FORÇA DO CHUTE" if kind == &"shoot" else ("PROFUNDIDADE" if kind == &"through" else "FORÇA DO PASSE")
 		_power_fill.size = Vector2(332.0 * clampf(value, 0.0, 1.0), 22)
 		_power_fill.color = Color(lerpf(0.3, 1.0, value), lerpf(0.9, 0.25, value), 0.2)

@@ -60,6 +60,10 @@ var _hair: MeshInstance3D
 var _toe_bones: Array[int] = []
 var _model_scale := 1.0
 var _hips_rest_height := 0.9
+## Pontos da SOLA de cada pé no espaço do osso: lado -> [[osso, local], ...]
+## (calcanhar, meio do pé, ponta dos dedos). Servem para apoiar o pé no chão
+## pela sola de verdade (e não por uma altura fixa de tornozelo).
+var _sole_points := {1.0: [], -1.0: []}
 
 
 func apply_appearance(a: CharacterAppearance, team: int, role: int) -> void:
@@ -92,6 +96,20 @@ func set_posture_dynamics(run_lean: float, accel_pitch: float, turn_bank: float,
 		lean.turn_lean = clampf(turn_bank, -1.0, 1.0)
 		lean.feint_lean = clampf(feint, -1.0, 1.0)
 		lean.dribble_gingado = clampf(gingado, 0.0, 1.0)
+
+
+## Aceleração real (mundo), desequilíbrio 0..1 e sua direção, abertura da base.
+func set_body_dynamics(accel_world: Vector3, imbalance: float, imbalance_dir: Vector3, wide := 0.0) -> void:
+	if lean != null:
+		lean.set_body_dynamics(accel_world, imbalance, imbalance_dir)
+		lean.stance_wide = clampf(wide, 0.0, 1.0)
+
+
+## Estilo individual de movimento (variação entre jogadores).
+func set_motion_style(arm_swing: float, torso_deg: float) -> void:
+	if lean != null:
+		lean.style_arm = clampf(arm_swing, 0.7, 1.0)
+		lean.style_torso_deg = torso_deg
 
 
 func set_shield_posture(shield_dir_world: Vector3, weight: float) -> void:
@@ -187,6 +205,7 @@ func _build(wanted: StringName) -> void:
 		ap.queue_free() # o AnimationTree próprio cuida da animação
 	skeleton = model.find_child("GeneralSkeleton", true, false) as Skeleton3D
 	body_mesh = _find_body_mesh(cfg)
+	_extract_sole_points()
 	_fix_rest_offset()
 	var hips := skeleton.find_bone("Hips")
 	_hips_rest_height = maxf(skeleton.get_bone_global_rest(hips).origin.y, 0.1)
@@ -230,6 +249,8 @@ func _build(wanted: StringName) -> void:
 	anim_tree.active = true
 	lean = LeanModifier.new()
 	lean.name = "Lean"
+	lean.ground_ref = self
+	lean.sole_points = _sole_points
 	skeleton.add_child(lean)
 	if anim_tree.has_signal("mixer_applied"):
 		anim_tree.mixer_applied.connect(lean.notify_animation_applied)
@@ -339,11 +360,76 @@ func _fix_rest_offset() -> void:
 	_fix_arm_binds()
 
 
-## Quando a malha original foi modelada em A-Pose mas o esqueleto humanoide
-## usa T-Pose para animações compartilhadas, os braços dobram para dentro das
-## costelas. Esta função transforma os vértices dos membros superiores da A-Pose
-## para a T-Pose e atualiza o Skin com a matriz exata de descanso, deixando os
-## braços e mãos 100% perfeitos ao lado do corpo em qualquer animação.
+## Pega na malha ORIGINAL (pé modelado plano) os vértices mais baixos de cada
+## pé — calcanhar, meio e ponta — e guarda cada um no espaço do osso que mais
+## o move (Foot ou Toes). Em qualquer pose: mundo = osso_global × local.
+func _extract_sole_points() -> void:
+	if body_mesh == null or body_mesh.skin == null or not (body_mesh.mesh is ArrayMesh):
+		return
+	var skin := body_mesh.skin
+	var arrays := (body_mesh.mesh as ArrayMesh).surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+	var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+	if bones.size() < verts.size() * 4:
+		return
+	var aabb := body_mesh.mesh.get_aabb()
+	var sole_band := aabb.size.y * 0.012
+	for side in [1.0, -1.0]:
+		var prefix := "Right" if side > 0.0 else "Left"
+		var wanted := {}
+		for i in skin.get_bind_count():
+			var bn := String(skin.get_bind_name(i))
+			if bn == prefix + "Foot" or bn == prefix + "Toes":
+				wanted[i] = skeleton.find_bone(bn)
+		if wanted.is_empty():
+			continue
+		# vértices dominados pelos ossos do pé deste lado
+		var cand: Array[int] = []
+		var min_y := INF
+		for v in verts.size():
+			var best_b := -1
+			var best_w := 0.0
+			for j in 4:
+				if weights[v * 4 + j] > best_w:
+					best_w = weights[v * 4 + j]
+					best_b = bones[v * 4 + j]
+			if wanted.has(best_b) and best_w > 0.5:
+				cand.append(v)
+				min_y = minf(min_y, verts[v].y)
+		var sole: Array[int] = []
+		for v in cand:
+			if verts[v].y <= min_y + sole_band:
+				sole.append(v)
+		if sole.is_empty():
+			continue
+		# o modelo olha para +Z no espaço da malha: calcanhar = menor z, ponta = maior z
+		sole.sort_custom(func(a, b): return verts[a].z < verts[b].z)
+		var picks := [sole[0], sole[sole.size() / 2], sole[sole.size() - 1]]
+		var pts := []
+		for v in picks:
+			var bi := -1
+			var bw := 0.0
+			for j in 4:
+				if weights[v * 4 + j] > bw:
+					bw = weights[v * 4 + j]
+					bi = bones[v * 4 + j]
+			# no espaço do osso: bind (original) × vértice (original)
+			pts.append([wanted[bi], skin.get_bind_pose(bi) * verts[v]])
+		_sole_points[side] = pts
+
+
+## O importador (retarget com "fix silhouette") gira o descanso de alguns ossos
+## para casar com o perfil humanoide (braços em A-Pose → T-Pose, pés apontando
+## para baixo → horizontais) SEM mexer no bind da malha: rest × bind ≠ I.
+## Esta função "assa" essa diferença nos vértices e troca o bind por rest⁻¹ —
+## o resultado é idêntico à pele original em QUALQUER pose (pose × rest⁻¹ ×
+## (rest × bind × v) = pose × bind × v).
+##
+## IMPORTANTE (Etapa 25): antes só os braços eram assados, mas o bind de TODOS
+## os ossos era trocado. Nos pés (rest × bind = 29,7°) isso girava a malha do pé
+## ~30° em relação à canela: pé "na ponta", tornozelo esticado/torcido na
+## corrida (e o remendo de "nivelar o pé" deixava o pé sempre reto, sem rolar).
 func _fix_arm_binds() -> void:
 	if body_mesh == null or body_mesh.skin == null or body_mesh.mesh == null:
 		return
@@ -356,10 +442,9 @@ func _fix_arm_binds() -> void:
 	for i in skin.get_bind_count():
 		var bname := String(skin.get_bind_name(i))
 		var bidx := skeleton.find_bone(bname)
-		var is_arm := bname.contains("Arm") or bname.contains("Hand") or bname.contains("Index") \
-			or bname.contains("Middle") or bname.contains("Ring") or bname.contains("Pinky") \
-			or bname.contains("Little") or bname.contains("Thumb")
-		if bidx >= 0 and is_arm:
+		# todos os ossos (braços, mãos, pés, dedos dos pés...): quem não mudou
+		# dá identidade e não altera nada
+		if bidx >= 0:
 			var rest := skeleton.get_bone_global_rest(bidx)
 			var bind := skin.get_bind_pose(i)
 			var m := rest * bind

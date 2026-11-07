@@ -22,6 +22,8 @@ const ACTION_STATES := {
 	&"chip": &"PassShort",
 	&"run_pass": &"Shoot",
 	&"long_pass": &"PassLong",
+	&"through": &"PassLong",
+	&"shoot_b": &"PassLong",
 	&"shoot": &"Shoot",
 	&"shoot_power": &"ShootPower",
 	&"receive": &"Receive",
@@ -59,6 +61,8 @@ const ACTION_LOGICAL := {
 	&"chip": &"pass_short",
 	&"run_pass": &"shoot",
 	&"long_pass": &"pass_long",
+	&"through": &"pass_long",
+	&"shoot_b": &"pass_long",
 	&"shoot": &"shoot",
 	&"shoot_power": &"shoot_power",
 	&"receive": &"receive",
@@ -185,6 +189,9 @@ func kick_foot(kind: StringName) -> float:
 
 var _signed_turn := 0.0
 var _accel_lean := 0.0
+## Aceleração horizontal real do corpo (mundo, m/s², suavizada).
+var _acc_vec := Vector3.ZERO
+var _prev_vel := Vector3.ZERO
 var _prev_want_dir := Vector3.FORWARD
 var _feint_lean := 0.0
 
@@ -205,6 +212,15 @@ func physics_update(delta: float) -> void:
 	_turn_rate = lerpf(_turn_rate, ang, 1.0 - exp(-10.0 * delta))
 	_signed_turn = lerpf(_signed_turn, signed_ang, 1.0 - exp(-8.0 * delta))
 	var raw_accel := (v.length() - _prev_speed) / maxf(delta, 0.001)
+	# Vetor aceleração (curva, freada, arrancada, trombada): alimenta a
+	# inclinação do corpo inteiro. Teletransporte/saltos absurdos são ignorados.
+	var hv_now := player.get_flat_velocity()
+	var a_raw := (hv_now - _prev_vel) / maxf(delta, 0.001)
+	_prev_vel = hv_now
+	if a_raw.length() > 30.0:
+		a_raw = Vector3.ZERO
+	a_raw = a_raw.limit_length(12.0)
+	_acc_vec = _acc_vec.lerp(a_raw, 1.0 - exp(-12.0 * delta))
 	_accel_lean = lerpf(_accel_lean, clampf(raw_accel / 4.2, -1.0, 1.0), 1.0 - exp(-10.0 * delta))
 	var v_len := v.length()
 	# Girando parado: só afeta a passada se houver deslocamento real ou giro muito rápido,
@@ -255,6 +271,12 @@ func physics_update(delta: float) -> void:
 		player.visual.call("set_posture_dynamics", run_lean, _accel_lean, turn_bank, _feint_lean, gingado)
 	elif player.visual.has_method("set_run_lean"):
 		player.visual.call("set_run_lean", run_lean)
+	if player.visual.has_method("set_body_dynamics"):
+		var acc := _acc_vec
+		if player.state != Player.State.MOVE and player.state != Player.State.STUNNED:
+			acc *= 0.5 # nas ações o clipe já traz a postura
+		player.visual.call("set_body_dynamics", acc, 1.0 - player.balance, player.imbalance_dir,
+			player.get_stance_wide())
 	if player.visual.has_method("set_shield_posture"):
 		var sh := player.get_shield_info()
 		player.visual.call("set_shield_posture", sh["dir"], sh["weight"])
@@ -453,7 +475,7 @@ func _on_action_started(kind: StringName) -> void:
 	if not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
-	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"shoot", &"shoot_power", &"chip", &"run_pass", &"tackle"] \
+	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"through", &"shoot", &"shoot_b", &"shoot_power", &"chip", &"run_pass", &"tackle"] \
 		and _has_state(StringName(String(state_name) + "L"))
 	if mirrored:
 		state_name = StringName(String(state_name) + "L")

@@ -30,11 +30,40 @@ var action_phase := 0.0
 var action_power := 0.0
 var action_side := 1.0
 
-const ACCEL_SPINE_DEG := 5.0
-const TURN_BANK_DEG := 5.0
+## (a arrancada/freada já inclina o corpo inteiro em _apply_body_lean)
+const ACCEL_SPINE_DEG := 2.5
+## (a inclinação nas curvas agora vem do corpo inteiro: _apply_body_lean;
+##  aqui fica só um resto pequeno no tronco)
+const TURN_BANK_DEG := 2.0
 const TURN_YAW_DEG := 6.5
 
 const MIN_ANKLE_Y := 0.095
+
+## Aceleração horizontal REAL do corpo (mundo, m/s²) e desequilíbrio (0..1)
+## com a direção para onde o corpo está sendo jogado (mundo).
+var body_accel_world := Vector3.ZERO
+var imbalance := 0.0
+var imbalance_dir_world := Vector3.ZERO
+## Estilo individual (variação entre jogadores): amplitude do balanço dos
+## braços (0,85..1) e postura do tronco (graus extras de inclinação).
+var style_arm := 1.0
+var style_torso_deg := 0.0
+## Abertura da base (proteção de bola): 0..1.
+var stance_wide := 0.0
+
+## Inclinação do corpo inteiro: fração da inclinação física atan(a/g) e teto.
+const LEAN_GAIN := 0.42
+const LEAN_MAX_DEG := 11.0
+## Quanto da inclinação a cabeça compensa (olhar fica mais nivelado).
+const HEAD_LEVEL := 0.6
+var _smooth_lean := Vector3.ZERO
+var _smooth_imb := 0.0
+var _smooth_wide := 0.0
+
+## Referência do chão (HumanoidCharacter: origem no chão, sob os pés).
+var ground_ref: Node3D = null
+## Pontos da sola (HumanoidCharacter._extract_sole_points): lado -> [[osso, local]].
+var sole_points := {1.0: [], -1.0: []}
 
 var _smooth_amount := 0.0
 var _smooth_accel := 0.0
@@ -100,6 +129,12 @@ func set_action_posture(kind: StringName, phase_ratio: float, power: float, side
 	action_phase = clampf(phase_ratio, 0.0, 1.0)
 	action_power = clampf(power, 0.0, 1.0)
 	action_side = 1.0 if side >= 0.0 else -1.0
+
+
+func set_body_dynamics(accel_world: Vector3, imb: float, imb_dir_world: Vector3) -> void:
+	body_accel_world = Vector3(accel_world.x, 0.0, accel_world.z)
+	imbalance = clampf(imb, 0.0, 1.0)
+	imbalance_dir_world = Vector3(imb_dir_world.x, 0.0, imb_dir_world.z)
 
 
 func set_foot_ik(side: float, world_pos: Vector3, weight: float, forward: Vector3, mode: int = 0) -> void:
@@ -219,6 +254,25 @@ func _process_modification() -> void:
 			var target_local := sk_inv * gaze_world_pos
 			_smooth_ball_local = _smooth_ball_local.lerp(target_local, 1.0 - exp(-12.0 * dt))
 		_smooth_shield = lerpf(_smooth_shield, shield_weight, 1.0 - exp(-10.0 * dt))
+		# Inclinação física: o corpo pende para a direção da aceleração
+		# (curva = para dentro, freada = para trás, arrancada = para a frente).
+		var lean_target := Vector3.ZERO
+		var a_len := body_accel_world.length()
+		if a_len > 0.05:
+			var d_sk := sk_inv.basis * (body_accel_world / a_len)
+			d_sk.y = 0.0
+			if d_sk.length_squared() > 0.0001:
+				var ang := minf(atan(a_len / 9.8) * LEAN_GAIN, deg_to_rad(LEAN_MAX_DEG))
+				lean_target = d_sk.normalized() * ang
+		if imbalance > 0.01 and imbalance_dir_world.length_squared() > 0.0001:
+			var id_sk := sk_inv.basis * imbalance_dir_world.normalized()
+			id_sk.y = 0.0
+			if id_sk.length_squared() > 0.0001:
+				lean_target += id_sk.normalized() * deg_to_rad(6.0) * imbalance
+		# o corpo tem massa: a inclinação acompanha com um pequeno atraso
+		_smooth_lean = _smooth_lean.lerp(lean_target, 1.0 - exp(-7.0 * dt))
+		_smooth_imb = lerpf(_smooth_imb, imbalance, 1.0 - exp(-6.0 * dt))
+		_smooth_wide = lerpf(_smooth_wide, stance_wide, 1.0 - exp(-6.0 * dt))
 		if shield_dir_world.length_squared() > 0.001:
 			var s_loc := (sk_inv.basis * shield_dir_world).normalized()
 			s_loc.y = 0.0
@@ -235,12 +289,14 @@ func _process_modification() -> void:
 	# 1. Postura atlética alinhada, centrada e natural (sem entortar o tronco).
 	_apply_athletic_posture(sk)
 
-	# 2. Nivelamento anatômico dos pés (elimina pé na ponta dos dedos).
-	for side in [1.0, -1.0]:
-		var f_idx: int = _foot_bones[side]
-		var t_idx: int = _toe_bones[side]
-		if f_idx >= 0:
-			_level_foot_and_toes(sk, f_idx, t_idx, _ball_weight[side])
+	# 2. (Etapa 25) Sem "nivelar o pé": com a pele correta (HumanoidCharacter.
+	#    _fix_arm_binds) o pé da animação já apoia plano e rola naturalmente.
+	#    Inclinação do corpo inteiro (a partir do apoio no chão) e acomodação
+	#    do pé de apoio: calcanhar desce no trote, sola acompanha o chão.
+	var ground_y_sk := (sk_inv * ground_ref.global_position).y if ground_ref != null else 0.0
+	_apply_body_lean(sk, ground_y_sk)
+	_settle_stance_feet(sk, ground_y_sk)
+	_apply_wide_stance(sk, sk_inv)
 
 	# 3. Ancoragem exata da sola no chão (impede que o pé afunde no piso).
 	_anchor_feet_above_ground(sk)
@@ -272,34 +328,143 @@ func _process_modification() -> void:
 	_applying = false
 
 
-## Garante que a sola do pé apoiado fique exatamente na superfície do chão (Y = 0.0)
-## e nunca afunde para dentro do piso quando os joelhos flexionam na animação.
+func _skip_procedural(sk: Skeleton3D) -> bool:
+	if _hips < 0:
+		return true
+	if action_kind in [&"slide", &"trip", &"jump", &"header_jump"]:
+		return true
+	var e := sk.get_bone_global_pose(_hips).basis.get_euler()
+	return absf(e.x) > deg_to_rad(42.0) or absf(e.z) > deg_to_rad(42.0)
+
+
+## INCLINAÇÃO COORDENADA: o corpo inteiro gira em torno do ponto de apoio no
+## chão (não do quadril), na direção da aceleração. A cabeça compensa parte
+## (o olhar fica mais nivelado) e o pé apoiado acompanha o chão (tornozelo).
+func _apply_body_lean(sk: Skeleton3D, ground_y_sk: float) -> void:
+	var ang := _smooth_lean.length()
+	if ang < 0.002 or _skip_procedural(sk):
+		return
+	var axis := Vector3.UP.cross(_smooth_lean / ang)
+	if axis.length_squared() < 0.0001:
+		return
+	axis = axis.normalized()
+	var r := Basis(axis, ang)
+	var gp := sk.get_bone_global_pose(_hips)
+	var pivot := Vector3(gp.origin.x, ground_y_sk, gp.origin.z)
+	gp.origin = pivot + r * (gp.origin - pivot)
+	gp.basis = r * gp.basis
+	sk.set_bone_global_pose(_hips, gp)
+	sk.force_update_all_bone_transforms()
+	if _head >= 0:
+		var gh := sk.get_bone_global_pose(_head)
+		gh.basis = Basis(axis, -ang * HEAD_LEVEL) * gh.basis
+		sk.set_bone_global_pose(_head, gh)
+	for side in [1.0, -1.0]:
+		var f_idx: int = _foot_bones[side]
+		if f_idx < 0 or _ball_weight[side] > 0.05:
+			continue
+		var gf := sk.get_bone_global_pose(f_idx)
+		var h := (gf.origin.y - ground_y_sk) * sk.global_transform.basis.get_scale().y
+		var near := clampf(1.0 - (h - 0.06) / 0.08, 0.0, 1.0)
+		if near > 0.0:
+			gf.basis = Basis(axis, -ang * 0.75 * near) * gf.basis
+			sk.set_bone_global_pose(f_idx, gf)
+	sk.force_update_all_bone_transforms()
+
+
+## PROTEÇÃO DE BOLA: base mais aberta e centro de massa um pouco mais baixo.
+## O quadril desce e cada pé (que não está na bola) se afasta um pouco para o
+## lado; a IK de 2 ossos dobra os joelhos mantendo os pés onde pisam.
+func _apply_wide_stance(sk: Skeleton3D, sk_inv: Transform3D) -> void:
+	var w := _smooth_wide
+	if w < 0.02 or _skip_procedural(sk):
+		return
+	var to_sk := 1.0 / maxf(sk.global_transform.basis.get_scale().y, 0.0001)
+	var feet := {}
+	for side in [1.0, -1.0]:
+		var f_idx: int = _foot_bones[side]
+		if f_idx >= 0 and _ball_weight[side] < 0.05:
+			feet[side] = sk.global_transform * sk.get_bone_global_pose(f_idx).origin
+	var gp := sk.get_bone_global_pose(_hips)
+	gp.origin.y -= 0.045 * w * to_sk
+	sk.set_bone_global_pose(_hips, gp)
+	sk.force_update_all_bone_transforms()
+	for side in feet:
+		# +X do esqueleto = esquerda do personagem (o modelo olha para +Z)
+		var out_world := sk.global_transform.basis * Vector3(-side, 0.0, 0.0)
+		out_world.y = 0.0
+		var tgt: Vector3 = feet[side] + out_world.normalized() * 0.045 * w
+		_solve_two_bone_leg(sk, sk_inv, side, tgt, 1.0, -1)
+
+
+## Pé de APOIO no trote/andando: o calcanhar acomoda no chão (a passada dos
+## clipes de trote pisa só com o antepé = "ponta dos pés"). Correndo forte o
+## apoio no antepé é o natural, então o ajuste quase some.
+func _settle_stance_feet(sk: Skeleton3D, ground_y_sk: float) -> void:
+	if _skip_procedural(sk):
+		return
+	var sc := sk.global_transform.basis.get_scale().y
+	var k := lerpf(0.55, 0.12, clampf(_smooth_amount, 0.0, 1.0))
+	for side in [1.0, -1.0]:
+		var pts: Array = sole_points[side]
+		var f_idx: int = _foot_bones[side]
+		if pts.size() < 3 or f_idx < 0 or _ball_weight[side] > 0.05:
+			continue
+		var heel: Vector3 = sk.get_bone_global_pose(pts[0][0]) * (pts[0][1] as Vector3)
+		var mid: Vector3 = sk.get_bone_global_pose(pts[1][0]) * (pts[1][1] as Vector3)
+		var tip: Vector3 = sk.get_bone_global_pose(pts[2][0]) * (pts[2][1] as Vector3)
+		var contact_h := (minf(mid.y, tip.y) - ground_y_sk) * sc
+		if contact_h > 0.03:
+			continue # pé no ar: a animação manda
+		var sole := tip - heel
+		if sole.y >= 0.0:
+			continue # calcanhar já embaixo (pisada de calcanhar)
+		var horiz := Vector3(sole.x, 0.0, sole.z)
+		if horiz.length_squared() < 0.000001:
+			continue
+		var w := k * clampf(1.0 - contact_h / 0.03, 0.0, 1.0)
+		var q := Quaternion(sole.normalized(), horiz.normalized())
+		var full := q.get_angle()
+		if full < 0.01:
+			continue
+		var apply_ang := minf(full * w, deg_to_rad(14.0))
+		var qa := Quaternion(q.get_axis().normalized(), apply_ang)
+		var gf := sk.get_bone_global_pose(f_idx)
+		gf.basis = Basis(qa) * gf.basis
+		sk.set_bone_global_pose(f_idx, gf)
+	sk.force_update_all_bone_transforms()
+
+
+## Apoio pela SOLA de verdade: o ponto mais baixo das solas (calcanhar, meio
+## e ponta, extraídos da malha) não pode entrar no chão; com os dois pés quase
+## no chão, encosta a sola (sem flutuar). Só move o quadril na vertical.
 func _anchor_feet_above_ground(sk: Skeleton3D) -> void:
-	if _hips < 0 or _foot_bones[1.0] < 0 or _foot_bones[-1.0] < 0:
+	if _hips < 0 or ground_ref == null:
+		return
+	if sole_points[1.0].is_empty() and sole_points[-1.0].is_empty():
 		return
 	var gp_hips := sk.get_bone_global_pose(_hips)
 	var e_hips := gp_hips.basis.get_euler()
 	if absf(e_hips.x) > deg_to_rad(42.0) or absf(e_hips.z) > deg_to_rad(42.0):
 		return # caído/carrinho: não desloca o quadril
-	var rest_foot_y := sk.get_bone_global_rest(_foot_bones[1.0]).origin.y
-	var min_y := INF
+	var sk_xform := sk.global_transform
+	var ground_y := ground_ref.global_position.y
+	var lowest := INF
 	for side in [1.0, -1.0]:
-		var f_idx: int = _foot_bones[side]
-		var t_idx: int = _toe_bones[side]
-		if f_idx >= 0:
-			min_y = minf(min_y, sk.get_bone_global_pose(f_idx).origin.y)
-		if t_idx >= 0:
-			min_y = minf(min_y, sk.get_bone_global_pose(t_idx).origin.y)
-	if min_y == INF:
+		for sp in sole_points[side]:
+			var w: Vector3 = sk_xform * (sk.get_bone_global_pose(sp[0]) * (sp[1] as Vector3))
+			lowest = minf(lowest, w.y - ground_y)
+	if lowest == INF:
 		return
-	# Se qualquer pé/dedo ficou abaixo de rest_foot_y (afundando no chão), ou se
-	# o pé de apoio está próximo ao solo, ajusta Hips.y para que a sola apoie em Y = 0.0.
-	if min_y < rest_foot_y:
-		gp_hips.origin.y += (rest_foot_y - min_y)
-		sk.set_bone_global_pose(_hips, gp_hips)
-		sk.force_update_all_bone_transforms()
-	elif min_y < rest_foot_y + 0.016 and not (action_kind in [&"jump", &"header_jump"]):
-		gp_hips.origin.y -= (min_y - rest_foot_y) * 0.65
+	# metros (mundo) -> unidades do esqueleto
+	var to_sk := 1.0 / maxf(sk_xform.basis.get_scale().y, 0.0001)
+	var shift := 0.0
+	if lowest < 0.0:
+		shift = -lowest # entrou no chão: sobe
+	elif lowest < 0.014 and not (action_kind in [&"jump", &"header_jump"]):
+		shift = -lowest * 0.65 # quase apoiado: encosta a sola
+	if absf(shift) > 0.0002:
+		gp_hips.origin.y += shift * to_sk
 		sk.set_bone_global_pose(_hips, gp_hips)
 		sk.force_update_all_bone_transforms()
 
@@ -395,14 +560,14 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 				act_pitch = deg_to_rad(2.5) * pulse
 				act_yaw = deg_to_rad(5.0 * action_side) * pulse
 				act_arm_spread = 0.28 * pulse
-			&"long_pass":
+			&"long_pass", &"through":
 				act_pitch = deg_to_rad(-3.0 if action_phase < 0.45 else 4.5) * pulse
 				act_yaw = deg_to_rad(8.0 * action_side) * pulse
 				act_arm_spread = 0.45 * pulse
 			&"chip":
 				act_pitch = deg_to_rad(-3.5) * pulse
 				act_arm_spread = 0.25 * pulse
-			&"shoot", &"shoot_power":
+			&"shoot", &"shoot_b", &"shoot_power":
 				var pwr := clampf(action_power, 0.25, 1.0)
 				if action_kind == &"shoot_power":
 					pwr = maxf(pwr, 0.85)
@@ -437,7 +602,7 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 
 	var share_x := clampf(e_uchest.x * 0.28, deg_to_rad(-6.0), deg_to_rad(6.0))
 	var raw_torso_x := e_hips.x + e_spine.x + e_chest.x + e_uchest.x
-	var target_max_x := deg_to_rad(4.5 + 5.5 * _smooth_amount) + deg_to_rad(ACCEL_SPINE_DEG) * _smooth_accel \
+	var target_max_x := deg_to_rad(4.5 + 5.5 * _smooth_amount + style_torso_deg) + deg_to_rad(ACCEL_SPINE_DEG) * _smooth_accel \
 		+ absf(combined_turn) * deg_to_rad(2.0) + deg_to_rad(3.5) * _smooth_shield + act_pitch
 	var excess_x := maxf(0.0, raw_torso_x - target_max_x)
 	var corr_x := excess_x * 0.82 - act_pitch * 0.65
@@ -460,6 +625,13 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 		bank_rad * 0.35 + gingado_torso_roll * 0.35)
 
 	# --- 2.1 Braços naturais na corrida e proteção quando encostado no marcador ---
+	if style_arm < 0.999:
+		# estilo individual: uns balançam os braços menos que outros
+		for s_st in [1.0, -1.0]:
+			for ab in [_arm_bones[s_st], _forearm_bones[s_st]]:
+				if ab >= 0:
+					var q_r := sk.get_bone_rest(ab).basis.get_rotation_quaternion()
+					sk.set_bone_pose_rotation(ab, q_r.slerp(sk.get_bone_pose_rotation(ab), style_arm).normalized())
 	for s_val in [1.0, -1.0]:
 		var s: float = s_val
 		var arm_b: int = _arm_bones[s]
@@ -470,6 +642,10 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 				lift *= 0.35
 			var is_shield_arm := clampf(s * shield_side, 0.0, 1.0) * _smooth_shield
 			lift += is_shield_arm * deg_to_rad(16.0) + act_arm_spread * deg_to_rad(12.0)
+			# equilíbrio: o braço de FORA da curva abre um pouco; desequilibrado,
+			# os dois braços abrem para segurar o corpo (sem exagero)
+			lift += clampf(_smooth_lean.x * s * 0.9, 0.0, deg_to_rad(10.0))
+			lift += _smooth_imb * deg_to_rad(18.0)
 			var fwd: float = absf(combined_turn) * deg_to_rad(4.0) \
 				+ is_shield_arm * deg_to_rad(10.0) \
 				+ act_arm_spread * deg_to_rad(8.0 * (-s * action_side))
@@ -601,6 +777,24 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 
 	gp_foot.basis = Basis(q2) * Basis(q1) * gp_foot.basis
 	gp_foot.origin = T_clamped
+	# Abrir/fechar o pé (chapa, amortecer, três dedos) é uma rotação da PERNA
+	# INTEIRA no quadril — o tornozelo quase não torce (antes 22° só no
+	# tornozelo = malha "torcida" na canela).
+	var twist_deg := 0.0
+	match mode:
+		0, 4:
+			twist_deg = 30.0
+		3:
+			twist_deg = 24.0
+		5:
+			twist_deg = -12.0
+	if ball_w > 0.01 and twist_deg != 0.0:
+		var up_axis := (H - T_clamped).normalized()
+		var q_tw := Quaternion(up_axis, deg_to_rad(-side * twist_deg) * clampf(ball_w, 0.0, 1.0))
+		gp_hip.basis = Basis(q_tw) * gp_hip.basis
+		gp_knee.origin = H + q_tw * (gp_knee.origin - H)
+		gp_knee.basis = Basis(q_tw) * gp_knee.basis
+		gp_foot.basis = Basis(q_tw) * gp_foot.basis
 	if ball_w > 0.01:
 		var foot_euler := Vector3.ZERO
 		match mode:
@@ -614,6 +808,8 @@ func _solve_two_bone_leg(sk: Skeleton3D, sk_inv: Transform3D, side: float,
 				foot_euler = Vector3(deg_to_rad(3.0), deg_to_rad(-18.0 * side), deg_to_rad(8.5 * side))
 			5: # OUTSIDE (três dedos: tornozelo vira para dentro mostrando a face externa)
 				foot_euler = Vector3(deg_to_rad(-4.0), deg_to_rad(19.0 * side), deg_to_rad(-9.5 * side))
+		if mode in [0, 3, 4, 5]:
+			foot_euler *= 0.4 # o resto do giro já veio do quadril
 		var rot_mod := Basis.from_euler(foot_euler * clampf(ball_w * 1.12, 0.0, 0.96))
 		gp_foot.basis = gp_foot.basis * rot_mod
 

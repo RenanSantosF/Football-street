@@ -44,6 +44,9 @@ const MIN_TOUCH_GAP := 0.13
 const DRIBBLE_LEAD := 0.07
 ## Correção lateral máxima entre toques (m/s²): o "jeito" do pé, não um ímã.
 const ASSIST_ACCEL := 2.2
+## Desarme: distância máxima entre o segmento do pé (tornozelo→dedos) e o
+## centro da bola para contar como pé NA bola (raio 0,11 + pé/chapa).
+const TACKLE_TOUCH := 0.25
 
 @export_group("Condução e Chute")
 ## Tempo entre os toques na bola na corrida (um toque a cada ~passada).
@@ -79,6 +82,9 @@ var _reverse_pull := false
 var _carry_frame := 0
 var _reverse_timer := 0.0
 var _since_reverse := 10.0
+var _side_chase := false
+## Interceptação: velocidade da bola na última tentativa (uma por trajetória).
+var _intercept_seen_v := Vector3.ZERO
 ## Toque desajeitado (trombada leve): o próximo impulso sai com mais erro.
 var _unsettle := 0.0
 ## O pé que vai até a bola em cada toque (IK). Nenhum toque sem o pé encostar.
@@ -179,6 +185,7 @@ func physics_update(delta: float) -> void:
 	else:
 		_try_gain_control()
 		if not has_ball():
+			_try_stretch_intercept()
 			# bola solta bate no corpo (desvio calculado: a física da cápsula
 			# empurrava a bola para dentro do chão)
 			_body_contact()
@@ -313,8 +320,17 @@ func possession_steer(input: Vector3, desired: Vector3, max_speed: float) -> Vec
 		# bola passar por ele; só então arranca junto com ela.
 		var b_along := ball.flat_velocity().dot(w)
 		return w * clampf(b_along - 0.7, 0.0, max_speed)
+	# Bola DE LADO (à frente na direção antiga, fora do alcance): vai direto
+	# até ela — o toque de lado (chapa/três dedos) a leva para o novo rumo.
+	# (com histerese: a decisão não fica piscando entre um quadro e outro)
+	if _side_chase:
+		_side_chase = absf(lat) > 0.28 and along > -0.5 and along < 0.45 and d > 0.5
+	else:
+		_side_chase = absf(lat) > 0.45 and along > -0.4 and along < 0.3 and d > 0.55
+	if _side_chase:
+		return (rel.normalized() * maxf(max_speed, 2.2)).limit_length(player.sprint_speed * 1.06)
 	if along < -0.12:
-		# A bola ficou para trás/de lado na nova direção: contorna por fora até
+		# A bola ficou para trás na nova direção: contorna por fora até
 		# ficar atrás dela (sem atravessar a bola) e segue.
 		var side := signf(-lat) if absf(lat) > 0.05 else 1.0
 		var ap := rel - w * 0.3 - right * side * 0.32
@@ -1064,7 +1080,7 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 		else:
 			# Passe rasteiro com peso: chega firme no pé do companheiro sem virar um foguete.
 			vel = ground_pass_velocity(from, dest, lerpf(3.4, 5.6, power))
-			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(6.0, 13.0, power), 14.5)
+			vel = vel.normalized() * clampf(vel.length() * align_k, lerpf(7.0, 13.0, power), 14.5)
 	else:
 		# Passe em profundidade (para o espaço): vai quem estiver melhor para chegar.
 		var dest := from + dir * lerpf(6.0, 14.5, power)
@@ -1080,6 +1096,9 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 	var err := deg_to_rad(0.25 + 0.75 * power)
 	if align_dot < 0.2:
 		err *= 1.35
+	# desequilibrado: o pé de apoio não firma, o passe sai torto e mais fraco
+	err *= 1.0 + (1.0 - player.balance) * 2.5
+	vel *= lerpf(0.82, 1.0, player.balance)
 	if ball_distance() > 0.75:
 		err *= 1.5 # bola longe do pé
 	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err))
@@ -1087,6 +1106,80 @@ func execute_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -
 	ball.pass_target = receiver
 	player.notify_touch(&"pass")
 	GameEvents.ball_kicked.emit(player, &"long_pass" if long else &"pass", power)
+	return true
+
+
+## PASSE EM PROFUNDIDADE: o ponto no ESPAÇO à frente de [param mate], na
+## direção em que ele corre (ou vai correr: rumo ao gol, puxado pela mira),
+## mais longe quanto maior a força.
+func through_destination(mate: Player, power: float, aim: Vector3) -> Vector3:
+	var goal_dir := Vector3(Field.attack_sign(player.team), 0.0, 0.0)
+	var mv := mate.get_flat_velocity()
+	var a := _flat(aim)
+	var run_dir: Vector3
+	if mv.length() > 1.2:
+		run_dir = (mv.normalized() * 0.7 + goal_dir * 0.3).normalized()
+	else:
+		var side := (a - goal_dir * a.dot(goal_dir)) if a.length() > 0.2 else Vector3.ZERO
+		run_dir = (goal_dir + side * 0.6).normalized()
+	var lead := lerpf(3.0, 8.5, clampf(power, 0.0, 1.0))
+	return Field.clamp_inside(mate.global_position + run_dir * lead, 0.9)
+
+
+## Escolhe quem recebe o passe em profundidade pela mira (ou o mais adiantado).
+func pick_through_target(aim: Vector3) -> Player:
+	var dir := _aim_dir(aim)
+	var mate := pick_pass_target(dir, 65.0)
+	if mate == null:
+		var best_adv := -INF
+		var s := Field.attack_sign(player.team)
+		for m in player.get_teammates():
+			if m.is_goalkeeper():
+				continue
+			var adv := (m.global_position.x - player.global_position.x) * s
+			if adv > best_adv:
+				best_adv = adv
+				mate = m
+	return mate
+
+
+## Passe em PROFUNDIDADE: a bola vai para o espaço onde o companheiro VAI
+## estar, com a velocidade certa para os dois chegarem juntos (a bola chega
+## ainda rolando, ele domina correndo). Diferente do passe normal, que vai no pé.
+func execute_through_pass(power: float, aim: Vector3, target: Node3D, lofted := false) -> bool:
+	if not can_kick():
+		return false
+	var mate := target as Player
+	if mate == null:
+		mate = pick_through_target(aim)
+	if mate == null:
+		return execute_pass(power, aim, null, lofted)
+	var from := ball.global_position
+	var dest := through_destination(mate, power, aim)
+	var t_mate := mate.global_position.distance_to(dest) / maxf(mate.sprint_speed * 0.92, 0.1) + 0.25
+	var flat := _flat(dest - from)
+	var dist := flat.length()
+	var vel: Vector3
+	if lofted:
+		vel = lofted_velocity(from, dest, lerpf(32.0, 46.0, power))
+	else:
+		var a := 2.45
+		var v0 := dist / maxf(t_mate, 0.3) + 0.5 * a * t_mate
+		if v0 - a * t_mate < 1.8:
+			v0 = sqrt(1.8 * 1.8 + 2.0 * a * dist) # ainda rolando quando ele chegar
+		v0 = clampf(v0, 5.0, 15.5)
+		vel = flat.normalized() * v0
+	var err := deg_to_rad(0.5 + 1.4 * power) * (1.0 + (1.0 - player.balance) * 2.5)
+	if player.facing.dot(flat.normalized()) < 0.2:
+		err *= 1.5
+	vel = vel.rotated(Vector3.UP, _rng.randf_range(-err, err)) * lerpf(0.85, 1.0, player.balance)
+	ball.kick(vel, _roll_spin(vel), player, kick_cooldown)
+	ball.pass_target = mate
+	ball.through_pass = true
+	ball.through_dest = Vector3(dest.x, 0.0, dest.z)
+	player.set_meta("last_pass_ms", Time.get_ticks_msec())
+	player.notify_touch(&"pass")
+	GameEvents.ball_kicked.emit(player, &"through_pass", power)
 	return true
 
 
@@ -1113,7 +1206,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 	var from := ball.global_position
 	var ty := _rng.randf_range(0.12, 0.46)
 	var target := Vector3(goal_x, ty, _choose_shot_z(from, goal_x, aim))
-	var speed := lerpf(10.5, 18.8, power)
+	var speed := lerpf(10.5, 18.8, power) * lerpf(0.68, 1.0, player.balance)
 	var flat_to := _flat(target - from)
 	var d := maxf(flat_to.length(), 0.5)
 	var dir := flat_to / d
@@ -1124,7 +1217,7 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 		speed *= 0.55
 	elif facing_dot < 0.4:
 		speed *= lerpf(0.76, 1.0, clampf((facing_dot + 0.2) / 0.6, 0.0, 1.0))
-	var spread := deg_to_rad(lerpf(0.8, 3.2, power))
+	var spread := deg_to_rad(lerpf(0.8, 3.2, power)) * (1.0 + (1.0 - player.balance) * 2.5)
 	if back:
 		spread *= 3.0
 	if ball_distance() > 0.7:
@@ -1148,8 +1241,8 @@ func execute_shot(power: float, aim: Vector3, precise := false, chip := false) -
 ## velocidade realista de futebol de rua, sem sair como um foguete).
 func _execute_aimed_shot(power: float, dir: Vector3) -> bool:
 	var from := ball.global_position
-	var speed := lerpf(10.5, 18.8, power)
-	var spread := deg_to_rad(lerpf(0.4, 1.8, power))
+	var speed := lerpf(10.5, 18.8, power) * lerpf(0.68, 1.0, player.balance)
+	var spread := deg_to_rad(lerpf(0.4, 1.8, power)) * (1.0 + (1.0 - player.balance) * 2.5)
 	var facing_dot := player.facing.dot(dir)
 	if facing_dot < 0.3:
 		spread *= 1.6
@@ -1208,54 +1301,180 @@ func execute_dribble(aim: Vector3) -> bool:
 	return true
 
 
-func execute_tackle() -> bool:
-	var carrier := find_tackle_target(TACKLE_RANGE + 0.3)
-	if carrier == null:
-		return false
-	# DESARME pela GEOMETRIA e ALCANCE DO PÉ (inspirado em HaxSoccer / striker-3d):
-	# o pé de bote precisa ter linha limpa até a bola (sem atravessar o corpo de quem protege).
+## DESARME FÍSICO (bote em pé / interceptação com o botão): no instante do
+## contato, o pé que esticou (já com a IK) precisa estar NA bola. Não existe
+## sorteio nem "troca de dono": o pé tira a bola (cutucada ou roubada com a
+## parte de dentro), a bola fica solta e quem chegar nela domina. Errou o pé
+## = perde o equilíbrio na proporção do avanço.
+## Resultado de um bote.
+enum Tackle { MISS, POKE, STEAL, SPLIT }
+
+
+func execute_tackle(lunge := 0.0) -> Tackle:
+	if ball == null or not ball.in_play:
+		return Tackle.MISS
+	var carrier := ball.possessor
+	if carrier == player:
+		return Tackle.MISS
+	var b := ball.global_position
+	var d_foot := tackle_foot_distance()
 	var me := _flat(player.global_position)
-	var bp := _flat(ball.global_position)
-	var cp := _flat(carrier.global_position)
-	var reach := (bp - me).length()
-	if reach > 1.12:
-		return false # bola longe do pé: errou o bote
-	# Corpo no caminho (protegendo de costas/de lado): o pé bate na perna dele.
-	var seg := bp - me
-	var tt := clampf((cp - me).dot(seg) / maxf(seg.length_squared(), 0.0001), 0.0, 1.0)
-	var body_block := (me + seg * tt).distance_to(cp) < 0.28 and (cp - me).length() < reach
-	if body_block:
-		if (cp - me).length() < 0.78 and _rng.randf() < 0.28:
-			carrier.stumble(0.45)
-			if player.match_manager != null:
+	var bp := _flat(b)
+	var lunge_dir := (bp - me).normalized() if (bp - me).length() > 0.01 else player.facing
+	if d_foot > TACKLE_TOUCH or b.y > 0.5:
+		_tackle_missed(lunge, lunge_dir)
+		return Tackle.MISS
+	if carrier != null and carrier.team != player.team:
+		var cp := _flat(carrier.global_position)
+		# Corpo de quem conduz no caminho da perna (protegendo de costas/lado):
+		# o pé encontra a canela dele, não a bola.
+		var hip := _flat(player.global_position) + lunge_dir * 0.1
+		var line := bp - hip
+		var tt := clampf((cp - hip).dot(line) / maxf(line.length_squared(), 0.0001), 0.0, 1.0)
+		var blocked := (hip + line * tt).distance_to(cp) < 0.22 and (cp - hip).length() < line.length()
+		if blocked:
+			var behind := (me - cp).normalized().dot(carrier.facing) < -0.3
+			carrier.receive_body_impact(1.4 + lunge * 1.2, (cp - me).normalized(), player)
+			if (behind or _rng.randf() < 0.3) and player.match_manager != null:
 				player.match_manager.award_free_kick(carrier.team, carrier.global_position)
-		return false
-	# Bola exposta (longe do pé de quem conduz) = fácil; colada = disputa física.
-	var ball_from_c := (bp - cp).length()
-	var exposure := clampf((ball_from_c - 0.28) / 0.42, 0.0, 1.0)
-	var p_win := 0.35 + exposure * 0.62
-	var cbc: BallControl = carrier.ball_control
-	if cbc._since_touch < 0.12:
-		p_win -= 0.14 # acabou de tocar: a bola está sob controle do pé dele
-	if carrier.facing.dot((me - cp).normalized()) > 0.35:
-		p_win += 0.12 # bote frontal: a bola está exposta à frente
-	if carrier.state == Player.State.ACTION:
-		p_win += 0.15
-	if _rng.randf() > p_win:
-		return false
-	var poke := (me - bp).normalized() if reach > 0.05 else -player.facing
-	if reach <= 0.88 and ball.flat_velocity().length() < 4.2:
-		# Bem perto e equilibrado: o pé fisga a bola com firmeza e assume o domínio.
-		ball.claim(player)
-		var steal_vel := (player.facing * 1.3 + _flat(player.velocity) * 0.45).limit_length(2.8)
-		ball.touch(steal_vel, player)
-		_since_touch = 0.0
+			_tackle_missed(lunge * 0.6, lunge_dir)
+			return Tackle.MISS
+		# O pé de quem conduz também está na bola? (pisando / tocando) → DIVIDIDA
+		var cbc: BallControl = carrier.ball_control
+		var c_dist := minf(_seg_point_dist(_foot_segment(carrier, 1.0)[0], _foot_segment(carrier, 1.0)[1], b),
+			_seg_point_dist(_foot_segment(carrier, -1.0)[0], _foot_segment(carrier, -1.0)[1], b))
+		var guarded := c_dist < Ball.RADIUS + 0.05 \
+			or (cbc.foot.phase == FootContact.Phase.HOLD and cbc.foot.mode == FootContact.Mode.SOLE)
+		if guarded:
+			var squirt := lunge_dir.cross(Vector3.UP) * (1.0 if _rng.randf() < 0.5 else -1.0)
+			var sv := squirt * _rng.randf_range(1.2, 2.4) + carrier.get_flat_velocity() * 0.3
+			ball.release()
+			ball.touch(Vector3(sv.x, 0.0, sv.z), player)
+			carrier.balance = maxf(carrier.balance - 0.25, 0.0)
+			player.balance = maxf(player.balance - 0.2, 0.0)
+			player.notify_touch(&"tackle")
+			GameEvents.ball_kicked.emit(player, &"tackle", 0.4)
+			return Tackle.SPLIT
+		carrier.balance = maxf(carrier.balance - 0.18, 0.0)
+		carrier.imbalance_dir = lunge_dir
+	# Pé limpo na bola.
+	var out: Vector3
+	var a := ball.current_rolling()
+	var near_me := (bp - me).length() < 0.95 and ball.flat_velocity().length() < 4.5 and lunge < 0.45
+	if near_me:
+		# ROUBADA com a parte de dentro: o pé segura e puxa a bola para o meu
+		# lado (para longe de quem conduzia); o corpo, que vem no embalo, a
+		# encontra logo à frente
+		var goal := me + player.facing * 0.32
+		var to := goal - bp
+		out = to.normalized() * clampf(sqrt(2.0 * a * to.length()) + 0.4, 0.6, 1.8) if to.length() > 0.03 else Vector3.ZERO
 	else:
-		poke = poke.rotated(Vector3.UP, _rng.randf_range(-0.45, 0.45))
-		ball.kick(poke * _rng.randf_range(1.8, 2.9), Vector3.ZERO, player, 0.05)
-	carrier.stumble(0.38)
+		# CUTUCADA: o pé esticado desvia a bola para o lado da perna
+		var sweep := (lunge_dir.cross(Vector3.UP) * -foot.side * 0.75 + lunge_dir * 0.4).normalized()
+		out = sweep * _rng.randf_range(1.8, 3.2) + ball.flat_velocity() * 0.25
+	if carrier != null:
+		ball.release()
+		ball.set_ignore(carrier, 0.45)
+	ball.touch(Vector3(out.x, 0.0, out.z), player)
+	ball.pass_target = null
+	_since_touch = 0.0
+	player.notify_touch(&"tackle")
 	GameEvents.ball_kicked.emit(player, &"tackle", 0.5)
-	return true
+	return Tackle.STEAL if near_me else Tackle.POKE
+
+
+## Distância do pé que está no bote até a bola. O pé efetivo = tornozelo da
+## animação + a correção da IK (limitada como no solver da perna: a perna não
+## estica além do que a passada do clipe permite).
+func tackle_foot_distance() -> float:
+	var v := player.visual
+	var side := foot.side
+	var an: Vector3
+	if v != null and v.has_method("get_raw_ankle_position"):
+		var raw: Vector3 = v.call("get_raw_ankle_position", side)
+		var w := clampf(foot._weight, 0.0, 1.0) if foot.busy() else 0.0
+		an = raw + (foot._target - raw).limit_length(0.3) * w
+	else:
+		an = _foot_segment(player, side)[0]
+	var tp := an + foot.dir * 0.16
+	return _seg_point_dist(an, tp, ball.global_position)
+
+
+## Errou o bote: o corpo foi junto com a perna e perde o equilíbrio (avanço
+## longo e já desequilibrado = tropeço de verdade).
+func _tackle_missed(lunge: float, dir: Vector3) -> void:
+	player.balance = maxf(player.balance - (0.26 + lunge * 0.35), 0.0)
+	player.imbalance_dir = dir
+	if lunge > 0.6 and player.balance < 0.3:
+		player.stumble(0.4)
+
+
+## Segmento do pé (tornozelo → ponta dos dedos, mundo) de [param p].
+static func _foot_segment(p: Player, side: float) -> Array:
+	var v := p.visual
+	if v != null and v.has_method("get_toe_position"):
+		return [v.call("get_ankle_position", side) as Vector3, v.call("get_toe_position", side) as Vector3]
+	var right := p.facing.cross(Vector3.UP)
+	var an := p.global_position + right * side * 0.12 + p.facing * 0.05 + Vector3.UP * 0.09
+	return [an, an + p.facing * 0.18]
+
+
+static func _seg_point_dist(a: Vector3, b: Vector3, pt: Vector3) -> float:
+	var ab := b - a
+	var t := clampf((pt - a).dot(ab) / maxf(ab.length_squared(), 0.000001), 0.0, 1.0)
+	return pt.distance_to(a + ab * t)
+
+
+## INTERCEPTAÇÃO automática: passe/chute do adversário passando um pouco
+## fora do alcance normal (0,5–0,95 m): o jogador estica a perna. Bola mansa
+## = amortece e fica; bola forte = só desvia. Uma tentativa por trajetória.
+func _try_stretch_intercept() -> void:
+	if player.state != Player.State.MOVE or foot.busy() or player.is_restart_locked():
+		return
+	if ball.possessor != null or not ball.in_play or ball.global_position.y > 0.45:
+		return
+	var bv := ball.flat_velocity()
+	var spd := bv.length()
+	if spd < 3.0 or (bv - _intercept_seen_v).length() < 0.6:
+		return
+	var lt := ball.last_toucher
+	if lt == null or lt.team == player.team or ball.pass_target == player or not ball.can_be_claimed_by(player):
+		return
+	var rel := _flat(ball.global_position - player.global_position)
+	var rv := bv - _flat(player.velocity)
+	var t := -rel.dot(rv) / maxf(rv.length_squared(), 0.01)
+	if t < 0.04 or t > 0.28:
+		return
+	var closest := rel + rv * t
+	var cd := closest.length()
+	if cd < 0.5 or cd > 0.95:
+		return
+	_intercept_seen_v = bv
+	# reação humana: bola forte e longe do pé = mais difícil
+	var p := clampf(0.8 - (spd - 5.0) * 0.06 - (cd - 0.5) * 0.7, 0.15, 0.8) * lerpf(0.6, 1.0, player.balance)
+	if _rng.randf() > p:
+		return
+	var lat := closest.dot(player.facing.cross(Vector3.UP))
+	var f := signf(lat) if absf(lat) > 0.05 else foot.nearest_foot()
+	var mode := FootContact.Mode.CUSHION if spd < 7.0 else FootContact.Mode.INSIDE
+	foot.begin(f, -bv / spd, t, mode, _intercept_contact.bind(spd), 0.1, Callable(), true)
+	# o corpo vai junto com a perna (inclina para a bola)
+	player.balance = maxf(player.balance - 0.12, 0.0)
+	player.imbalance_dir = closest.normalized()
+	player.notify_touch(&"intercept")
+
+
+func _intercept_contact(spd: float) -> void:
+	var bv := _flat(ball.velocity_now())
+	if spd < 7.5 and _rng.randf() < clampf(1.0 - (spd - 3.5) / 6.0, 0.25, 0.85):
+		_first_touch() # amortece e fica com ela
+	else:
+		var n := _flat(ball.global_position - player.global_position).normalized()
+		var out := bv * 0.3 + n * _rng.randf_range(1.0, 2.4)
+		ball.release()
+		ball.touch(Vector3(out.x, 0.0, out.z), player)
+	ball.pass_target = null
+	_since_touch = 0.0
 
 
 ## Carrinho: no instante em que o pé chega na bola. Se ela estiver ao alcance

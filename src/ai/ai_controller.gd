@@ -27,6 +27,16 @@ var _patience := 2.5
 var _idle_timer := 0.0
 var _idle_target := Vector3.ZERO
 var _walk_only := false
+## Protegendo a bola (corpo entre o marcador e a bola).
+var _shield := false
+## Há quanto tempo está protegendo (ninguém segura a bola para sempre).
+var _shield_time := 0.0
+## Próximo passe é em profundidade (para o espaço à frente do companheiro).
+var _through := false
+## Personalidade defensiva: quão cedo/afoito dá o bote (0,6..1,3).
+var _aggression := 1.0
+## Lado por onde este defensor tenta chegar na bola (+1/-1), trocado às vezes.
+var _attack_side := 1.0
 const GESTURES: Array[StringName] = [&"argue", &"warmup", &"talk", &"kick_up"]
 var _rng := RandomNumberGenerator.new()
 
@@ -34,6 +44,8 @@ var _rng := RandomNumberGenerator.new()
 func _ready() -> void:
 	_rng.randomize()
 	_patience = _rng.randf_range(1.6, 3.4)
+	_aggression = _rng.randf_range(0.6, 1.3)
+	_attack_side = 1.0 if _rng.randf() < 0.5 else -1.0
 
 
 func fill_intent(p: Player, intent: PlayerIntent, delta: float) -> void:
@@ -57,9 +69,15 @@ func fill_intent(p: Player, intent: PlayerIntent, delta: float) -> void:
 	if _walk_only:
 		intent.move = intent.move.limit_length(0.42) # andando, sem pressa
 	intent.sprint = _sprint and d > 2.0 and not _walk_only
+	intent.shield = _shield and player.ball_control.has_ball()
+	_shield_time = _shield_time + delta if intent.shield else 0.0
+	if intent.shield:
+		intent.move = intent.move.limit_length(0.5)
 	if _action != PlayerIntent.Action.NONE:
 		intent.set_action(_action, _action_power, _action_aim, _action_target)
+		intent.through = _through and _action == PlayerIntent.Action.PASS
 		_action = PlayerIntent.Action.NONE
+		_through = false
 
 
 # --- Decisão -----------------------------------------------------------------------
@@ -68,6 +86,7 @@ func _think() -> void:
 	var mm := player.match_manager
 	var ball := player.ball
 	_sprint = false
+	_shield = false
 	_walk_only = false
 	if not mm.is_ball_live():
 		_think_waiting(mm.formation_position(player.team, player.formation_index, ball.global_position.x))
@@ -168,6 +187,16 @@ func _think_with_ball() -> void:
 				and (best_mate.global_position.x - pos.x) * s > 1.2
 			var adv := (best_mate.global_position.x - pos.x) * s
 			var mate_open := _nearest_opponent_distance(best_mate.global_position) > 2.4
+			# Companheiro arrancando para o ataque com espaço na frente: PROFUNDIDADE.
+			var mate_runs := best_mate.get_flat_velocity().dot(Vector3(s, 0.0, 0.0)) > 1.6
+			if mate_runs and adv > 1.0 and _rng.randf() < 0.55:
+				var pw := _rng.randf_range(0.35, 0.75)
+				var dest := player.ball_control.through_destination(best_mate, pw, Vector3.ZERO)
+				if _nearest_opponent_distance(dest) > 2.4 and _lane_clear(pos, dest, 0.7):
+					_set_action(PlayerIntent.Action.PASS, pw, Vector3.ZERO, best_mate)
+					_through = true
+					_patience = _rng.randf_range(1.2, 2.5)
+					return
 			if is_give_and_go or (_hold_time > 0.55 and adv > 2.2 and mate_open):
 				var dp := best_mate.global_position.distance_to(pos)
 				_set_action(PlayerIntent.Action.PASS, 0.32 if dp < 11.0 else 0.68, Vector3.ZERO, best_mate)
@@ -195,6 +224,21 @@ func _think_with_ball() -> void:
 		var away := pos - closest.global_position
 		away.y = 0.0
 		away = away.normalized()
+		# Marcador colado: PROTEGE com o corpo (base aberta, bola do lado de longe)
+		# por pouco tempo; depois toca para alguém ou sai girando para o lado.
+		if _shield_time > _rng.randf_range(0.9, 1.6):
+			var out_mate := _best_pass_option()
+			if out_mate == null:
+				out_mate = _nearest_teammate()
+			if out_mate != null and _rng.randf() < 0.65:
+				var dpm := out_mate.global_position.distance_to(pos)
+				_set_action(PlayerIntent.Action.PASS, 0.3 if dpm < 11.0 else 0.65, Vector3.ZERO, out_mate)
+			else:
+				var lat_out := away.cross(Vector3.UP) * (1.0 if _rng.randf() < 0.5 else -1.0)
+				_set_action(PlayerIntent.Action.DRIBBLE, 1.0, (lat_out + away * 0.5).normalized(), null)
+			_shield_time = 0.0
+			return
+		_shield = nearest < 1.2
 		if away.dot(dir_goal) < 0.2:
 			var lateral := dir_goal.cross(Vector3.UP)
 			if lateral.dot(away) < 0.0:
@@ -325,10 +369,28 @@ func _defend(carrier: Player) -> void:
 		var dist_offset := 0.85 if ball_exposed else 1.05
 		_move_target = carrier.global_position + to_goal.normalized() * dist_offset + carrier.get_flat_velocity() * 0.28
 		_sprint = d > 2.4
-		var ball_near_me := Vector2(bp.x - player.global_position.x, bp.z - player.global_position.z).length() < 1.15
-		if ball_near_me and _tackle_cooldown <= 0.0 and (ball_exposed or _rng.randf() < 0.22):
-			# Bote em pé quando a bola fica exposta ou ao alcance: o pé rouba a bola.
-			_tackle_cooldown = _rng.randf_range(0.65, 1.35)
+		var me := player.global_position
+		if d < 2.3:
+			# Perto: ataca a BOLA, não o corpo. Chega pelo lado em que a bola está
+			# exposta (ao lado dela), e troca de lado se o corpo dele fecha.
+			var cp := carrier.global_position
+			var c_to_b := Vector3(bp.x - cp.x, 0.0, bp.z - cp.z)
+			var axis := c_to_b.normalized() if c_to_b.length() > 0.1 else carrier.facing
+			var perp := axis.cross(Vector3.UP)
+			var mine := signf((me - cp).dot(perp))
+			if mine != 0.0 and _rng.randf() < 0.85:
+				_attack_side = mine
+			if _line_blocked_by(carrier, me, bp) and _rng.randf() < 0.25:
+				_attack_side = -_attack_side # corpo dele na frente: tenta pelo outro lado
+			_move_target = Vector3(bp.x, 0.0, bp.z) + axis * 0.2 + perp * _attack_side * 0.62
+			_sprint = false
+		var ball_near_me := Vector2(bp.x - me.x, bp.z - me.z).length() < 1.15
+		var clear := not _line_blocked_by(carrier, me, bp)
+		var just_touched: bool = carrier.ball_control._since_touch < 0.25
+		var chance := (0.55 if ball_exposed or just_touched else 0.12) * _aggression
+		if ball_near_me and clear and _tackle_cooldown <= 0.0 and _rng.randf() < chance:
+			# Bote em pé com linha limpa até a bola: o pé vai nela (física do contato).
+			_tackle_cooldown = _rng.randf_range(0.7, 1.4) / _aggression
 			_set_action(PlayerIntent.Action.DRIBBLE, 0.0, Vector3.ZERO, null)
 		elif d < Player.SLIDE_RANGE - 0.4 and d > 1.8 and _tackle_cooldown <= 0.0:
 			# Carrinho: mais provável quando o atacante se aproxima do gol.
@@ -417,6 +479,16 @@ func _go_to_loose_ball() -> bool:
 	var bp := player.ball.global_position
 	_move_target = Vector3(bp.x, 0.0, bp.z)
 	return true
+
+
+## O corpo de [param carrier] está entre [param from] e a bola em [param bp]?
+func _line_blocked_by(carrier: Player, from: Vector3, bp: Vector3) -> bool:
+	var a := Vector3(from.x, 0.0, from.z)
+	var b := Vector3(bp.x, 0.0, bp.z)
+	var c := Vector3(carrier.global_position.x, 0.0, carrier.global_position.z)
+	var ab := b - a
+	var t := clampf((c - a).dot(ab) / maxf(ab.length_squared(), 0.0001), 0.0, 1.0)
+	return (a + ab * t).distance_to(c) < 0.26 and (c - a).length() < ab.length()
 
 
 func _set_action(a: PlayerIntent.Action, power: float, aim: Vector3, target: Player) -> void:

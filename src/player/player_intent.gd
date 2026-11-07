@@ -23,6 +23,10 @@ var target: Node3D = null
 var precise := false
 ## Passe por cima (levantada) / chute de cavadinha (gesto de arrastar o botão).
 var lofted := false
+## Passe em PROFUNDIDADE: para o espaço à frente do companheiro (botão próprio).
+var through := false
+## Segurando PROTEGER (com a bola): corpo entre o marcador e a bola.
+var shield := false
 
 
 func set_action(a: Action, p := 0.0, aim_dir := Vector3.ZERO, tgt: Node3D = null) -> void:
@@ -32,6 +36,7 @@ func set_action(a: Action, p := 0.0, aim_dir := Vector3.ZERO, tgt: Node3D = null
 	target = tgt
 	precise = false
 	lofted = false
+	through = false
 
 
 func clear_action() -> void:
@@ -41,3 +46,4 @@ func clear_action() -> void:
 	target = null
 	precise = false
 	lofted = false
+	through = false

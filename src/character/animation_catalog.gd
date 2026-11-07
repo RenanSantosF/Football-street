@@ -199,7 +199,8 @@ const CONTACTS := {
 	&"receive": [0.29, 1.0],
 	&"receive_ball": [0.28, 1.0],
 	&"tackle": [0.36, -1.0],
-	&"stand_tackle": [0.25, 1.0],
+	# (medido no esqueleto: extensão máxima da perna do bote ≈ 0,18 s)
+	&"stand_tackle": [0.18, 1.0],
 	&"spin": [1.0, 1.0],
 	&"gk_pass": [1.15, 1.0],
 	&"scissor_kick": [0.55, 1.0],
@@ -245,6 +246,9 @@ static func getup_duration(logical: StringName) -> float:
 const LOCOMOTION_POINTS: Array = [
 	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
 ]
+## (Etapa 25: o clipe "Dribble" — passada natural ≈ 2,8 m/s — foi testado
+##  aqui, mas o pé dele "chuta" uma bola imaginária e empurrava a bola de
+##  verdade para longe nas viradas; ficou de fora.)
 const LOCOMOTION_BALL_POINTS: Array = [
 	[&"idle", 0.0], [&"walk", 1.35], [&"jog", 2.25], [&"run", 3.35], [&"sprint", 4.35],
 ]

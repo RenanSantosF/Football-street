@@ -38,6 +38,11 @@ var restricted_team := -1
 var restricted_player: Player = null
 ## Companheiro para quem o último passe foi feito (ele vem ao encontro).
 var pass_target: Player = null
+## O último passe foi em PROFUNDIDADE (o recebedor segue correndo para a
+## frente em vez de voltar ao encontro da bola).
+var through_pass := false
+## Ponto de encontro planejado do passe em profundidade.
+var through_dest := Vector3.ZERO
 var grounded := false
 ## Reinício: bola parada no lugar até o batedor passar (ninguém empurra).
 var held := false
@@ -136,6 +141,7 @@ func flat_velocity() -> Vector3:
 ## Chute/passe: a bola fica livre e o chutador não pode reaver por um instante.
 func kick(velocity: Vector3, spin: Vector3, by: Player, ignore_time := 0.3) -> void:
 	held = false
+	through_pass = false
 	release()
 	last_toucher = by
 	if by != null:
@@ -159,6 +165,7 @@ func touch(velocity: Vector3, by: Player) -> void:
 
 func claim(player: Player) -> void:
 	pass_target = null
+	through_pass = false
 	if possessor == player:
 		return
 	var old := possessor

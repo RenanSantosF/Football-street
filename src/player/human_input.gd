@@ -27,6 +27,11 @@ var _pass_dir := Vector3.ZERO
 var _pass_aiming := false
 var _sprint := false
 var _pass_hold := -1.0
+## PROFUNDIDADE segurado (carrega força como o passe).
+var _through_hold := -1.0
+var _queued_through := false
+## Mirando o passe em profundidade (a seta mostra o espaço à frente de quem recebe).
+var through_aiming := false
 var _shoot_hold := -1.0
 var _queued: PlayerIntent.Action = PlayerIntent.Action.NONE
 var _queued_power := 0.0
@@ -99,6 +104,7 @@ func _physics_process(delta: float) -> void:
 	if has_ball_context():
 		_shoot_hold = _update_charge("shoot", _shoot_hold, delta, PlayerIntent.Action.SHOOT)
 		_pass_hold = _update_charge("pass", _pass_hold, delta, PlayerIntent.Action.PASS)
+		_through_hold = _update_charge("through_pass", _through_hold, delta, PlayerIntent.Action.PASS, true)
 		if Input.is_action_pressed("pass_lob") and _pass_hold >= 0.0:
 			_lob_pending = true
 		if Input.is_action_pressed("shoot_chip") and _shoot_hold >= 0.0:
@@ -107,6 +113,7 @@ func _physics_process(delta: float) -> void:
 		# Sem a bola: CHUTE vira CARRINHO e PASSE vira TROCAR de jogador.
 		_shoot_hold = -1.0
 		_pass_hold = -1.0
+		_through_hold = -1.0
 		if Input.is_action_just_pressed("shoot"):
 			_queue(PlayerIntent.Action.SHOOT, 0.0)
 		if Input.is_action_just_pressed("pass"):
@@ -121,6 +128,9 @@ func _physics_process(delta: float) -> void:
 	elif _pass_hold >= 0.0:
 		charge = _pass_hold / MAX_CHARGE_TIME
 		kind = &"pass"
+	elif _through_hold >= 0.0:
+		charge = _through_hold / MAX_CHARGE_TIME
+		kind = &"through"
 	if charge != _last_charge:
 		_last_charge = charge
 		charge_changed.emit(clampf(charge, 0.0, 1.0), kind)
@@ -132,8 +142,25 @@ func _physics_process(delta: float) -> void:
 ## companheiro mais próximo dessa direção (cone de 45°). Ninguém no cone →
 ## passe em profundidade, para o espaço apontado.
 func _update_pass_aim() -> void:
-	var active := _pass_hold >= 0.0 and current_player != null and current_player.ball != null
-	if active:
+	var active := (_pass_hold >= 0.0 or _through_hold >= 0.0) and current_player != null and current_player.ball != null
+	through_aiming = active and _through_hold >= 0.0 and _pass_hold < 0.0
+	if active and through_aiming:
+		# PROFUNDIDADE: a seta aponta para o ESPAÇO onde a bola vai (à frente
+		# de quem recebe, mais longe quanto mais tempo segurando).
+		var dir_t := _raw.normalized() if _raw.length() > 0.25 else current_player.facing
+		var bc := current_player.ball_control
+		var mate_t := bc.pick_through_target(dir_t)
+		var pw := clampf(_through_hold / MAX_CHARGE_TIME, 0.0, 1.0)
+		_pass_target = mate_t
+		if mate_t != null:
+			var to_d := bc.through_destination(mate_t, pw, dir_t) - current_player.ball.global_position
+			to_d.y = 0.0
+			_pass_dir = to_d.normalized()
+		else:
+			_pass_dir = dir_t
+		_pass_aiming = true
+		pass_aim_changed.emit(true, _pass_dir, pw, false)
+	elif active:
 		var dir := _raw.normalized() if _raw.length() > 0.25 else current_player.facing
 		var mate := current_player.ball_control.pick_pass_target(dir, 45.0)
 		if mate == null and _raw.length() <= 0.25:
@@ -155,10 +182,20 @@ func _update_pass_aim() -> void:
 func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 	intent.move = _move
 	intent.sprint = _sprint
+	# PROTEGER (segurar): só vale com a bola no pé.
+	intent.shield = Input.is_action_pressed("shield") and current_player != null \
+		and current_player.ball_control.has_ball()
 	if _queued != PlayerIntent.Action.NONE:
 		if _queued == PlayerIntent.Action.SHOOT and _aim != Vector3.ZERO and _queued_power > 0.0:
 			intent.set_action(_queued, _queued_power, _aim)
 			intent.precise = true
+		elif _queued == PlayerIntent.Action.PASS and _queued_through:
+			# Profundidade: mira pelo analógico; o destino (espaço) é calculado no toque.
+			var aim_t := _raw if _raw.length() > 0.2 else Vector3.ZERO
+			intent.set_action(_queued, _queued_power, aim_t, _pass_target)
+			intent.through = true
+			_pass_target = null
+			_pass_dir = Vector3.ZERO
 		elif _queued == PlayerIntent.Action.PASS:
 			# Passe: exatamente o que a seta mostrou.
 			var aim := _pass_dir if _pass_dir != Vector3.ZERO else (_raw if _raw.length() > 0.2 else Vector3.ZERO)
@@ -170,19 +207,22 @@ func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 		intent.lofted = _queued_lofted
 		_queued = PlayerIntent.Action.NONE
 		_queued_lofted = false
+		_queued_through = false
 		_aim = Vector3.ZERO
 
 
-func _update_charge(action: StringName, hold: float, delta: float, kind: PlayerIntent.Action) -> float:
+func _update_charge(action: StringName, hold: float, delta: float, kind: PlayerIntent.Action, through := false) -> float:
 	if Input.is_action_just_pressed(action):
 		hold = 0.0
 	elif hold >= 0.0 and Input.is_action_pressed(action):
 		hold += delta
 		if hold >= MAX_CHARGE_TIME:
 			_queue(kind, 1.0)
+			_queued_through = through
 			return -1.0
 	if hold >= 0.0 and not Input.is_action_pressed(action):
 		_queue(kind, clampf(hold / MAX_CHARGE_TIME, 0.0, 1.0))
+		_queued_through = through
 		return -1.0
 	return hold
 
@@ -191,6 +231,7 @@ func _queue(a: PlayerIntent.Action, power: float) -> void:
 	_queued = a
 	_queued_power = power
 	_queued_lofted = false
+	_queued_through = false
 	if a == PlayerIntent.Action.PASS and _lob_pending:
 		_queued_lofted = true
 	if a == PlayerIntent.Action.SHOOT and _chip_pending:

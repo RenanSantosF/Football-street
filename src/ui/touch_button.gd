@@ -41,6 +41,8 @@ func set_label(text: String) -> void:
 
 
 func _process(delta: float) -> void:
+	if _touch_index != -1 and not is_visible_in_tree():
+		_release() # botão contextual sumiu com o dedo em cima
 	var target := 1.0 if _touch_index != -1 else 0.0
 	var prev := _press_anim
 	_press_anim = move_toward(_press_anim, target, delta * 10.0)
@@ -49,6 +51,8 @@ func _process(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if not is_visible_in_tree() and _touch_index == -1:
+		return
 	if event is InputEventScreenTouch:
 		var local := make_input_local(event) as InputEventScreenTouch
 		if event.pressed and _touch_index == -1 and _hit(local.position):

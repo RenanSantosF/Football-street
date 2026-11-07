@@ -82,6 +82,40 @@ label = "DRIBLE"
 color = Color(0.95, 0.75, 0.2, 0.35)
 font_size = 20
 
+[node name="ThroughButton" type="Control" parent="."]
+layout_mode = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -480.0
+offset_top = -128.0
+offset_right = -380.0
+offset_bottom = -28.0
+mouse_filter = 2
+script = ExtResource("3_btn")
+action = &"through_pass"
+label = "PROFUND."
+color = Color(0.55, 0.9, 0.35, 0.35)
+font_size = 16
+
+[node name="ShieldButton" type="Control" parent="."]
+layout_mode = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -455.0
+offset_top = -275.0
+offset_right = -365.0
+offset_bottom = -185.0
+mouse_filter = 2
+script = ExtResource("3_btn")
+action = &"shield"
+label = "PROTEGER"
+color = Color(0.75, 0.55, 0.95, 0.35)
+font_size = 14
+
 [node name="SprintButton" type="Control" parent="."]
 layout_mode = 3
 anchor_left = 1.0

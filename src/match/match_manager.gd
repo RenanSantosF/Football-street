@@ -361,7 +361,7 @@ func _on_possession_changed(new_owner: Node, _old_owner: Node) -> void:
 ## para você poder se mexer ao encontro da bola.
 func _on_ball_kicked(kicker: Node, kind: StringName, _power: float) -> void:
 	waiting_kickoff = false
-	if autoplay or not (kind == &"pass" or kind == &"long_pass"):
+	if autoplay or not (kind == &"pass" or kind == &"long_pass" or kind == &"through_pass"):
 		return
 	var k := kicker as Player
 	if k != null and k.team == human_team and ball.pass_target != null and ball.pass_target.team == human_team:
