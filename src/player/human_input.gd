@@ -182,9 +182,8 @@ func _update_pass_aim() -> void:
 func fill_intent(_player: Player, intent: PlayerIntent, _delta: float) -> void:
 	intent.move = _move
 	intent.sprint = _sprint
-	# PROTEGER (segurar): só vale com a bola no pé.
-	intent.shield = Input.is_action_pressed("shield") and current_player != null \
-		and current_player.ball_control.has_ball()
+	# Proteção de bola é automática e contextual (Player.auto_shield_threat).
+	intent.shield = false
 	if _queued != PlayerIntent.Action.NONE:
 		if _queued == PlayerIntent.Action.SHOOT and _aim != Vector3.ZERO and _queued_power > 0.0:
 			intent.set_action(_queued, _queued_power, _aim)

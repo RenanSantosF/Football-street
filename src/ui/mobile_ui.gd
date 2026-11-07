@@ -22,7 +22,6 @@ var _fps_label: Label
 @onready var dribble_button: TouchButton = $DribbleButton
 @onready var sprint_button: TouchButton = $SprintButton
 @onready var through_button: TouchButton = $ThroughButton
-@onready var shield_button: TouchButton = $ShieldButton
 var _charge_kind: StringName = &""
 var _power_panel: Control
 var _power_fill: ColorRect
@@ -40,6 +39,8 @@ func _ready() -> void:
 	_build_power_bar()
 	_build_mode_button()
 	_show_hints()
+	_build_fade()
+	GameEvents.screen_fade.connect(_on_screen_fade)
 	GameEvents.score_changed.connect(_on_score_changed)
 	GameEvents.goal_scored.connect(_on_goal)
 	GameEvents.match_message.connect(_on_message)
@@ -70,11 +71,9 @@ func _update_button_labels() -> void:
 		and human_input.current_player.ball != null and human_input.current_player.ball.possessor == null \
 		and human_input.current_player.ball.pass_target == human_input.current_player
 	sprint_button.alt_hint = ""
-	# Botões contextuais: PROFUNDIDADE com a bola (ou chegando nela),
-	# PROTEGER só com a bola no pé.
+	# Botão contextual: PROFUNDIDADE com a bola (ou chegando nela). A
+	# proteção de bola é automática (sem botão).
 	through_button.visible = with_ball
-	shield_button.visible = human_input != null and human_input.current_player != null \
-		and human_input.current_player.ball_control.has_ball()
 	if with_ball and incoming:
 		shoot_button.set_label("CHUTE")
 		shoot_button.alt_hint = "de primeira"
@@ -276,6 +275,34 @@ func _build_fps() -> void:
 	_fps_label.offset_bottom = 30
 	_fps_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	add_child(_fps_label)
+
+
+var _fade_rect: ColorRect
+var _fade_tween: Tween
+
+
+## Retângulo preto por cima de tudo (transição das faltas).
+func _build_fade() -> void:
+	_fade_rect = ColorRect.new()
+	_fade_rect.color = Color(0, 0, 0, 0)
+	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade_rect.visible = false
+	add_child(_fade_rect)
+
+
+func _on_screen_fade(out_time: float, hold: float, in_time: float) -> void:
+	if _fade_rect == null:
+		return
+	if _fade_tween != null and _fade_tween.is_valid():
+		_fade_tween.kill()
+	move_child(_fade_rect, get_child_count() - 1)
+	_fade_rect.visible = true
+	_fade_tween = create_tween()
+	_fade_tween.tween_property(_fade_rect, "color:a", 1.0, out_time)
+	_fade_tween.tween_interval(hold)
+	_fade_tween.tween_property(_fade_rect, "color:a", 0.0, in_time)
+	_fade_tween.tween_callback(func(): _fade_rect.visible = false)
 
 
 func _on_message(text: String, duration: float) -> void:

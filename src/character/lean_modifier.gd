@@ -560,7 +560,11 @@ func _apply_athletic_posture(sk: Skeleton3D) -> void:
 				act_pitch = deg_to_rad(2.5) * pulse
 				act_yaw = deg_to_rad(5.0 * action_side) * pulse
 				act_arm_spread = 0.28 * pulse
-			&"long_pass", &"through":
+			&"touch_pass":
+				# toque leve na passada: tronco e braços só acompanham
+				act_yaw = deg_to_rad(2.5 * action_side) * pulse
+				act_arm_spread = 0.12 * pulse
+			&"long_pass", &"through", &"firm_pass":
 				act_pitch = deg_to_rad(-3.0 if action_phase < 0.45 else 4.5) * pulse
 				act_yaw = deg_to_rad(8.0 * action_side) * pulse
 				act_arm_spread = 0.45 * pulse

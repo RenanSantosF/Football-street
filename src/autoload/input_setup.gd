@@ -18,7 +18,6 @@ const KEYS := {
 	"pass_lob": [KEY_U],      # passe por cima (no toque: arrastar o botão de passe)
 	"shoot_chip": [KEY_I],    # cavadinha (no toque: arrastar o botão de chute)
 	"through_pass": [KEY_H],  # passe em profundidade (botão PROFUNDIDADE)
-	"shield": [KEY_G],        # proteger a bola (segurar o botão PROTEGER)
 }
 
 const JOY_BUTTONS := {
@@ -31,9 +30,7 @@ const JOY_BUTTONS := {
 }
 
 ## ação -> gatilho analógico (controle Bluetooth)
-const JOY_TRIGGERS := {
-	"shield": JOY_AXIS_TRIGGER_LEFT,
-}
+const JOY_TRIGGERS := {}
 
 ## ação -> [eixo, direção]
 const JOY_AXES := {
