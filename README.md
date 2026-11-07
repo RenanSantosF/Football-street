@@ -29,6 +29,7 @@ roupas sujas e dribles naturais.
 - 🦶 Etapa 22 (condução por contato real do pé, tapas, arrancada com bola em 0,2 s): [`docs/ETAPA_22.md`](docs/ETAPA_22.md)
 - ⚽ Etapa 24 (física: condução híbrida automática, contato corpo a corpo com massa e equilíbrio, locomoção com inércia): [`docs/ETAPA_24.md`](docs/ETAPA_24.md)
 - 🦶 Etapa 25 (pés sem deformação, inclinação física do corpo, desequilíbrio, desarme pelo contato do pé, proteção, interceptação, passe em profundidade): [`docs/ETAPA_25.md`](docs/ETAPA_25.md)
+- 🔧 Etapa 26 (refinamentos: passe com o pé na bola em movimento, cobrança imóvel, passe curto próprio, falta com tela escura e barreira, condução em curvas, proteção automática, carrinho pela velocidade, espaçamento): [`docs/ETAPA_26.md`](docs/ETAPA_26.md)
 - 📜 Créditos dos assets (todos CC0): [`CREDITS.md`](CREDITS.md)
 
 ## Estado
