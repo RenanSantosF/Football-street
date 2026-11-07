@@ -63,13 +63,14 @@ func _physics_process(_d: float) -> void:
 		4: _intercept()
 		5: _through()
 		6: _reverse_balance()
-		7:
+		7: _frontal_vulnerable()
+		8:
 			print("RESULTADOS: ", results)
 			get_tree().quit()
 
 
 func _release_inputs() -> void:
-	for a in ["move_left", "move_right", "move_up", "move_down", "sprint", "dribble", "shield", "through_pass", "shoot", "pass"]:
+	for a in ["move_left", "move_right", "move_up", "move_down", "sprint", "dribble", "through_pass", "shoot", "pass"]:
 		Input.action_release(a)
 
 
@@ -174,7 +175,7 @@ func _tackle_far() -> void:
 		_next()
 
 
-## PROTEGER segurado com a IA adversária vindo tomar.
+## Proteção AUTOMÁTICA: parado com a bola e a IA adversária chegando por trás.
 func _shield_hold() -> void:
 	if t0 == 0:
 		_begin(Vector3(-4.0, 0, 0), Vector3.LEFT)
@@ -182,7 +183,6 @@ func _shield_hold() -> void:
 		ball.claim(me)
 		opp.teleport(Vector3(-2.6, 0, 0.3), Vector3.LEFT)
 		opp.controller = opp.ai
-		Input.action_press("shield")
 	var t := f - t0
 	if t > 30 and t < 180 and ball.possessor == me and t % 10 == 0:
 		var to_opp := opp.global_position - me.global_position
@@ -194,6 +194,7 @@ func _shield_hold() -> void:
 			if to_ball.dot(to_opp) < 0.0:
 				results["protege_bola_lado_longe"] = results.get("protege_bola_lado_longe", 0) + 1
 	if t == 180:
+		# (informativo: a proteção ajuda, mas não é um escudo — a IA pode tomar)
 		results["protege_tem_bola_3s"] = ball.possessor == me
 		results["protege_sem_atravessar"] = me.global_position.distance_to(opp.global_position) > 0.45
 		_next()
@@ -257,6 +258,25 @@ func _through() -> void:
 		results["prof_no_espaco"] = lead > 1.0
 		results["prof_recebedor_dominou"] = _mate_got
 		results["prof_acao"] = _touches.get(str(me.name) + ":pass", 0) > 0
+		_next()
+
+
+## Adversário vindo pela FRENTE: sem proteção (não gira as costas, a bola
+## não recua) — fica exposto ao bote.
+func _frontal_vulnerable() -> void:
+	if t0 == 0:
+		_begin(Vector3(-4.0, 0, 0), Vector3.RIGHT)
+		ball.place_at(Vector3(-3.6, Ball.RADIUS, 0))
+		ball.claim(me)
+		opp.teleport(Vector3(-2.6, 0, 0.0), Vector3.LEFT)
+		opp.controller = null
+		opp.intent.move = Vector3.LEFT * 0.4
+	var t := f - t0
+	if t == 30:
+		opp.intent.move = Vector3.ZERO
+	if t == 70:
+		results["frente_sem_protecao"] = not me.is_shielding()
+		results["frente_nao_girou"] = me.facing.dot(Vector3.RIGHT) > 0.8
 		_next()
 
 

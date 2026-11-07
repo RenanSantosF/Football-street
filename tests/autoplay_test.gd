@@ -12,6 +12,11 @@ var _time := 0.0
 var _support_sum := 0.0
 var _support_n := 0
 var _support_close := 0
+var _space_sum := 0.0
+var _space_n := 0
+var _crowd_hits := 0
+var _crowd_samples := 0
+var _crowd_sit := {}
 var _stats := {"goals": 0, "outs_side": 0, "outs_end": 0, "possessions": 0,
 	"passes": 0, "shots": 0, "tackles": 0, "restarts": 0}
 var _max_ball_speed := 0.0
@@ -94,6 +99,34 @@ func _physics_process(delta: float) -> void:
 			_support_n += 1
 			if near < 2.5:
 				_support_close += 1
+	if int(_time * 60.0) % 6 == 0 and _mm.state == MatchManager.MatchState.PLAYING:
+		# espaçamento geral: companheiro mais perto de cada jogador
+		var crowded := false
+		for p in _mm.players:
+			var nm := INF
+			for m in p.get_teammates():
+				nm = minf(nm, Vector2(m.global_position.x - p.global_position.x, m.global_position.z - p.global_position.z).length())
+			if nm < INF:
+				_space_sum += nm
+				_space_n += 1
+				if nm < 1.5:
+					crowded = true
+					var sit := "solta"
+					if _ball.possessor != null:
+						sit = "atacando" if _ball.possessor.team == p.team else "defendendo"
+					if _ball.restricted_player != null:
+						sit += "+reinicio"
+					var near_ball := p.global_position.distance_to(_ball.global_position) < 2.5
+					sit += "+perto_bola" if near_ball else ""
+					if _ball.possessor == p:
+						sit += "+EU_COM_BOLA"
+					elif _ball.possessor != null and _ball.possessor.team == p.team:
+						var act: StringName = p._action_kind if p.state == Player.State.ACTION else &"mov"
+						sit += "+" + String(act)
+					_crowd_sit[sit] = _crowd_sit.get(sit, 0) + 1
+		_crowd_samples += 1
+		if crowded:
+			_crowd_hits += 1
 	if int(_time * 60.0) % 6 == 0:
 		for p in _mm.players:
 			if p.anim_controller.is_active():
@@ -113,4 +146,7 @@ func _physics_process(delta: float) -> void:
 		print("maior posse contínua: %.1fs (%s)" % [_max_hold, _max_hold_name])
 		print("apoio: companheiro mais perto em média %.1f m | colado (< 2,5 m) %d%% do tempo" % [
 			_support_sum / maxf(_support_n, 1), 100 * _support_close / maxi(_support_n, 1)])
+		print("espaçamento: companheiro mais perto (todos) em média %.1f m | dois companheiros a < 1,5 m em %d%% do tempo" % [
+			_space_sum / maxf(_space_n, 1), 100 * _crowd_hits / maxi(_crowd_samples, 1)])
+		print("aglomeração por situação: ", _crowd_sit)
 		get_tree().quit()

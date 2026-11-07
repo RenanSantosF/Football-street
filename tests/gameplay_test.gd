@@ -13,6 +13,7 @@ var phase := 0
 var t0 := 0
 var results := {}
 var _kick_speed := 0.0
+var _ctrl_at_receive := false
 var _target: Player = null
 var _invaded := false
 var _measure := 0
@@ -28,7 +29,10 @@ func _ready() -> void:
 	mm = main.get_node("MatchManager")
 	add_child(main)
 	ball = main.get_node("Ball")
-	GameEvents.ball_kicked.connect(func(_k, _kind, _p): _measure = 3)
+	# (só o PRIMEIRO chute depois do botão: um desarme depois não sobrescreve)
+	GameEvents.ball_kicked.connect(func(_k, _kind, _p):
+		if _kick_speed == 0.0 and _measure == 0:
+			_measure = 3)
 
 
 func _physics_process(_d: float) -> void:
@@ -80,13 +84,14 @@ func _test_kickoff_pass() -> void:
 		_target = ball.pass_target
 	if t > 6 and _first_owner == null and ball.possessor != null and ball.possessor != _kicker:
 		_first_owner = ball.possessor
+		_ctrl_at_receive = mm.controlled == _first_owner
 	if t == 4:
 		Input.action_release("pass")
 	if t == 240:
 		results["passe_alvo"] = str(_target.name) if _target else "nenhum"
 		results["passe_vel"] = snappedf(_kick_speed, 0.1)
 		results["passe_rapido"] = _kick_speed >= 7.0
-		results["controle_vai_pro_recebedor"] = _target != null and mm.controlled == _target
+		results["controle_vai_pro_recebedor"] = _target != null and _ctrl_at_receive
 		results["dono_apos_passe"] = str(ball.possessor.name) if ball.possessor else "solta@" + str(ball.global_position)
 		results["recebedor_dominou"] = _target != null and _first_owner == _target
 		phase = 2

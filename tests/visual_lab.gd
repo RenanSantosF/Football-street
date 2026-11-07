@@ -69,7 +69,7 @@ func _physics_process(_d: float) -> void:
 			if p != me and p != opp:
 				p.set_physics_process(false)
 				p.global_position = Vector3(0, -50, 0)
-		if not scn in ["shield", "tackle", "duel"]:
+		if not scn in ["shield", "tackle", "duel", "slide", "slidewalk"]:
 			opp.set_physics_process(false)
 			opp.global_position = Vector3(0, -50, 0)
 	if f < t0:
@@ -89,19 +89,26 @@ func _setup() -> void:
 	ball.in_play = true
 	ball.restricted_team = -1
 	ball.restricted_player = null
-	if scn in ["dribble", "curve", "reverse", "shield", "kick", "duel"]:
+	if scn in ["dribble", "curve", "reverse", "shield", "kick", "duel", "runpass"]:
 		ball.place_at(Vector3(-9.6, Ball.RADIUS, 0))
 		ball.claim(me)
 	else:
 		ball.release()
 		ball.place_at(Vector3(10, Ball.RADIUS, 3.0))
-	if opp != null and scn in ["shield", "tackle", "duel"]:
+	if opp != null and scn in ["shield", "tackle", "duel", "slide", "slidewalk"]:
 		opp.set_frozen(false)
 		opp.controller = opp.ai
 		if scn == "shield":
 			opp.teleport(Vector3(-8.0, 0, 0.0), Vector3.LEFT)
 		elif scn == "duel":
 			opp.teleport(Vector3(-6.5, 0, 0.6), Vector3.LEFT)
+		elif scn in ["slide", "slidewalk"]:
+			var d0 := 7.0 if scn == "slide" else 3.2
+			opp.teleport(Vector3(-10.0 + d0, 0, 0.0), Vector3.LEFT)
+			ball.place_at(Vector3(-10.0 + d0 - 0.45, Ball.RADIUS, 0.05))
+			ball.claim(opp)
+			opp.controller = null
+			opp.intent.move = Vector3.ZERO
 		else:
 			# o humano (me) vai dar o bote no adversário que conduz
 			opp.teleport(Vector3(-8.0, 0, 0.0), Vector3.LEFT)
@@ -153,6 +160,37 @@ func _drive(t: int) -> void:
 				Input.action_press("dribble")
 			if t == 26:
 				Input.action_release("dribble")
+		"slide", "slidewalk":
+			if t == 1:
+				Input.action_press("move_right", 1.0 if scn == "slide" else 0.35)
+				if scn == "slide":
+					Input.action_press("sprint")
+			var press_at := 75 if scn == "slide" else 30
+			if t == press_at:
+				Input.action_press("shoot")
+			if t == press_at + 3:
+				Input.action_release("shoot")
+				Input.action_release("move_right")
+				Input.action_release("sprint")
+		"freekick":
+			if t == 2:
+				for p in mm.players:
+					p.set_physics_process(true)
+					p.set_frozen(false)
+					p.teleport(mm.formation_position(p.team, p.formation_index), Vector3(Field.attack_sign(p.team), 0, 0))
+					if p != me:
+						p.controller = p.ai
+				var gx := Field.goal_line_x(Team.other(me.team))
+				var spot := Vector3(gx - Field.attack_sign(me.team) * 7.0, Ball.RADIUS, 1.5)
+				ball.place_at(spot)
+				mm.award_free_kick(me.team, spot)
+		"runpass":
+			if t == 1:
+				Input.action_press("move_right", 1.0)
+			if t == 50:
+				Input.action_press("pass")
+			if t == 53:
+				Input.action_release("pass")
 		"kick":
 			if t == 1:
 				Input.action_press("move_right", 0.8)
@@ -167,6 +205,11 @@ func _process(_d: float) -> void:
 		return
 	var t := f - t0
 	_place_camera()
+	if OS.get_environment("STATEDBG") != "" and t % 6 == 0 and t >= 66:
+		var cur := ""
+		if me.anim_controller.playback != null:
+			cur = String(me.anim_controller.playback.get_current_node())
+		print("t=%d me st=%d act=%s anim=%s v=%.2f pos=%s | opp st=%d act=%s d=%.2f" % [t, me.state, me._action_kind, cur, me.get_horizontal_speed(), str(me.global_position.snapped(Vector3.ONE*0.01)), opp.state, opp._action_kind, me.global_position.distance_to(opp.global_position)])
 	if OS.get_environment("LEANDBG") != "" and t % 4 == 0:
 		var right := me.facing.cross(Vector3.UP)
 		var acc: Vector3 = me.anim_controller._acc_vec
@@ -195,6 +238,10 @@ func _place_camera() -> void:
 		"feet":
 			pos = p - right * 1.25 + Vector3.UP * 0.25
 			look = p + Vector3.UP * 0.12
+		"top":
+			var bpt := ball.global_position
+			pos = bpt + Vector3(-Field.attack_sign(me.team) * 5.5, 7.5, 6.0)
+			look = bpt + Vector3(Field.attack_sign(me.team) * 3.0, 0, 0)
 		"feetfront":
 			pos = p + fwd * 1.2 + right * 0.4 + Vector3.UP * 0.3
 			look = p + Vector3.UP * 0.12
