@@ -120,6 +120,12 @@ static func build(tree: AnimationTree) -> void:
 	if sm.has_node(&"Celebrate") and sm.has_node(&"CelebrateIdle"):
 		var c := _add_transition(sm, &"Celebrate", &"CelebrateIdle", 0.3, AnimationNodeStateMachineTransition.ADVANCE_MODE_AUTO)
 		c.switch_mode = AnimationNodeStateMachineTransition.SWITCH_MODE_AT_END
+	# Da arrancada direto para as ações (antes a viagem passava pela
+	# locomoção e a ação começava sem o clipe por ~0,3 s).
+	if sm.has_node(&"Burst"):
+		for a: StringName in ACTION_CLIPS:
+			if sm.has_node(a):
+				_add_transition(sm, &"Burst", a, XFADE_ACTION)
 	# Ações podem emendar umas nas outras (domínio → passe, etc.).
 	for a: StringName in ACTION_CLIPS:
 		for b: StringName in ACTION_CLIPS:

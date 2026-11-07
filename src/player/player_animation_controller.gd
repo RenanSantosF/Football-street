@@ -23,6 +23,7 @@ const ACTION_STATES := {
 	&"run_pass": &"Shoot",
 	&"long_pass": &"PassLong",
 	&"through": &"PassLong",
+	&"firm_pass": &"PassLong",
 	&"shoot_b": &"PassLong",
 	&"shoot": &"Shoot",
 	&"shoot_power": &"ShootPower",
@@ -62,6 +63,7 @@ const ACTION_LOGICAL := {
 	&"run_pass": &"shoot",
 	&"long_pass": &"pass_long",
 	&"through": &"pass_long",
+	&"firm_pass": &"pass_long",
 	&"shoot_b": &"pass_long",
 	&"shoot": &"shoot",
 	&"shoot_power": &"shoot_power",
@@ -373,7 +375,10 @@ func physics_update(delta: float) -> void:
 			playback.travel(wanted)
 		_prev_speed = v.length()
 		return
-	if current in BASE_STATES:
+	if current in BASE_STATES and player.state == Player.State.ACTION and _action_state != &"" \
+			and playback.get_travel_path().size() > 0:
+		pass # a caminho do clipe da ação (a viagem passa pela locomoção): não interromper
+	elif current in BASE_STATES:
 		_action_state = &""
 		_action_kind = &""
 		_getting_up = false
@@ -389,9 +394,12 @@ func physics_update(delta: float) -> void:
 	elif current == &"Burst":
 		# Arrancada: sai no fim do clipe (antes congelava no último quadro e o
 		# jogador "desfilava" deslizando nessa pose), ao parar ou com a bola.
-		if player.state != Player.State.MOVE or player.intent.move.length() < 0.3 \
+		# (Etapa 26: se uma AÇÃO começou durante a arrancada — carrinho, bote,
+		#  virada —, a transição para o clipe dela já foi pedida; voltar para a
+		#  locomoção aqui atropelava essa transição e o jogador deslizava em pé.)
+		if player.state == Player.State.MOVE and (player.intent.move.length() < 0.3 \
 				or player.ball_control.has_ball() \
-				or playback.get_current_play_position() >= playback.get_current_length() - 0.3:
+				or playback.get_current_play_position() >= playback.get_current_length() - 0.3):
 			playback.travel(wanted)
 	elif current in [&"Fallen", &"GetUpFront", &"GetUpBack"]:
 		if player.state == Player.State.MOVE:
@@ -475,7 +483,7 @@ func _on_action_started(kind: StringName) -> void:
 	if not ACTION_STATES.has(kind):
 		return
 	var state_name: StringName = ACTION_STATES[kind]
-	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"through", &"shoot", &"shoot_b", &"shoot_power", &"chip", &"run_pass", &"tackle"] \
+	var mirrored := player.kick_mirrored() and kind in [&"pass", &"long_pass", &"through", &"firm_pass", &"shoot", &"shoot_b", &"shoot_power", &"chip", &"run_pass", &"tackle"] \
 		and _has_state(StringName(String(state_name) + "L"))
 	if mirrored:
 		state_name = StringName(String(state_name) + "L")
