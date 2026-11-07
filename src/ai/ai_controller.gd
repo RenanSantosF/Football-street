@@ -95,6 +95,13 @@ func _think() -> void:
 	# Reinício pendente (saída, lateral, escanteio, tiro de meta, falta): até o
 	# batedor tocar, ninguém vai na bola — cada um na sua posição da formação,
 	# parado do seu jeito ou andando pouquinho. Adversário no próprio campo.
+	if ball.restricted_player == null and player.has_meta("restart_slot"):
+		player.remove_meta("restart_slot") # cobrança feita: volta ao normal
+	if ball.restricted_player != null and ball.restricted_player != player and player.has_meta("restart_slot"):
+		# falta: fica na barreira / cobertura até a cobrança
+		_move_target = player.get_meta("restart_slot")
+		_walk_only = true
+		return
 	if ball.restricted_player != null and ball.restricted_player != player:
 		var slot := mm.formation_position(player.team, player.formation_index, ball.global_position.x)
 		if mm.waiting_kickoff:
@@ -337,6 +344,10 @@ func _support_or_mark(carrier: Player) -> void:
 			if _lane_clear(c, alt, 0.8):
 				target = alt
 		_move_target = Field.clamp_inside(target, 0.7)
+		# espaço entre os companheiros também no apoio (o "passa e vai" e o
+		# ponto do outro apoiador podiam coincidir)
+		_separate_from_teammates()
+		_move_target = Field.clamp_inside(_move_target, 0.7)
 		_sprint = _sprint or player.global_position.distance_to(_move_target) > 4.0
 		return
 	else:
@@ -387,7 +398,10 @@ func _defend(carrier: Player) -> void:
 		var ball_near_me := Vector2(bp.x - me.x, bp.z - me.z).length() < 1.15
 		var clear := not _line_blocked_by(carrier, me, bp)
 		var just_touched: bool = carrier.ball_control._since_touch < 0.25
-		var chance := (0.55 if ball_exposed or just_touched else 0.12) * _aggression
+		# de FRENTE para quem conduz a bola fica exposta: bote bem executado
+		var to_me := Vector3(me.x - carrier.global_position.x, 0.0, me.z - carrier.global_position.z).normalized()
+		var frontal := carrier.facing.dot(to_me) > 0.5
+		var chance := (0.55 if ball_exposed or just_touched else (0.32 if frontal else 0.12)) * _aggression
 		if ball_near_me and clear and _tackle_cooldown <= 0.0 and _rng.randf() < chance:
 			# Bote em pé com linha limpa até a bola: o pé vai nela (física do contato).
 			_tackle_cooldown = _rng.randf_range(0.7, 1.4) / _aggression
@@ -399,16 +413,35 @@ func _defend(carrier: Player) -> void:
 			if _rng.randf() < 0.06 + 0.16 * danger:
 				_set_action(PlayerIntent.Action.SHOOT, 0.0, Vector3.ZERO, null)
 	else:
-		# Marcar o outro atacante pelo lado do gol.
-		var mark: Player = null
-		var best := INF
+		# Marcar o outro atacante pelo lado do gol — cada defensor um atacante
+		# DIFERENTE (antes os dois pegavam o mesmo e ficavam colados).
+		var attackers: Array[Player] = []
 		for opp in player.get_opponents():
-			if opp == carrier or opp.is_goalkeeper():
+			if opp != carrier and not opp.is_goalkeeper():
+				attackers.append(opp)
+		attackers.sort_custom(func(a, b): return a.global_position.distance_to(own_goal) < b.global_position.distance_to(own_goal))
+		var markers: Array[Player] = []
+		var presser: Player = null
+		var pd := INF
+		var team_all: Array[Player] = player.get_teammates()
+		team_all.append(player)
+		for m: Player in team_all:
+			if m.is_goalkeeper():
 				continue
-			var dd := opp.global_position.distance_to(own_goal)
-			if dd < best:
-				best = dd
-				mark = opp
+			var dcar: float = m.global_position.distance_to(carrier.global_position)
+			if dcar < pd:
+				pd = dcar
+				presser = m
+		for m: Player in team_all:
+			if m != presser and not m.is_goalkeeper():
+				markers.append(m)
+		markers.sort_custom(func(a, b): return a.global_position.distance_to(own_goal) < b.global_position.distance_to(own_goal))
+		var mark: Player = null
+		var rank := markers.find(player)
+		if not attackers.is_empty() and rank >= 0:
+			mark = attackers[mini(rank, attackers.size() - 1)]
+			if rank >= attackers.size():
+				mark = null # sobrou: cobre a zona entre a bola e o gol
 		if mark != null:
 			var back := own_goal - mark.global_position
 			back.y = 0.0
@@ -594,12 +627,18 @@ func _separate_from_teammates() -> void:
 	for mate in player.get_teammates():
 		if mate.is_goalkeeper():
 			continue
-		var off := _move_target - mate.global_position
-		off.y = 0.0
-		var d := off.length()
-		if d < 3.0:
-			push += (off / maxf(d, 0.1)) * (3.0 - d)
-	_move_target += push * 0.6
+		# considera onde o companheiro ESTÁ e para onde ele VAI (antes só a
+		# posição atual: dois indo para o mesmo lugar se aglomeravam)
+		var refs: Array[Vector3] = [mate.global_position]
+		if not mate.is_human and mate.ai != null:
+			refs.append(mate.ai._move_target)
+		for r in refs:
+			var off := _move_target - r
+			off.y = 0.0
+			var d := off.length()
+			if d < 3.0:
+				push += (off / maxf(d, 0.1)) * (3.0 - d) * 0.5
+	_move_target += push * 0.9
 
 
 ## Durante reinício do adversário, manter distância da bola.

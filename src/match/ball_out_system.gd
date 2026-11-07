@@ -19,6 +19,12 @@ var _timer := 0.0
 var _restart_team := 0
 var _restart_kind: Kind = Kind.SIDELINE
 var _restart_pos := Vector3.ZERO
+var _faded := false
+## Falta: a tela escurece rapidinho antes do reposicionamento (esconde o
+## teletransporte) e clareia logo depois.
+const FADE_OUT := 0.18
+const FADE_HOLD := 0.08
+const FADE_IN := 0.25
 
 
 func setup(mm: MatchManager) -> void:
@@ -71,12 +77,16 @@ func schedule_restart(team: int, kind: Kind, pos: Vector3) -> void:
 	_restart_pos = pos
 	_timer = restart_delay
 	_waiting = true
+	_faded = false
 
 
 func _physics_process(delta: float) -> void:
 	if not _waiting:
 		return
 	_timer -= delta
+	if _restart_kind == Kind.FREE_KICK and not _faded and _timer <= FADE_OUT + 0.02:
+		_faded = true
+		GameEvents.screen_fade.emit(FADE_OUT, FADE_HOLD, FADE_IN)
 	if _timer <= 0.0:
 		_waiting = false
 		match_manager.begin_restart(_restart_team, _restart_kind, _restart_pos)

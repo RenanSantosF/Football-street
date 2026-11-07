@@ -220,6 +220,7 @@ func _on_ball_out(kind: BallOutSystem.Kind, pos: Vector3) -> void:
 func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 	if get_team(team).is_empty():
 		team = human_team # modo treino: todo reinício é do meu time
+	_clear_restart_slots()
 	ball.place_at(pos)
 	_prev_ball_pos = ball.global_position
 	var into_field := (Vector3(0.0, 0.0, 0.0) - Vector3(pos.x * 0.4, 0.0, pos.z)).normalized()
@@ -229,13 +230,16 @@ func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 		into_field = Vector3(Field.attack_sign(team), 0.0, 0.0)
 	var taker := _closest_field_player(team, pos)
 	taker.teleport(pos - into_field * 0.45, into_field)
-	# Adversários afastados da bola.
-	for p in get_team(Team.other(team)):
-		var off := p.global_position - pos
-		off.y = 0.0
-		if off.length() < 3.0:
-			var dir := off.normalized() if off.length() > 0.1 else into_field
-			p.teleport(Field.clamp_inside(pos + dir * 3.1, 0.4), -dir)
+	if kind == BallOutSystem.Kind.FREE_KICK:
+		_setup_free_kick_defense(team, pos, taker)
+	else:
+		# Adversários afastados da bola.
+		for p in get_team(Team.other(team)):
+			var off := p.global_position - pos
+			off.y = 0.0
+			if off.length() < 3.0:
+				var dir := off.normalized() if off.length() > 0.1 else into_field
+				p.teleport(Field.clamp_inside(pos + dir * 3.1, 0.4), -dir)
 	ball.restrict_to(team, 60.0)
 	ball.in_play = true
 	ball.claim(taker)
@@ -247,6 +251,100 @@ func begin_restart(team: int, kind: BallOutSystem.Kind, pos: Vector3) -> void:
 	GameEvents.restart_started.emit(team, kind, pos)
 	_state_timer = 0.5
 	_set_state(MatchState.RESTART)
+
+
+## FALTA: o time que defende se organiza ENTRE a bola e o próprio gol —
+## barreira a 3,2 m na linha bola→gol (2 jogadores perto do gol, 1 longe),
+## quem sobra cobre a região do gol ou marca o atacante mais perigoso, com
+## espaço entre eles. As posições ficam guardadas (meta "restart_slot") para a
+## IA ficar nelas até a cobrança. Os atacantes não ficam colados na barreira.
+func _setup_free_kick_defense(team: int, pos: Vector3, taker: Player) -> void:
+	var def_team := Team.other(team)
+	var defenders := get_team(def_team)
+	if defenders.is_empty():
+		return
+	var goal := Field.goal_center(def_team)
+	var bp := Vector3(pos.x, 0.0, pos.z)
+	var to_goal := goal - bp
+	to_goal.y = 0.0
+	var dist := to_goal.length()
+	var dirg := to_goal / maxf(dist, 0.01)
+	var perp := dirg.cross(Vector3.UP)
+	var slots: Array[Vector3] = []
+	var wall_c := bp + dirg * minf(3.2, dist * 0.5)
+	if dist < 12.0 and defenders.size() >= 2:
+		slots.append(wall_c + perp * 0.36)
+		slots.append(wall_c - perp * 0.36)
+	else:
+		slots.append(wall_c)
+	# atacante mais perigoso (mais perto do gol, fora o batedor)
+	var danger: Player = null
+	var dd := INF
+	for a in get_team(team):
+		if a == taker:
+			continue
+		var d := a.global_position.distance_to(goal)
+		if d < dd:
+			dd = d
+			danger = a
+	while slots.size() < defenders.size():
+		# (só marca se ele for ameaça de verdade: mais perto do gol que a bola)
+		if danger != null and slots.size() == defenders.size() - 1 and dist > 6.0 \
+				and danger.global_position.distance_to(goal) < dist + 1.0:
+			# marca o atacante perigoso pelo lado do gol
+			var back := goal - danger.global_position
+			back.y = 0.0
+			slots.append(danger.global_position + back.normalized() * 1.2)
+			danger = null
+		else:
+			# cobre a região do gol, na linha da bola, atrás da barreira
+			slots.append(goal + (bp - goal).normalized() * clampf(dist * 0.35, 1.3, 4.0))
+	# espaço mínimo entre as posições e dentro do campo (no chão)
+	for i in slots.size():
+		slots[i] = Field.clamp_inside(Vector3(slots[i].x, 0.0, slots[i].z), 0.5)
+		for j in i:
+			var off := slots[i] - slots[j]
+			off.y = 0.0
+			var min_sep := 0.7 if i < 2 and j < 2 else 1.4
+			if off.length() < min_sep:
+				var push := off.normalized() if off.length() > 0.05 else perp
+				slots[i] = Field.clamp_inside(slots[j] + push * min_sep, 0.5)
+	# cada defensor vai para a posição mais perto dele (guloso)
+	var free := slots.duplicate()
+	var order := defenders.duplicate()
+	order.sort_custom(func(a, b): return a.global_position.distance_to(bp) < b.global_position.distance_to(bp))
+	for p: Player in order:
+		var bi := 0
+		var bd := INF
+		for i in free.size():
+			var d: float = p.global_position.distance_to(free[i])
+			if d < bd:
+				bd = d
+				bi = i
+		var slot: Vector3 = free[bi]
+		free.remove_at(bi)
+		var face := bp - slot
+		face.y = 0.0
+		p.teleport(slot, face.normalized() if face.length() > 0.05 else -dirg)
+		p.set_meta("restart_slot", slot)
+	# atacantes: sem ficar colados na barreira nem em cima da bola
+	for a in get_team(team):
+		if a == taker:
+			continue
+		var ap := a.global_position
+		for s in slots:
+			var off := ap - s
+			off.y = 0.0
+			if off.length() < 1.2:
+				ap = Field.clamp_inside(s + (off.normalized() if off.length() > 0.05 else -perp) * 1.2, 0.5)
+		var ob := ap - bp
+		ob.y = 0.0
+		if ob.length() < 2.0:
+			ap = Field.clamp_inside(bp + (ob.normalized() if ob.length() > 0.05 else -dirg) * 2.0, 0.5)
+		if ap.distance_to(a.global_position) > 0.05:
+			var af := bp - ap
+			af.y = 0.0
+			a.teleport(ap, af.normalized() if af.length() > 0.05 else dirg)
 
 
 ## Falta: bola parada no local para o time que sofreu (batedor obrigado a tocar).
@@ -262,7 +360,14 @@ func award_free_kick(team: int, pos: Vector3) -> void:
 	ball_out_system.schedule_restart(team, BallOutSystem.Kind.FREE_KICK, spot)
 
 
+func _clear_restart_slots() -> void:
+	for p in players:
+		if p.has_meta("restart_slot"):
+			p.remove_meta("restart_slot")
+
+
 func _start_kickoff(team: int) -> void:
+	_clear_restart_slots()
 	if get_team(team).is_empty():
 		team = human_team # modo treino: a saída é sempre do meu time
 	ball_out_system.cancel()

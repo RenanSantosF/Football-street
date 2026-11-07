@@ -24,3 +24,7 @@ signal match_state_changed(state: int)
 signal controlled_player_changed(player: Node)
 ## Mensagem curta para a tela ("GOL!", "LATERAL"...).
 signal match_message(text: String, duration: float)
+## Transição de tela (falta): escurece em [param out_time], segura
+## [param hold] e clareia em [param in_time] (s). O reposicionamento acontece
+## com a tela escura.
+signal screen_fade(out_time: float, hold: float, in_time: float)
