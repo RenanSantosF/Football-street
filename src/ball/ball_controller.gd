@@ -12,6 +12,11 @@ extends RigidBody3D
 const RADIUS := 0.11
 const LOSE_TEAMMATE_DIST := 2.4
 
+## A bola bateu em algo (chão, meio-fio, cerca, trave): [param strength] é a
+## variação de velocidade do choque (m/s), [param surface] o material
+## ("ground", "curb", "wood", "wire", "iron", "brick", "post", "other").
+signal impact(position: Vector3, strength: float, surface: StringName)
+
 @export_group("Física")
 ## Desaceleração ao rolar nos bloquinhos (m/s²): piso irregular segura a bola.
 ## Bola de rua pesada + bloquinhos com atrito: rola menos e para com firmeza.
@@ -56,6 +61,10 @@ var _new_linear := Vector3.ZERO
 var _new_angular := Vector3.ZERO
 var _pending_teleport := false
 var _teleport_position := Vector3.ZERO
+var _last_out_v := Vector3.ZERO
+var _impact_cd := 0.0
+## Variação de velocidade do último toque/chute (m/s), para o som.
+var last_touch_dv := 0.0
 
 
 func _physics_process(delta: float) -> void:
@@ -82,8 +91,10 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		state.transform = t
 		state.linear_velocity = Vector3.ZERO
 		state.angular_velocity = Vector3.ZERO
+	var touched := false
 	if _pending_velocity:
 		_pending_velocity = false
+		touched = true
 		state.linear_velocity = _new_linear
 		state.angular_velocity = _new_angular
 	if held:
@@ -99,6 +110,10 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 		if state.get_contact_local_normal(i).y > 0.7:
 			grounded = true
 			break
+	if touched:
+		_last_out_v = state.linear_velocity # toque/chute não é choque
+	else:
+		_detect_impact(state)
 
 	var dt := state.step
 	var v := state.linear_velocity
@@ -126,6 +141,48 @@ func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
 
 	state.linear_velocity = v
 	state.angular_velocity = w
+	_last_out_v = v
+
+
+## Choque com o cenário: a velocidade que o motor de física devolveu é bem
+## diferente da que saiu do passo anterior e há contato (quique, batida).
+func _detect_impact(state: PhysicsDirectBodyState3D) -> void:
+	_impact_cd = maxf(_impact_cd - state.step, 0.0)
+	var v := state.linear_velocity
+	var dv := v - _last_out_v
+	if state.get_contact_count() == 0 or _impact_cd > 0.0:
+		return
+	var best := -1
+	var best_n := Vector3.UP
+	for i in state.get_contact_count():
+		best = i
+		best_n = state.get_contact_local_normal(i)
+		if best_n.y < 0.7:
+			break # cerca/trave tem prioridade sobre o chão
+	var strength := 0.0
+	if best_n.y > 0.7:
+		# quique: só conta a componente vertical que inverteu
+		if _last_out_v.y < -0.7 and v.y > _last_out_v.y + 0.5:
+			strength = v.y - _last_out_v.y
+	else:
+		strength = dv.length()
+		if strength < 0.6:
+			return
+	if strength < 0.6:
+		return
+	_impact_cd = 0.06
+	impact.emit(state.get_contact_collider_position(best), strength, _surface_of(state, best))
+
+
+func _surface_of(state: PhysicsDirectBodyState3D, i: int) -> StringName:
+	var col := state.get_contact_collider_object(i)
+	if col is CollisionObject3D:
+		var co := col as CollisionObject3D
+		var owner_id := co.shape_find_owner(state.get_contact_collider_shape(i))
+		var shape_node := co.shape_owner_get_owner(owner_id) as Node
+		if shape_node != null and shape_node.has_meta("surface"):
+			return StringName(shape_node.get_meta("surface"))
+	return &"ground" if state.get_contact_local_normal(i).y > 0.7 else &"other"
 
 
 ## Velocidade atual, já considerando um toque/chute aplicado neste frame.
@@ -265,6 +322,7 @@ func predict_ground_position(t: float) -> Vector3:
 
 
 func _set_velocity(linear: Vector3, angular: Vector3) -> void:
+	last_touch_dv = (linear - velocity_now()).length()
 	_new_linear = linear
 	_new_angular = angular
 	_pending_velocity = true

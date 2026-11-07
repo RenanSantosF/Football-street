@@ -26,3 +26,27 @@ no Mixamo (`assets/characters/teen_01/`, fora do repositório público).
   FBX NÃO estão neste repositório (só os .import); entram embutidos no jogo.
 - Usadas: Side Foot Kick (passe de chapa), Power Kick (chute forte), Juggling 01
   (embaixadinha de espera). Créditos: https://linktr.ee/andersonrohr
+
+## Sons (Etapa 27) — `assets/audio/`
+
+Gerados por `tools/audio/build_sfx.py`.
+
+**Sintetizados** (sem gravação de terceiros, feitos pelo projeto): toda a bola
+(`ball/`: toques, passes, chutes, quiques, meio-fio, cercas, trave, corpo,
+cabeça, rolando), o raspado do carrinho (`body/slide_*`) e o apito
+(`whistle/`). Modelo físico: tempo de contato real + modos de vibração da
+casca e da cavidade de ar da bola.
+
+**Gravações** (OpenGameArt.org), recortadas, limpas e normalizadas:
+
+| Uso no jogo | Origem (autor no OpenGameArt) | Licença |
+|---|---|---|
+| passos `steps/run_*`, `steps/walk_01–06`, derrapada `steps/scuff_*` | "Fantozzi's Footsteps (Grass/Sand & Stone)" — qubodup (de Fantozzi, freesound) | CC0 |
+| passos `steps/walk_07–10` | "Footsteps" — GboxMikeFozzy | CC0 |
+| passos `steps/walk_11–12` | "100 CC0 SFX #2" — rubberduck | CC0 |
+| quedas/trombadas `body/fall_*` | "Body Hitting Ground" — dklon | **CC-BY 3.0** (atribuição obrigatória) |
+| pouso do pulo `body/land_01` | "Jump Landing Sound" — qubodup (de MentalSanityOff, freesound) | CC0 |
+| crianças `voices/kid_*` | "Children voices" — Yaroslav_Novikov | CC0 |
+| risadas `voices/giggle_*` | "Group giggling" — Nocturnal_Vanguard (AuraVoice) | CC0 |
+| comemoração `voices/cheer_*` | "Crowd Shouting/Speaking Ambience" — StarNinjas | CC0 |
+| ambiência `ambience/street_day` | "AMB Morning Sounds" e "AMB Outside 1" — Kresiek The Furry; "Park ambiences" — Thimras; "High traffic road sounds" — IgnasD | CC0 |

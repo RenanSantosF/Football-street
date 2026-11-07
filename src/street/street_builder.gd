@@ -87,7 +87,7 @@ func _build_ground(root: Node3D) -> void:
 	paver.shader = PAVER_SHADER
 	_mesh_box(root, Vector3(0, -0.05, 0), Vector3(length, 0.1, Field.ASPHALT_HALF_WIDTH * 2.0), paver)
 	var body := _static_body(root, _soft_physics)
-	_box_shape(body, Vector3(0, -0.5, 0), Vector3(length + 20.0, 1.0, 60.0))
+	_box_shape(body, Vector3(0, -0.5, 0), Vector3(length + 20.0, 1.0, 60.0), "ground")
 
 
 func _build_sidewalks(root: Node3D) -> void:
@@ -111,7 +111,7 @@ func _build_sidewalks(root: Node3D) -> void:
 				Vector3(w, 0.008, _rng.randf_range(0.4, 0.8)), mat)
 			x += w + _rng.randf_range(0.0, 2.0)
 		var body := _static_body(root, _curb_physics)
-		_box_shape(body, Vector3(0, h * 0.5, zc), Vector3(length, h, Field.SIDEWALK_WIDTH))
+		_box_shape(body, Vector3(0, h * 0.5, zc), Vector3(length, h, Field.SIDEWALK_WIDTH), "curb")
 
 
 func _build_lines(root: Node3D) -> void:
@@ -135,22 +135,26 @@ func _build_fence_line(root: Node3D, side: float) -> void:
 	while x < Field.STREET_HALF_LENGTH:
 		var r := _rng.randf()
 		var w: float
+		var surf := "wood"
 		if not gate_done and r < 0.12 and absf(x) < 18.0:
 			w = 3.0
 			_iron_gate(root, x, side, w)
 			gate_done = true
+			surf = "iron"
 		elif not wall_done and r < 0.22 and side < 0.0:
 			w = _rng.randf_range(3.0, 4.5)
 			_block_wall(root, x, side, w)
 			wall_done = true
+			surf = "brick"
 		elif r < 0.5:
 			w = _rng.randf_range(4.0, 7.0)
 			_wire_fence(root, x, side, w)
+			surf = "wire"
 		else:
 			w = _rng.randf_range(4.0, 8.0)
 			_wood_fence(root, x, side, w, side > 0.0)
 		w = minf(w, Field.STREET_HALF_LENGTH - x)
-		_box_shape(body, Vector3(x + w * 0.5, 0.9, side * (FENCE_Z + 0.05)), Vector3(w, 1.8, 0.12))
+		_box_shape(body, Vector3(x + w * 0.5, 0.9, side * (FENCE_Z + 0.05)), Vector3(w, 1.8, 0.12), surf)
 		x += w
 
 
@@ -455,6 +459,7 @@ func _build_poles(root: Node3D) -> void:
 		shape.height = h
 		cs.shape = shape
 		cs.position = base + Vector3(0, h * 0.5, 0)
+		cs.set_meta("surface", "wood")
 		body.add_child(cs)
 		px += _rng.randf_range(15.0, 20.0)
 	for i in tops.size() - 1:
@@ -474,7 +479,7 @@ func _build_street_ends(root: Node3D) -> void:
 			var t := Transform3D(Basis.from_euler(Vector3(0, PI * 0.5, _rng.randf_range(-0.04, 0.04))), Vector3(x, ph * 0.5, z + pw * 0.5))
 			_planks.append(t.scaled_local(Vector3(pw - 0.01, ph, 0.022)))
 			z += pw + _rng.randf_range(0.0, 0.04)
-		_box_shape(body, Vector3(x, 0.9, 0), Vector3(0.15, 1.8, width))
+		_box_shape(body, Vector3(x, 0.9, 0), Vector3(0.15, 1.8, width), "wood")
 
 
 func _build_props(root: Node3D) -> void:
@@ -655,10 +660,14 @@ func _static_body(root: Node3D, phys: PhysicsMaterial) -> StaticBody3D:
 	return body
 
 
-func _box_shape(body: StaticBody3D, pos: Vector3, size: Vector3) -> void:
+## [param surface]: material do som quando a bola bate (GameAudio).
+func _box_shape(body: StaticBody3D, pos: Vector3, size: Vector3, surface := "") -> CollisionShape3D:
 	var shape := BoxShape3D.new()
 	shape.size = size
 	var cs := CollisionShape3D.new()
 	cs.shape = shape
 	cs.position = pos
+	if surface != "":
+		cs.set_meta("surface", surface)
 	body.add_child(cs)
+	return cs

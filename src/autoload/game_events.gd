@@ -28,3 +28,8 @@ signal match_message(text: String, duration: float)
 ## [param hold] e clareia em [param in_time] (s). O reposicionamento acontece
 ## com a tela escura.
 signal screen_fade(out_time: float, hold: float, in_time: float)
+## Trombada corpo a corpo sentida por [param player] ([param strength] =
+## impulso recebido, m/s). Usado pelo áudio.
+signal body_contact(player: Node, strength: float)
+## Falta marcada (apito).
+signal foul_called(position: Vector3)

@@ -68,6 +68,12 @@ func _ready() -> void:
 	solver.match_manager = self
 	solver.process_physics_priority = 50
 	add_child(solver)
+	# Sons (bola, passos, corpo, apito, ambiência).
+	var audio := GameAudio.new()
+	audio.name = "GameAudio"
+	audio.match_manager = self
+	audio.process_physics_priority = 60
+	add_child(audio)
 	var cfg := ConfigFile.new()
 	if not autoplay and cfg.load(SETTINGS_PATH) == OK and cfg.get_value("game", "training", false):
 		_apply_training(true)
@@ -353,6 +359,7 @@ func award_free_kick(team: int, pos: Vector3) -> void:
 		return
 	ball.in_play = false
 	ball.release()
+	GameEvents.foul_called.emit(pos)
 	GameEvents.match_message.emit("FALTA!", 1.4)
 	_set_state(MatchState.BALL_OUT)
 	var spot := Field.clamp_inside(Vector3(pos.x, Ball.RADIUS, pos.z), 0.6)

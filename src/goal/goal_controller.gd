@@ -97,4 +97,5 @@ func _bar(body: StaticBody3D, pos: Vector3, length: float, rot_deg: Vector3, rad
 	cs.shape = shape
 	cs.position = pos
 	cs.rotation_degrees = rot_deg
+	cs.set_meta("surface", "post")
 	body.add_child(cs)
